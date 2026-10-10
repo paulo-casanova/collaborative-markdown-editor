@@ -162,7 +162,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 2.2: Pluggable Authentication & Authorization Engine
-* **Status:** Complete (Commit: pending)
+* **Status:** Complete (Commit: `2b50cf1`)
 * **Deliverables:**
   * `cme::auth::UserIdentity`: Authenticated user representation and JSON serializer (`backend/include/cme/auth/user_identity.hpp`).
   * Cryptographic utilities in `cme::auth` (`backend/include/cme/auth/crypto_utils.hpp`, `backend/src/auth/crypto_utils.cpp`): OpenSSL 256-bit random token generation (`RAND_bytes`), SHA-256 digest hashing (`EVP_DigestInit_ex`), salted bcrypt hashing and verification (`libcrypt` `$2b$`), and Bearer/Cookie token parsers.
