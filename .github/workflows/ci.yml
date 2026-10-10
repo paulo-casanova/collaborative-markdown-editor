@@ -1,0 +1,34 @@
+name: CME CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  build-and-test:
+    name: Build & Test (C++23)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Build Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake g++-14 libpqxx-dev libssl-dev pkg-config
+
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_CXX_COMPILER=g++-14 \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=ON
+
+      - name: Compile Targets
+        run: cmake --build build --parallel
+
+      - name: Run Automated Test Suite
+        run: ctest --test-dir build --output-on-failure
