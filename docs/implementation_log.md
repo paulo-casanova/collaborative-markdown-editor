@@ -114,5 +114,54 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ## Phase 2: Core Backend Engine & REST API Foundation
 
 ### Step 2.1: Server Daemon Skeleton & Health Probe
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Multi-tier configuration loader in `cme::config::AppConfig` (`backend/include/cme/config/config.hpp`, `backend/src/config/config.cpp`) supporting YAML file parsing (`yaml-cpp`), environment variable overrides (`CME_*`), and CLI flag prioritization.
+  * Server daemon class in `cme::server::Server` (`backend/include/cme/server/server.hpp`, `backend/src/server/server.cpp`) based on `uWebSockets` epoll event loop and `uSockets`.
+  * Operational health check endpoint `GET /api/v1/health` reporting uptime, version, PostgreSQL connectivity & query latency, and POSIX storage capacity & writability.
+  * Graceful shutdown signal handling (`SIGINT`, `SIGTERM`).
+  * Automated integration test `tests/backend/server_health_test.cpp`.
+  * Health probe API documentation (`docs/api/health.md`).
+* **Verification:**
+  ```bash
+  $ ./build/bin/cme-server --port 8080 &
+  [INFO] Storage backend initialized at: /var/lib/cme/storage
+  [INFO] PostgreSQL connection pool initialized (8 connections).
+  [INFO] CME Server listening on http://0.0.0.0:8080
+
+  $ curl -i http://localhost:8080/api/v1/health
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+  Access-Control-Allow-Origin: *
+  
+  {
+    "active_collab_rooms": 0,
+    "database": {
+      "latency_ms": 0.78,
+      "status": "connected"
+    },
+    "status": "healthy",
+    "storage": {
+      "free_bytes": 16337457152,
+      "status": "writable"
+    },
+    "uptime_seconds": 1,
+    "version": "0.1.0"
+  }
+
+  $ ctest --test-dir build --output-on-failure
+  1/5 Test #1: version_test .....................   Passed    0.00 sec
+  2/5 Test #2: smoke_test .......................   Passed    0.00 sec
+  3/5 Test #3: db_permissions_dag_test ..........   Passed    0.05 sec
+  4/5 Test #4: posix_storage_sal_test ...........   Passed    0.02 sec
+  5/5 Test #5: server_health_test ...............   Passed    0.31 sec
+  100% tests passed, 0 tests failed out of 5
+  ```
+
+---
+
+### Step 2.2: Pluggable Authentication & Authorization Engine
 * **Status:** In Progress
+
 

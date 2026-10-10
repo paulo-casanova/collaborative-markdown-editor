@@ -16,7 +16,8 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 * [Storage Layout & Document Bundles](storage/layout.md): POSIX tree structure (`content/`, `bundles/`, `snapshots/`, `trash/`).
 * [Storage Abstraction Layer & Atomic Writes](storage/atomic_writes.md): `IStorageBackend` interface and atomic rename crash safety.
 
-### 4. API & Protocol Specifications *(Coming in Phase 2 & 3)*
+### 4. API & Protocol Specifications
+* [Health Probe API](api/health.md): `GET /api/v1/health` operational metrics and JSON schema.
 * **REST Endpoints**: Comprehensive endpoint table, authentication tokens, and LLM automation tools.
 * **WebSocket Framing Protocol**: Binary wire protocol opcodes (`0x00`–`0x04`) and CRDT synchronization deltas.
 

@@ -51,3 +51,17 @@ add_test(NAME posix_storage_sal_test COMMAND posix_storage_sal_test)
 set_tests_properties(posix_storage_sal_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+
+# Server Daemon & Health Probe test
+add_executable(server_health_test
+    backend/server_health_test.cpp
+)
+target_link_libraries(server_health_test PRIVATE cme_core)
+target_compile_features(server_health_test PRIVATE cxx_std_23)
+set_target_properties(server_health_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME server_health_test COMMAND server_health_test)
+set_tests_properties(server_health_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)

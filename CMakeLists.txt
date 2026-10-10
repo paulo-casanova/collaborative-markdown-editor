@@ -39,6 +39,12 @@ endif()
 include(CTest)
 enable_testing()
 
+# External Dependencies
+list(PREPEND CMAKE_PREFIX_PATH "$ENV{HOME}/.local/usr")
+find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(PkgConfig REQUIRED)
+
 # Module subdirectories
 add_subdirectory(backend)
 
