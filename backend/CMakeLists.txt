@@ -8,6 +8,7 @@ pkg_check_modules(PQ REQUIRED IMPORTED_TARGET libpq)
 pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
 
 find_library(USOCKETS_LIB uSockets PATHS "$ENV{HOME}/.local/usr/lib" REQUIRED)
+find_library(CRYPT_LIB crypt REQUIRED)
 
 add_library(cme_core
     src/version.cpp
@@ -16,6 +17,10 @@ add_library(cme_core
     src/db/migration_runner.cpp
     src/db/permission_engine.cpp
     src/storage/posix_storage_backend.cpp
+    src/auth/crypto_utils.cpp
+    src/auth/admin_provider.cpp
+    src/auth/session_manager.cpp
+    src/auth/auth_provider.cpp
     src/server/server.cpp
 )
 
@@ -45,6 +50,7 @@ target_link_libraries(cme_core
         OpenSSL::SSL
         OpenSSL::Crypto
         ZLIB::ZLIB
+        ${CRYPT_LIB}
 )
 
 # CME Server Executable

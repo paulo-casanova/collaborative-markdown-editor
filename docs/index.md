@@ -18,7 +18,8 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 
 ### 4. API & Protocol Specifications
 * [Health Probe API](api/health.md): `GET /api/v1/health` operational metrics and JSON schema.
-* **REST Endpoints**: Comprehensive endpoint table, authentication tokens, and LLM automation tools.
+* [Authentication & Authorization API](api/auth.md): Pluggable AuthN (Challenge / Delegated JIT), Admin providers, Sessions, and Personal Access Tokens.
+* **REST Endpoints**: Comprehensive endpoint table, document CRUD, and review operations.
 * **WebSocket Framing Protocol**: Binary wire protocol opcodes (`0x00`–`0x04`) and CRDT synchronization deltas.
 
 ### 5. Deployment & Operations *(Coming in Phase 7)*

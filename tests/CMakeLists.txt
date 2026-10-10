@@ -65,3 +65,17 @@ add_test(NAME server_health_test COMMAND server_health_test)
 set_tests_properties(server_health_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+
+# Authentication & Authorization Engine test
+add_executable(auth_engine_test
+    backend/auth_engine_test.cpp
+)
+target_link_libraries(auth_engine_test PRIVATE cme_core)
+target_compile_features(auth_engine_test PRIVATE cxx_std_23)
+set_target_properties(auth_engine_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME auth_engine_test COMMAND auth_engine_test)
+set_tests_properties(auth_engine_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)

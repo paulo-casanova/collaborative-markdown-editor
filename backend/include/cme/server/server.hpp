@@ -7,11 +7,18 @@
 
 #include "cme/config/config.hpp"
 #include "cme/db/connection_pool.hpp"
+#include "cme/db/permission_engine.hpp"
 #include "cme/storage/posix_storage_backend.hpp"
+#include "cme/auth/user_identity.hpp"
+#include "cme/auth/admin_provider.hpp"
+#include "cme/auth/session_manager.hpp"
+#include "cme/auth/auth_provider.hpp"
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <atomic>
 #include <chrono>
+#include <string_view>
+#include <optional>
 
 namespace usockets {
 struct us_listen_socket_t;
@@ -47,12 +54,47 @@ public:
      */
     [[nodiscard]] nlohmann::json get_health_status();
 
+    /**
+     * @brief Authenticates an incoming request using session tokens or delegated headers.
+     * @param auth_header Authorization header value.
+     * @param cookie_header Cookie header value.
+     * @param remote_user_header X-Remote-User header value.
+     * @param remote_email_header X-Remote-Email header value.
+     * @return Resolved UserIdentity if authenticated, or nullopt otherwise.
+     */
+    Result<std::optional<auth::UserIdentity>> authenticate_request(
+        std::string_view auth_header,
+        std::string_view cookie_header,
+        std::string_view remote_user_header,
+        std::string_view remote_email_header
+    );
+
+    /**
+     * @brief Evaluates whether an authenticated user has sufficient access level for a resource.
+     * Checks superuser admin bypass first, then evaluates DAG permissions.
+     */
+    Result<db::AccessLevel> evaluate_access(
+        const auth::UserIdentity& user,
+        const std::string& document_id,
+        const std::string& fs_path
+    );
+
     [[nodiscard]] const config::AppConfig& config() const noexcept { return config_; }
+    [[nodiscard]] std::shared_ptr<db::ConnectionPool> db_pool() const noexcept { return db_pool_; }
+    [[nodiscard]] std::shared_ptr<storage::PosixStorageBackend> storage() const noexcept { return storage_; }
+    [[nodiscard]] std::shared_ptr<auth::IAdminProvider> admin_provider() const noexcept { return admin_provider_; }
+    [[nodiscard]] std::shared_ptr<auth::SessionManager> session_manager() const noexcept { return session_manager_; }
+    [[nodiscard]] std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider() const noexcept { return delegated_provider_; }
+    [[nodiscard]] std::shared_ptr<auth::ChallengeAuthProvider> challenge_provider() const noexcept { return challenge_provider_; }
 
 private:
     config::AppConfig config_;
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::PosixStorageBackend> storage_;
+    std::shared_ptr<auth::IAdminProvider> admin_provider_;
+    std::shared_ptr<auth::SessionManager> session_manager_;
+    std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider_;
+    std::shared_ptr<auth::ChallengeAuthProvider> challenge_provider_;
 
     std::chrono::system_clock::time_point start_time_;
     std::atomic<bool> is_running_{false};

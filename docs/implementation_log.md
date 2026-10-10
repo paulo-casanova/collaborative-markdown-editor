@@ -162,6 +162,84 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 2.2: Pluggable Authentication & Authorization Engine
-* **Status:** In Progress
+* **Status:** Complete (Commit: pending)
+* **Deliverables:**
+  * `cme::auth::UserIdentity`: Authenticated user representation and JSON serializer (`backend/include/cme/auth/user_identity.hpp`).
+  * Cryptographic utilities in `cme::auth` (`backend/include/cme/auth/crypto_utils.hpp`, `backend/src/auth/crypto_utils.cpp`): OpenSSL 256-bit random token generation (`RAND_bytes`), SHA-256 digest hashing (`EVP_DigestInit_ex`), salted bcrypt hashing and verification (`libcrypt` `$2b$`), and Bearer/Cookie token parsers.
+  * Pluggable administrative privilege evaluation (`backend/include/cme/auth/admin_provider.hpp`, `backend/src/auth/admin_provider.cpp`):
+    * `IAdminProvider` pure virtual interface.
+    * `FileAdminProvider`: Reads line-delimited or CSV files (`admins.txt` / `users.csv`) with automatic modification timestamp checking and hot-reloading.
+    * `CommandAdminProvider`: Executes external CLI scripts/tools (`check_admin.sh %USER%`) with shell metacharacter sanitization and in-memory TTL caching (60s).
+  * Session and Personal Access Token manager in `cme::auth::SessionManager` (`backend/include/cme/auth/session_manager.hpp`, `backend/src/auth/session_manager.cpp`) backed by PostgreSQL `sessions` and `users` tables: token creation with configurable TTL, validation, revocation, and session listing.
+  * Pluggable authentication providers (`backend/include/cme/auth/auth_provider.hpp`, `backend/src/auth/auth_provider.cpp`):
+    * `ChallengeAuthProvider`: Validates username and candidate password against stored bcrypt hashes in PostgreSQL.
+    * `DelegatedAuthProvider`: Reads trusted reverse-proxy headers (`X-Remote-User`, `X-Remote-Email`) and performs Just-In-Time (JIT) provisioning in PostgreSQL for newly observed users.
+  * Server HTTP REST endpoints and authorization middleware in `cme::server::Server` (`backend/src/server/server.cpp`):
+    * `POST /api/v1/auth/login`: Challenge credential validation, session creation, and `Set-Cookie: cme_session=...`.
+    * `POST /api/v1/auth/logout`: Session token revocation and cookie expiration.
+    * `GET /api/v1/auth/me`: Profile retrieval and transitive effective team resolution via `PermissionEngine::get_effective_teams`.
+    * `POST /api/v1/auth/tokens`: Personal Access Token issuance for authenticated sessions or credentials.
+    * `GET /api/v1/auth/tokens`: Active token listing.
+    * `OPTIONS /*`: Automatic CORS preflight response (`HTTP 204 No Content`).
+  * Automated integration test suite in `tests/backend/auth_engine_test.cpp`.
+  * Comprehensive API documentation in `docs/api/auth.md`.
+* **Verification:**
+  ```bash
+  $ ./build/tests/auth_engine_test
+  ========================================================
+  === CME Auth Engine Integration & Unit Test Suite   ===
+  ========================================================
+
+  [TEST 1] Testing cryptographic utilities...
+    - SHA-256 known vector validated.
+    - Random tokens entropy and uniqueness validated.
+    - Salted bcrypt hashing and verification validated.
+    - Bearer token header extractor validated.
+    - Cookie token header extractor validated.
+
+  [TEST 2] Testing pluggable admin providers...
+    - FileAdminProvider (line-delimited + CSV + reload) validated.
+    - CommandAdminProvider (command template + caching + sanitization) validated.
+
+  [TEST 3] Testing PostgreSQL session and auth provider subsystems...
+    - Seeded test user bob_auth_test with id: a5466d63-8b8f-4694-b1ed-33c31a687f16
+    - ChallengeAuthProvider (valid / invalid credentials) validated.
+    - SessionManager (lifecycle, tokens, and revocation) validated.
+    - DelegatedAuthProvider (JIT user provisioning + admin resolution) validated.
+
+  [TEST 4] Testing Server REST Auth Endpoints over HTTP...
+  [INFO] Storage backend initialized at: /tmp/cme_auth_test_storage
+  [INFO] PostgreSQL connection pool initialized (8 connections).
+  [INFO] CME Server listening on http://127.0.0.1:18082
+    - POST /api/v1/auth/login returned HTTP 200 and issued token.
+    - GET /api/v1/auth/me with Bearer token returned HTTP 200.
+    - GET /api/v1/auth/me with Cookie returned HTTP 200.
+    - GET /api/v1/auth/me with X-Remote-User returned HTTP 200 (admin=true).
+    - GET /api/v1/auth/me without auth returned HTTP 401 Unauthorized.
+    - POST /api/v1/auth/tokens returned HTTP 201 Created and issued PAT.
+    - GET /api/v1/auth/tokens returned HTTP 200 with token list.
+    - POST /api/v1/auth/logout revoked session; subsequent requests rejected with 401.
+
+  [TEST] Stopping server...
+
+  ========================================================
+  === ALL AUTH ENGINE TESTS PASSED SUCCESSFULLY!       ===
+  ========================================================
+
+  $ ctest --test-dir build --output-on-failure
+  1/6 Test #1: version_test .....................   Passed    0.00 sec
+  2/6 Test #2: smoke_test .......................   Passed    0.00 sec
+  3/6 Test #3: db_permissions_dag_test ..........   Passed    0.05 sec
+  4/6 Test #4: posix_storage_sal_test ...........   Passed    0.03 sec
+  5/6 Test #5: server_health_test ...............   Passed    0.32 sec
+  6/6 Test #6: auth_engine_test .................   Passed    0.97 sec
+
+  100% tests passed, 0 tests failed out of 6
+  ```
+
+---
+
+### Step 2.3: Document & Workspace Tree REST API
+* **Status:** Next
 
 
