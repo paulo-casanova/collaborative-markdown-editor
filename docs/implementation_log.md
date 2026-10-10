@@ -73,4 +73,46 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 1.3: POSIX Storage Abstraction Layer (SAL)
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Pure virtual interface `cme::storage::IStorageBackend` and metadata struct `cme::storage::NodeInfo` (`backend/include/cme/storage/storage_backend.hpp`).
+  * Standard filesystem implementation in `cme::storage::PosixStorageBackend` (`backend/include/cme/storage/posix_storage_backend.hpp`, `backend/src/storage/posix_storage_backend.cpp`):
+    * Directory subsystems: `content/`, `trash/`, `snapshots/`, `backups/`.
+    * Two-phase atomic write protocol via unique `.tmp` files and `std::filesystem::rename()`.
+    * Document bundle detection (`.bundle` suffix, `index.md`, or `<dirname>.md`).
+    * Full trash lifecycle: timestamped move to `trash/`, `.meta` sidecar files, `list_trash()`, `restore_from_trash()`, and `purge_from_trash()`.
+    * Directory traversal protection (`resolve_safe_path` rejecting `..` traversal).
+  * Integration test `tests/backend/posix_storage_sal_test.cpp`.
+  * Storage documentation (`docs/storage/layout.md`, `docs/storage/atomic_writes.md`).
+* **Verification:**
+  ```bash
+  $ ./build/tests/posix_storage_sal_test
+  [TEST] Initializing PosixStorageBackend at: "/tmp/cme_sal_test_root"
+  [TEST] 1. Basic Write & Read...
+  [TEST] 2. Atomic Overwrite...
+  [TEST] 3. Document Bundle Detection...
+  [TEST] 4. Moving Nodes & Bundles...
+  [TEST] 5. Trash Lifecycle...
+    Deleted to trash ID: 2026-10-10-23-15-21_archive_guides_intro_old.md
+  [TEST] 6. Directory Listing...
+  [TEST] 7. Concurrent Writes Stress Test (1,000 files across 10 threads)...
+    Verifying 1,000 written files on disk...
+    All 1,000 files written and verified without race conditions.
+  [PASS] All posix_storage_sal_test test cases succeeded!
+
+  $ ctest --test-dir build --output-on-failure
+  1/4 Test #1: version_test .....................   Passed    0.00 sec
+  2/4 Test #2: smoke_test .......................   Passed    0.00 sec
+  3/4 Test #3: db_permissions_dag_test ..........   Passed    0.06 sec
+  4/4 Test #4: posix_storage_sal_test ...........   Passed    0.02 sec
+  100% tests passed, 0 tests failed out of 4
+  ```
+
+---
+
+## Phase 2: Core Backend Engine & REST API Foundation
+
+### Step 2.1: Server Daemon Skeleton & Health Probe
 * **Status:** In Progress
+

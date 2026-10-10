@@ -12,6 +12,7 @@ add_library(cme_core
     src/db/connection_pool.cpp
     src/db/migration_runner.cpp
     src/db/permission_engine.cpp
+    src/storage/posix_storage_backend.cpp
 )
 
 target_include_directories(cme_core

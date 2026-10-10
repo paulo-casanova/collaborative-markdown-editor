@@ -37,3 +37,17 @@ add_test(NAME db_permissions_dag_test COMMAND db_permissions_dag_test)
 set_tests_properties(db_permissions_dag_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+
+# POSIX Storage Abstraction Layer test
+add_executable(posix_storage_sal_test
+    backend/posix_storage_sal_test.cpp
+)
+target_link_libraries(posix_storage_sal_test PRIVATE cme_core)
+target_compile_features(posix_storage_sal_test PRIVATE cxx_std_23)
+set_target_properties(posix_storage_sal_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME posix_storage_sal_test COMMAND posix_storage_sal_test)
+set_tests_properties(posix_storage_sal_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)

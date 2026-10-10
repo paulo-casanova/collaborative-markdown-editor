@@ -12,9 +12,9 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 * [Team DAG & Permission Engine](database/dag_permissions.md): Mathematical and query model for multi-parent team hierarchies and granular ACL inheritance.
 * [Database Migrations Guide](database/migrations.md): How versioned SQL migrations are executed and managed via `cme-migrate`.
 
-### 3. Storage Architecture *(Coming in Step 1.3)*
-* **Storage Layout & Bundles**: POSIX tree structure (`content/`, `bundles/`, `snapshots/`, `trash/`).
-* **Storage Abstraction Layer**: Atomic write semantics and filesystem abstraction interface.
+### 3. Storage Architecture
+* [Storage Layout & Document Bundles](storage/layout.md): POSIX tree structure (`content/`, `bundles/`, `snapshots/`, `trash/`).
+* [Storage Abstraction Layer & Atomic Writes](storage/atomic_writes.md): `IStorageBackend` interface and atomic rename crash safety.
 
 ### 4. API & Protocol Specifications *(Coming in Phase 2 & 3)*
 * **REST Endpoints**: Comprehensive endpoint table, authentication tokens, and LLM automation tools.
