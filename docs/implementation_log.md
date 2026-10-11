@@ -1080,7 +1080,55 @@ This document tracks the incremental implementation of the Collaborative Markdow
   $ ctest --test-dir build --output-on-failure
   100% tests passed, 0 tests failed out of 13
   ```
-  *Status criteria:* Directory manipulations and search queries operate with instant UI response; soft-deleted items recover smoothly from trash; 13/13 backend CTest suites and 13/13 frontend Playwright tests passing.
+---
+
+### Step 5.2: Multi-Document TabBar & Split-View Workspace
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Workspace Store (`frontend/src/stores/workspaceStore.ts`):
+    * Zustand store persisted to `localStorage` under `cme_workspace_state`.
+    * State tracking `tabs: WorkspaceTab[]`, `activeTabId`, `splitMode` (`'none' | 'vertical' | 'horizontal'`), `secondaryTabId`, and `splitRatio` (clamped 0.2 to 0.8).
+    * Actions: `openTab(newTab, activate?)`, `updateTabMetadata(tabId, metadata)`, `closeTab(tabId)`, `closeOtherTabs(tabId)`, `closeTabsToRight(tabId)`, `setActiveTabId(tabId)`, `reorderTabs(source, target)`, `togglePinTab(tabId)`, `setTabDirty(tabId, dirty)`, `setSplitMode(mode, secondaryId?)`, `setSecondaryTabId(tabId)`, `setSplitRatio(ratio)`, and `closeSplit()`.
+  * `TabBar` Component (`frontend/src/components/workspace/TabBar.tsx`):
+    * Workspace tab strip with document icon, package icon for bundles, pin icon for pinned tabs, and unsaved changes dirty indicator dot.
+    * Close button with hover animation and unsaved-changes confirmation prompt.
+    * Drag-and-drop tab reordering with HTML5 drag events (`dragStart`, `dragOver`, `drop`).
+    * Split view layout toggle buttons in the tab bar header: Vertical Split (Columns), Horizontal Split (Rows), and Close Split (Maximize).
+    * Right-click context menu: Close Tab, Close Other Tabs, Close Tabs to the Right, Pin/Unpin Tab, Split Right, and Copy Path.
+    * Keyboard shortcut: `Ctrl+W` / `Cmd+W` closes active tab.
+  * `EditorPane` Component (`frontend/src/components/workspace/EditorPane.tsx`):
+    * Encapsulated editor pane mounting an independent `CmeCollabProvider` WebSocket session and TipTap editor instance.
+    * Breadcrumbs bar and pane label indicator ("Left Pane", "Right Pane", "Top Pane", "Bottom Pane").
+    * Quick reader view link and pane close button.
+  * `EditorPage` Component (`frontend/src/pages/EditorPage.tsx`):
+    * Mounts `TabBar` above the main workspace.
+    * Renders single-pane view, vertical side-by-side split, or horizontal top-and-bottom split.
+    * Draggable divider with smooth resizing (`cursor-col-resize` and `cursor-row-resize`).
+  * Playwright E2E Test Suite (`frontend/tests/e2e/tabbar_split_view.spec.ts`):
+    * 4 automated browser tests:
+      1. Multi-document tab bar management and active document switching on tab click.
+      2. Dual-pane vertical split view with side-by-side collaborative editors and reload persistence across page refresh.
+      3. Horizontal split layout toggle and single-pane restoration on split close.
+      4. Tab close action with neighbor tab switching.
+* **Verification:**
+  ```bash
+  $ npx playwright test tests/e2e/tabbar_split_view.spec.ts
+  Running 4 tests using 4 workers
+    ✓ manages multiple open tabs and switches active document on click (612ms)
+    ✓ closes tab and switches to neighbor tab or workspace (631ms)
+    ✓ toggles horizontal split mode and closes split pane (654ms)
+    ✓ opens dual-pane Split View, edits concurrently, and restores state on reload (782ms)
+    4 passed (2.6s)
+
+  $ npx playwright test
+  Running 17 tests using 12 workers
+    17 passed (4.2s)
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 13
+  ```
+  *Status criteria:* Multi-document editing, drag reordering, and dual-pane split views function seamlessly; workspace state restores accurately across page reloads; 100% passing across backend and frontend test suites.
 
 
 
