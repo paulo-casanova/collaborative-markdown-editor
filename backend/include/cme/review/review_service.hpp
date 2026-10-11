@@ -136,6 +136,8 @@ struct CreateSuggestionRequest {
 struct TaskRecord {
     std::string id;
     std::string document_id;
+    std::string document_title{""};
+    std::string document_path{""};
     std::optional<std::string> comment_id;
     std::string description;
     std::optional<AuthorInfo> assignee;
@@ -145,7 +147,7 @@ struct TaskRecord {
     std::optional<std::string> completed_at;
 
     [[nodiscard]] nlohmann::json to_json() const {
-        return {
+        nlohmann::json j = {
             {"id", id},
             {"document_id", document_id},
             {"comment_id", comment_id.has_value() ? nlohmann::json(comment_id.value()) : nlohmann::json(nullptr)},
@@ -156,6 +158,9 @@ struct TaskRecord {
             {"created_at", created_at},
             {"completed_at", completed_at.has_value() ? nlohmann::json(completed_at.value()) : nlohmann::json(nullptr)}
         };
+        if (!document_title.empty()) j["document_title"] = document_title;
+        if (!document_path.empty()) j["document_path"] = document_path;
+        return j;
     }
 };
 
@@ -208,6 +213,11 @@ public:
     // Tasks
     // =========================================================================
     Result<std::vector<TaskRecord>> list_tasks(const std::string& document_id, const auth::UserIdentity& user);
+    Result<std::vector<TaskRecord>> list_all_tasks(
+        const auth::UserIdentity& user,
+        std::optional<bool> completed_filter = std::nullopt,
+        bool assigned_to_me_only = false
+    );
     Result<TaskRecord> create_task(const std::string& document_id, const auth::UserIdentity& user, const CreateTaskRequest& req);
     Result<TaskRecord> update_task(const std::string& task_id, const auth::UserIdentity& user, bool is_completed);
     Result<void> delete_task(const std::string& task_id, const auth::UserIdentity& user);

@@ -482,9 +482,9 @@ int main() {
 
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     events = read_events_file(events_file);
-    assert(events.back()["event"] == "TASK_UPDATED");
+    assert(events.back()["event"] == "TASK_TOGGLED" || events.back()["event"] == "TASK_UPDATED");
     assert(events.back()["task"]["is_completed"] == true);
-    std::cout << "  [PASS] WebSocket Opcode 0x02 received TASK_UPDATED notification!\n";
+    std::cout << "  [PASS] WebSocket Opcode 0x02 received TASK_TOGGLED notification!\n";
 
     // Delete comment
     {

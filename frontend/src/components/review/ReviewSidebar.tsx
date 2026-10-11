@@ -1,13 +1,15 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   MessageSquare,
   X,
   Inbox,
+  Plus,
 } from 'lucide-react';
 import { useReviewStore } from '../../stores/reviewStore';
 import { CommentCard } from './CommentCard';
 import { SuggestionCard } from './SuggestionCard';
 import { TaskCard } from './TaskCard';
+import { NewTaskModal } from './NewTaskModal';
 
 interface ReviewSidebarProps {
   onScrollToAnchor?: (anchor: any) => void;
@@ -29,6 +31,8 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
     setSidebarOpen,
     isLoading,
   } = useReviewStore();
+
+  const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
 
   // Compute counts
   const openComments = useMemo(
@@ -183,7 +187,7 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
           </button>
         </div>
 
-        {/* Resolved Checkbox */}
+        {/* Resolved Checkbox & Add Task Action */}
         <div className="flex items-center justify-between text-xs px-1 text-cme-text-muted">
           <label className="flex items-center gap-1.5 cursor-pointer hover:text-cme-text-base select-none">
             <input
@@ -195,6 +199,16 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
             />
             <span className="text-[11px]">Show resolved & accepted</span>
           </label>
+
+          <button
+            type="button"
+            data-testid="open-new-task-modal-btn"
+            onClick={() => setIsTaskModalOpen(true)}
+            className="flex items-center gap-1 text-[11px] font-medium text-cme-primary hover:underline hover:text-cme-primary/80"
+          >
+            <Plus className="w-3 h-3" />
+            <span>Add Task</span>
+          </button>
         </div>
       </div>
 
@@ -239,6 +253,11 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
           })
         )}
       </div>
+
+      <NewTaskModal
+        isOpen={isTaskModalOpen}
+        onClose={() => setIsTaskModalOpen(false)}
+      />
     </aside>
   );
 };

@@ -53,6 +53,8 @@ export interface ReviewState {
   rejectSuggestion: (suggestionId: string) => Promise<SuggestionRecord | null>;
 
   toggleTask: (taskId: string, isCompleted: boolean) => Promise<TaskRecord | null>;
+  postTask: (description: string, commentId?: string, assigneeId?: string, dueDate?: string) => Promise<TaskRecord | null>;
+  deleteTask: (taskId: string) => Promise<void>;
 }
 
 export const useReviewStore = create<ReviewState>((set, get) => ({
@@ -338,6 +340,33 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
     } catch (err) {
       console.error('[useReviewStore] Failed to toggle task:', err);
       return null;
+    }
+  },
+
+  postTask: async (description: string, commentId?: string, assigneeId?: string, dueDate?: string) => {
+    const { documentId } = get();
+    if (!documentId || !description.trim()) return null;
+    try {
+      const created = await reviewApi.createTask(documentId, description.trim(), commentId, assigneeId, dueDate);
+      set((state) => ({
+        tasks: [created, ...state.tasks.filter((t) => t.id !== created.id)],
+        activeItemId: created.id,
+      }));
+      return created;
+    } catch (err) {
+      console.error('[useReviewStore] Failed to post task:', err);
+      return null;
+    }
+  },
+
+  deleteTask: async (taskId: string) => {
+    try {
+      await reviewApi.deleteTask(taskId);
+      set((state) => ({
+        tasks: state.tasks.filter((t) => t.id !== taskId),
+      }));
+    } catch (err) {
+      console.error('[useReviewStore] Failed to delete task:', err);
     }
   },
 }));

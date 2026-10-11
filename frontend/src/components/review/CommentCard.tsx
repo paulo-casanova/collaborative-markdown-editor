@@ -6,9 +6,13 @@ import {
   CornerDownRight,
   Send,
   AtSign,
+  Plus,
+  CheckSquare,
 } from 'lucide-react';
 import { CommentRecord } from '../../review/types';
 import { useReviewStore } from '../../stores/reviewStore';
+import { TaskCard } from './TaskCard';
+import { NewTaskModal } from './NewTaskModal';
 
 interface CommentCardProps {
   comment: CommentRecord;
@@ -27,10 +31,11 @@ export const CommentCard: React.FC<CommentCardProps> = ({
   collaborators = DEFAULT_COLLABORATORS,
   onScrollToAnchor,
 }) => {
-  const { postReply, toggleCommentStatus, deleteComment, activeItemId, setActiveItemId } =
+  const { postReply, toggleCommentStatus, deleteComment, activeItemId, setActiveItemId, tasks } =
     useReviewStore();
   const [replyText, setReplyText] = useState('');
   const [showReplyForm, setShowReplyForm] = useState(false);
+  const [showTaskModal, setShowTaskModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // @mention autocomplete state
@@ -90,6 +95,38 @@ export const CommentCard: React.FC<CommentCardProps> = ({
       c.username.toLowerCase().includes(mentionQuery || '') ||
       (c.display_name && c.display_name.toLowerCase().includes(mentionQuery || ''))
   );
+
+  const linkedTasks = tasks.filter((t) => t.comment_id === comment.id);
+  const allTasksCompleted = linkedTasks.length > 0 && linkedTasks.every((t) => t.is_completed);
+
+  const renderCommentContent = (content: string) => {
+    const lines = content.split('\n');
+    return lines.map((line, idx) => {
+      const taskMatch = line.match(/^(\s*[-*]\s*)\[([ xX])\]\s*(.*)$/);
+      if (taskMatch) {
+        const isChecked = taskMatch[2].toLowerCase() === 'x';
+        const text = taskMatch[3];
+        return (
+          <div key={idx} className="flex items-center gap-1.5 my-0.5" data-testid="comment-inline-task">
+            <input
+              type="checkbox"
+              checked={isChecked}
+              readOnly
+              className="w-3.5 h-3.5 rounded text-cme-primary cursor-default border-cme-border-base"
+            />
+            <span className={`text-xs ${isChecked ? 'line-through text-cme-text-muted' : 'text-cme-text-base'}`}>
+              {text}
+            </span>
+          </div>
+        );
+      }
+      return (
+        <div key={idx} className="min-h-[1.25rem]">
+          {line || '\u00A0'}
+        </div>
+      );
+    });
+  };
 
   return (
     <div
@@ -178,7 +215,7 @@ export const CommentCard: React.FC<CommentCardProps> = ({
 
       {/* Comment Body */}
       <div className="text-cme-text-base text-xs leading-relaxed mb-3 whitespace-pre-wrap">
-        {comment.content}
+        {renderCommentContent(comment.content)}
       </div>
 
       {/* Nested Replies */}
@@ -200,11 +237,42 @@ export const CommentCard: React.FC<CommentCardProps> = ({
                   {reply.created_at ? new Date(reply.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                 </span>
               </div>
-              <p className="text-cme-text-muted text-[11px] pl-5 leading-normal whitespace-pre-wrap">
-                {reply.content}
-              </p>
+              <div className="text-cme-text-muted text-[11px] pl-5 leading-normal whitespace-pre-wrap">
+                {renderCommentContent(reply.content)}
+              </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Linked Action Item Tasks */}
+      {linkedTasks.length > 0 && (
+        <div className="space-y-1.5 my-2.5 pt-2 border-t border-cme-border-base/40" data-testid="comment-linked-tasks">
+          <div className="flex items-center justify-between text-[11px] font-medium text-cme-text-subtle">
+            <span className="flex items-center gap-1">
+              <CheckSquare className="w-3.5 h-3.5 text-cme-primary" />
+              Action Items ({linkedTasks.filter((t) => t.is_completed).length}/{linkedTasks.length})
+            </span>
+            {allTasksCompleted && !isResolved && (
+              <button
+                type="button"
+                data-testid="resolve-thread-all-tasks-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleCommentStatus(comment.id);
+                }}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 dark:bg-green-950/60 dark:text-green-300 font-semibold hover:bg-green-200 transition-colors"
+                title="All tasks are completed! Click to resolve comment thread"
+              >
+                ✓ Resolve Thread
+              </button>
+            )}
+          </div>
+          <div className="space-y-1 pl-1">
+            {linkedTasks.map((task) => (
+              <TaskCard key={task.id} task={task} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -212,18 +280,33 @@ export const CommentCard: React.FC<CommentCardProps> = ({
       {!isResolved && (
         <div className="mt-2 pt-2 border-t border-cme-border-base/50">
           {!showReplyForm ? (
-            <button
-              type="button"
-              data-testid="toggle-reply-form-btn"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowReplyForm(true);
-              }}
-              className="flex items-center gap-1 text-[11px] font-medium text-cme-primary hover:underline"
-            >
-              <CornerDownRight className="w-3 h-3" />
-              Reply
-            </button>
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                data-testid="toggle-reply-form-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowReplyForm(true);
+                }}
+                className="flex items-center gap-1 text-[11px] font-medium text-cme-primary hover:underline"
+              >
+                <CornerDownRight className="w-3 h-3" />
+                Reply
+              </button>
+
+              <button
+                type="button"
+                data-testid="add-task-to-comment-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowTaskModal(true);
+                }}
+                className="flex items-center gap-1 text-[11px] font-medium text-cme-text-muted hover:text-cme-text-base hover:underline"
+              >
+                <Plus className="w-3 h-3" />
+                Add Action Item
+              </button>
+            </div>
           ) : (
             <div className="space-y-2 relative" onClick={(e) => e.stopPropagation()}>
               <div className="relative">
@@ -234,7 +317,7 @@ export const CommentCard: React.FC<CommentCardProps> = ({
                   value={replyText}
                   onChange={handleReplyChange}
                   placeholder="Write a reply... Type @ to mention"
-                  className="w-full text-xs p-2 rounded-lg border border-cme-border-base bg-cme-bg-elevated text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary"
+                  className="w-full text-xs p-2 rounded-lg border border-cme-border-base bg-cme-bg-elevated text-cme-text-base focus:outline-hidden focus:ring-1 focus:ring-cme-primary"
                 />
 
                 {/* @mention Autocomplete Menu */}
@@ -283,6 +366,12 @@ export const CommentCard: React.FC<CommentCardProps> = ({
           )}
         </div>
       )}
+
+      <NewTaskModal
+        isOpen={showTaskModal}
+        onClose={() => setShowTaskModal(false)}
+        commentId={comment.id}
+      />
     </div>
   );
 };

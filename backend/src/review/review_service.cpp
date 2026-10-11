@@ -943,6 +943,71 @@ Result<std::vector<TaskRecord>> ReviewService::list_tasks(
     return list;
 }
 
+Result<std::vector<TaskRecord>> ReviewService::list_all_tasks(
+    const auth::UserIdentity& user,
+    std::optional<bool> completed_filter,
+    bool assigned_to_me_only
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    std::vector<TaskRecord> list;
+    try {
+        pqxx::work tx(conn_res->get());
+        std::string q =
+            "SELECT t.id::text, t.document_id::text, t.comment_id::text, t.description, "
+            "       t.is_completed, t.due_date::text, t.created_at::text, t.completed_at::text, "
+            "       u.id::text, u.username, u.display_name, u.avatar_color, "
+            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, '') "
+            "FROM tasks t "
+            "JOIN documents d ON t.document_id = d.id "
+            "LEFT JOIN users u ON t.assignee_id = u.id "
+            "WHERE 1=1 ";
+
+        if (completed_filter.has_value()) {
+            q += completed_filter.value() ? "AND t.is_completed = TRUE " : "AND t.is_completed = FALSE ";
+        }
+        if (assigned_to_me_only) {
+            q += "AND t.assignee_id = " + tx.quote(user.user_id) + " ";
+        }
+
+        q += "ORDER BY t.created_at DESC;";
+
+        auto rows = tx.exec(q);
+        for (const auto& row : rows) {
+            std::optional<AuthorInfo> assignee;
+            if (!row[8].is_null()) {
+                assignee = AuthorInfo{
+                    .id = row[8].as<std::string>(),
+                    .username = row[9].as<std::string>(),
+                    .display_name = row[10].as<std::string>(),
+                    .avatar_color = row[11].as<std::string>()
+                };
+            }
+
+            list.push_back(TaskRecord{
+                .id = row[0].as<std::string>(),
+                .document_id = row[1].as<std::string>(),
+                .document_title = row[12].as<std::string>(),
+                .document_path = row[13].as<std::string>(),
+                .comment_id = row[2].is_null() ? std::nullopt : std::optional<std::string>(row[2].as<std::string>()),
+                .description = row[3].as<std::string>(),
+                .assignee = assignee,
+                .is_completed = row[4].as<bool>(),
+                .due_date = row[5].is_null() ? std::nullopt : std::optional<std::string>(row[5].as<std::string>()),
+                .created_at = row[6].as<std::string>(),
+                .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>())
+            });
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::list_all_tasks failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    return list;
+}
+
 Result<TaskRecord> ReviewService::create_task(
     const std::string& document_id,
     const auth::UserIdentity& user,

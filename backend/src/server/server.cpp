@@ -2231,12 +2231,36 @@ Result<void> Server::start() {
                 return;
             }
             broadcast_review_event(task_res.value().document_id, {
-                {"event", "TASK_UPDATED"},
+                {"event", "TASK_TOGGLED"},
                 {"document_id", task_res.value().document_id},
                 {"task", task_res.value().to_json()}
             });
             send_json(res, "200 OK", task_res.value().to_json());
         });
+    });
+
+    // GET /api/v1/tasks (Centralized Task Dashboard)
+    app.get("/api/v1/tasks", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string completed_str = std::string(req->getQuery("completed"));
+        std::optional<bool> completed_filter = std::nullopt;
+        if (completed_str == "true") completed_filter = true;
+        else if (completed_str == "false") completed_filter = false;
+
+        std::string assigned_str = std::string(req->getQuery("assigned_to_me"));
+        bool assigned_to_me_only = (assigned_str == "true" || assigned_str == "1");
+
+        auto list_res = review_service_->list_all_tasks(*user, completed_filter, assigned_to_me_only);
+        if (!list_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list tasks"}});
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& t : list_res.value()) {
+            out.push_back(t.to_json());
+        }
+        send_json(res, "200 OK", out);
     });
 
     // DELETE /api/v1/tasks/:id

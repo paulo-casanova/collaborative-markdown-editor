@@ -8,6 +8,7 @@ import { ReaderPage } from './pages/ReaderPage';
 import { TrashPage } from './pages/TrashPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
+import { TaskDashboardPage } from './pages/TaskDashboardPage';
 import { TestEditorPage } from './pages/TestEditorPage';
 import { TestCollabPage } from './pages/TestCollabPage';
 
@@ -30,6 +31,7 @@ export const App: React.FC = () => {
             <Route path="documents/:id" element={<EditorPage />} />
             <Route path="docs/:id" element={<ReaderPage />} />
             <Route path="docs/*" element={<ReaderPage />} />
+            <Route path="tasks" element={<TaskDashboardPage />} />
             <Route path="trash" element={<TrashPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="admin" element={<AdminPage />} />

@@ -1310,3 +1310,54 @@ This document tracks the incremental implementation of the Collaborative Markdow
   100% tests passed, 0 tests failed out of 13
   ```
   *Status criteria:* Highlight a sentence, click "Suggest Edit", enter replacement text; in second session, click "Accept"; document text updates with replacement across both sessions and suggestion card marks as accepted.
+
+---
+
+### Step 6.3: Task Management Dashboard & Real-Time Event Fanout
+* **Status:** Complete (Commit: `master`)
+* **Deliverables:**
+  * Backend Global Task Query & Serialization (`cme::review::ReviewService`, `cme::server::Server`):
+    * Enhanced `TaskRecord` struct with `document_title` and `document_path` fields.
+    * Implemented `ReviewService::list_all_tasks` querying `tasks` joined with `documents` and `users`, filtering by completion status (`completed=true/false`) and current user assignment (`assigned_to_me=true`).
+    * Added REST endpoint `GET /api/v1/tasks` with authenticated query parameter filtering.
+    * Broadcasted WebSocket opcode `0x02` events (`TASK_CREATED`, `TASK_TOGGLED`, `TASK_DELETED`) on all task mutations.
+  * Centralized Task Dashboard Page (`frontend/src/pages/TaskDashboardPage.tsx` at `/tasks`):
+    * Summary metric cards for Total Tasks, Open Items, Completed Tasks, and Assigned to Me.
+    * Filter tab controls: "All", "Assigned to Me", "Incomplete", "Completed".
+    * Live keyword search filtering across task description, document title, and file path.
+    * Document-grouped layout with direct navigation links (`Open Document`).
+    * Instant interactive checkbox completion toggling with optimistic TanStack Query cache updates (<100ms).
+  * Review Sidebar & Comment Action Items Integration (`NewTaskModal.tsx`, `ReviewSidebar.tsx`, `CommentCard.tsx`):
+    * Added "+ Add Task" button and modal composer for creating action items in review sidebar and linked to specific comment threads.
+    * Markdown checklist parsing (`- [ ]`, `- [x]`) inside review comment body and replies.
+    * Linked tasks list rendered directly within comment threads with 1-click "Resolve Thread" shortcut when all action items are completed.
+    * Sidebar navigation link for `Task Dashboard` with `CheckSquare` icon.
+  * Automated Playwright E2E Test Suite (`frontend/tests/e2e/task_management_dashboard.spec.ts`):
+    * Status criteria verification: Post a task via curl/REST endpoint `POST /api/v1/documents/$DOC_ID/tasks`; task card appears immediately in the browser Review Sidebar via WebSocket opcode `0x02` without page reload; patch toggle updates checkbox in real-time.
+    * Centralized Task Dashboard verification: verifies metric cards, tab filtering, search filtering, document links, and completion toggles.
+    * Markdown review comments checklist verification and linked action item thread resolution shortcut.
+* **Verification:**
+  ```bash
+  $ npx playwright test tests/e2e/task_management_dashboard.spec.ts
+  Running 3 tests using 3 workers
+    ✓ Status criteria: Post a task via REST endpoint; task card appears immediately in Review Sidebar via WebSocket opcode 0x02 without refresh (683ms)
+    ✓ Centralized Task Dashboard: aggregates tasks, supports tab filtering, search, and toggle completion (789ms)
+    ✓ Review comment with inline markdown tasks and linked action items shortcut (788ms)
+    3 passed (2.7s)
+
+  $ npm run test:e2e
+  Running 26 tests using 12 workers
+    26 passed (8.1s)
+
+  $ npm run test:unit
+  ✓ tests/unit/text_anchoring.spec.ts (10)
+    10 passed (605ms)
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 13
+
+  $ npx tsc --noEmit
+  Exit code 0 (0 errors)
+  ```
+  *Status criteria:* Post a task via curl REST endpoint: `POST /api/v1/documents/$DOC_ID/tasks`. Task card appears immediately in the browser Review Sidebar via WebSocket opcode `0x02`.
+

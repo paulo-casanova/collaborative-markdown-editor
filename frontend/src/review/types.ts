@@ -98,6 +98,8 @@ export interface SuggestionRecord {
 export interface TaskRecord {
   id: string;
   document_id: string;
+  document_title?: string;
+  document_path?: string;
   comment_id?: string | null;
   description: string;
   assignee?: AuthorInfo | null;

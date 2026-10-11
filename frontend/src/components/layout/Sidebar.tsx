@@ -7,6 +7,7 @@ import {
   Settings,
   Shield,
   Search,
+  CheckSquare,
 } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 import { fetchCurrentUser } from '../../api/auth';
@@ -56,6 +57,19 @@ export const Sidebar: React.FC = () => {
         >
           <FolderTree className="w-4 h-4" />
           <span>Workspace Explorer</span>
+        </Link>
+
+        <Link
+          to="/tasks"
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+            isActive('/tasks')
+              ? 'bg-cme-primary/10 text-cme-primary font-medium'
+              : 'text-cme-text-base hover:bg-cme-bg-hover'
+          }`}
+          data-testid="sidebar-tasks-link"
+        >
+          <CheckSquare className="w-4 h-4" />
+          <span>Task Dashboard</span>
         </Link>
 
         <Link

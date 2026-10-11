@@ -143,3 +143,25 @@ export async function deleteTask(taskId: string): Promise<void> {
     method: 'DELETE',
   });
 }
+
+export async function fetchAllTasks(
+  completedFilter?: boolean,
+  assignedToMe?: boolean
+): Promise<TaskRecord[]> {
+  try {
+    const params = new URLSearchParams();
+    if (completedFilter !== undefined) {
+      params.set('completed', String(completedFilter));
+    }
+    if (assignedToMe) {
+      params.set('assigned_to_me', 'true');
+    }
+    const qs = params.toString();
+    const endpoint = `/api/v1/tasks${qs ? `?${qs}` : ''}`;
+    return await apiRequest<TaskRecord[]>(endpoint);
+  } catch (err) {
+    console.warn('[ReviewAPI] fetchAllTasks failed:', err);
+    return [];
+  }
+}
+
