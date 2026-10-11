@@ -8,6 +8,7 @@ import {
   AlertCircle,
   Package,
   X,
+  AlignLeft,
 } from 'lucide-react';
 import { fetchDocument } from '../../api/documents';
 import { fetchCurrentUser } from '../../api/auth';
@@ -16,6 +17,7 @@ import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { Badge } from '../common/Badge';
 import { CollaborativeEditor } from '../editor/CollaborativeEditor';
 import { CmeCollabProvider } from '../../api/collabProvider';
+import { DocumentOutline } from '../navigation/DocumentOutline';
 
 interface EditorPaneProps {
   documentId: string;
@@ -34,6 +36,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const { updateTabMetadata } = useWorkspaceStore();
   const queryClient = useQueryClient();
   const [provider, setProvider] = useState<CmeCollabProvider | null>(null);
+  const [showOutline, setShowOutline] = useState<boolean>(false);
 
   const { data: user } = useQuery({
     queryKey: ['auth-me'],
@@ -157,6 +160,20 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => setShowOutline(!showOutline)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                showOutline
+                  ? 'bg-cme-primary text-white border-cme-primary'
+                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+              }`}
+              title="Toggle Document Outline"
+              data-testid="editor-outline-toggle"
+            >
+              <AlignLeft className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Outline</span>
+            </button>
+
             <Link
               to={`/docs/${document.id}`}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
@@ -199,6 +216,13 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
           </span>
         </div>
       </div>
+
+      {/* Optional Document Outline Accordion */}
+      {showOutline && (
+        <div className="border border-cme-border-base rounded-xl bg-cme-bg-surface p-1 shadow-sm flex-shrink-0">
+          <DocumentOutline markdown={document.content} />
+        </div>
+      )}
 
       {/* TipTap Collaborative Editor */}
       <div className="flex-1 overflow-y-auto">

@@ -1128,7 +1128,53 @@ This document tracks the incremental implementation of the Collaborative Markdow
   $ ctest --test-dir build --output-on-failure
   100% tests passed, 0 tests failed out of 13
   ```
-  *Status criteria:* Multi-document editing, drag reordering, and dual-pane split views function seamlessly; workspace state restores accurately across page reloads; 100% passing across backend and frontend test suites.
+---
+
+### Step 5.3: Table of Contents & Documentation Reader View (`DocReader`)
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * `DocumentOutline` Component (`frontend/src/components/navigation/DocumentOutline.tsx`):
+    * Table of Contents with automatic heading slug generation (`slugify`) and typographic indentation (H1 to H6).
+    * Viewport-aware scroll-spy utilizing element bounding rects to dynamically highlight the active heading during reader scrolling.
+    * Smooth scroll-into-view navigation on heading click with animation lock preventing intermediate active state clobbering.
+    * Dynamic section counter badge and fallback empty state for documents without headings.
+  * Dedicated `DocReader` Route & Layout (`frontend/src/pages/ReaderPage.tsx` at `/docs/:id` and `/docs/*`):
+    * Route resolution matching both UUID identifiers and relative file paths (e.g. `/docs/guides/intro.md`), with automatic `workspace/` prefix reconciliation.
+    * Distraction-free reading experience: editor toolbar and collaborative cursors are completely omitted.
+    * Typography controls: font switcher (Sans, Serif, Mono) and reading container width switcher (Focused, Standard, Fluid).
+    * Rich Markdown rendering: KaTeX display math (`$$...$$`) and inline math (`$...$`), interactive Mermaid diagram SVG rendering, code blocks with syntax highlighting and copy-to-clipboard button, task list checkboxes, and clickable Obsidian-style `[[wikilinks]]`.
+    * Review Overlay toggle: `Reviews: ON / OFF` button (`data-testid="review-overlay-toggle"`).
+    * Review Overlay panel (`data-testid="review-overlay-panel"`) displaying discussion comments, diff suggestions, and assigned tasks fetched from `/api/v1/documents/:id/comments`, `/suggestions`, and `/tasks`.
+    * Seamless transition button to collaborative editor at `/documents/:id`.
+  * Document Outline Integration in Editor (`frontend/src/components/workspace/EditorPane.tsx`):
+    * Header `Outline` toggle button mounting collapsible `DocumentOutline` inside the editor view.
+  * Review and HTML API Endpoints (`frontend/src/api/documents.ts`):
+    * Added `fetchDocumentHtml`, `fetchDocumentComments`, `fetchDocumentSuggestions`, and `fetchDocumentTasks`.
+  * Playwright E2E Test Suite (`frontend/tests/e2e/doc_reader_toc.spec.ts`):
+    * 4 automated browser tests:
+      1. Path-based navigation (`/docs/guides/intro.md`), distraction-free view, and Table of Contents display.
+      2. Clicking an H2 entry in the right-hand TOC, verifying target heading and active heading indicator.
+      3. Clean toggling of Review Overlay panel.
+      4. UUID navigation and seamless switching between Reader view and Collaborative Editor with outline accordion.
+* **Verification:**
+  ```bash
+  $ npx playwright test tests/e2e/doc_reader_toc.spec.ts
+  Running 4 tests using 4 workers
+    ✓ clicks an H2 entry in right-hand TOC and updates active heading status (506ms)
+    ✓ navigates to DocReader route by path, renders distraction-free layout with no editor tools (556ms)
+    ✓ toggles Review Overlay cleanly showing discussions and annotations (637ms)
+    ✓ navigates by UUID and seamlessly switches between Reader view and Collaborative Editor (790ms)
+    4 passed (2.6s)
+
+  $ npx playwright test
+  Running 21 tests using 12 workers
+    21 passed (4.8s)
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 13
+  ```
+  *Status criteria:* View scrolls smoothly to the target section; editing tools are hidden; comment overlay toggles cleanly; 100% passing across backend and frontend test suites.
 
 
 

@@ -28,8 +28,8 @@ export const RecentDocuments: React.FC = () => {
 
   const { data: recents, isLoading } = useQuery({
     queryKey: ['recent-documents'],
-    queryFn: () => fetchRecentDocuments(10),
-    staleTime: 30000,
+    queryFn: () => fetchRecentDocuments(30),
+    staleTime: 5000,
   });
 
   return (

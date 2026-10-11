@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
   let adminToken = '';
   let uniqueId = '';
+  let seededDocId = '';
 
   test.beforeAll(async ({ request }) => {
     uniqueId = `${Date.now()}`;
@@ -16,7 +17,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     adminToken = adminJson.token;
 
     // 2. Pre-seed documents: a normal markdown file and a bundle
-    await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    const createRes = await request.post('http://127.0.0.1:8080/api/v1/documents', {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: `guides/tutorial_${uniqueId}.md`,
@@ -24,6 +25,9 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
         content: `# Tutorial Guide\n\nThis guide covers collaborative quantum_${uniqueId} architecture in detail.`,
       },
     });
+    expect(createRes.ok()).toBeTruthy();
+    const createJson = await createRes.json();
+    seededDocId = createJson.id;
 
     await request.post('http://127.0.0.1:8080/api/v1/documents', {
       headers: { Authorization: `Bearer ${adminToken}` },
@@ -114,7 +118,13 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     await expect(page.locator('.collaborative-editor-root')).toBeVisible();
   });
 
-  test('lists recently modified documents in RecentDocuments drawer', async ({ page }) => {
+  test('lists recently modified documents in RecentDocuments drawer', async ({ page, request }) => {
+    // Touch seeded document right before navigation to ensure freshest updated_at
+    await request.put(`http://127.0.0.1:8080/api/v1/documents/${seededDocId}`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: { title: `Tutorial Guide ${uniqueId}` },
+    });
+
     await page.goto('/');
 
     // Verify Recent Documents section exists

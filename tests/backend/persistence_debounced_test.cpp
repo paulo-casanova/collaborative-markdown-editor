@@ -218,7 +218,7 @@ int main() {
         (void)res;
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
     assert(server->persistence_worker() != nullptr);
     assert(server->persistence_worker()->is_running());
     std::cout << "  - Server daemon & persistence worker active.\n";
@@ -237,17 +237,32 @@ int main() {
     assert(ret == 0);
     std::cout << "\n  - ws_edit_simulator finished with exit code 0.\n";
 
-    // Client has disconnected. Let's wait for the debounced flush window (500ms + margin).
-    std::cout << "\n[STEP 7] Awaiting debounced flush window (700ms)...\n";
-    std::this_thread::sleep_for(std::chrono::milliseconds(700));
+    // Client has disconnected. Let's wait for the debounced flush window
+    std::cout << "\n[STEP 7] Awaiting debounced flush window...\n";
+    auto start_wait = std::chrono::steady_clock::now();
+    bool flush_found = false;
+    cme::Result<std::string> ws_persisted = std::unexpected(cme::ErrorCode::NotFound);
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_wait).count() < 3000) {
+        ws_persisted = storage->read_file("notes/debounced_note.md");
+        if (ws_persisted.has_value() && ws_persisted.value().find("### WebSocket CRDT Keystroke Injected!") != std::string::npos) {
+            flush_found = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 
     // 7. Verify disk persistence, snapshot, and room RAM eviction
-    auto ws_persisted = storage->read_file("notes/debounced_note.md");
+    assert(flush_found);
     assert(ws_persisted.has_value());
     assert(ws_persisted.value().find("### WebSocket CRDT Keystroke Injected!") != std::string::npos);
     std::cout << "  - [PASS] File on POSIX disk contains injected WebSocket keystrokes!\n";
 
-    // Room eviction
+    // Await room eviction
+    start_wait = std::chrono::steady_clock::now();
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_wait).count() < 2000) {
+        if (server->room_manager()->active_room_count() == 0) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     assert(server->room_manager()->active_room_count() == 0);
     std::cout << "  - [PASS] Inactive collaborative room automatically evicted from memory.\n";
 

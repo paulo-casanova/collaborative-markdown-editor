@@ -74,3 +74,72 @@ export async function purgeTrash(id: string): Promise<{ status: string; id: stri
 export async function fetchRawMarkdown(id: string): Promise<string> {
   return apiRequest<string>(`/api/v1/documents/${id}/raw`);
 }
+
+export interface ReviewComment {
+  id: string;
+  document_id: string;
+  user_id: string;
+  username?: string;
+  content: string;
+  anchor_offset?: number;
+  anchor_length?: number;
+  quote?: string;
+  created_at: string;
+}
+
+export interface ReviewSuggestion {
+  id: string;
+  document_id: string;
+  user_id: string;
+  username?: string;
+  original_text: string;
+  suggested_text: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  created_at: string;
+}
+
+export interface ReviewTask {
+  id: string;
+  document_id: string;
+  user_id: string;
+  description: string;
+  is_completed: boolean;
+  created_at: string;
+}
+
+export async function fetchDocumentHtml(
+  target: string,
+  isPath: boolean = false,
+  includeReviews: boolean = false
+): Promise<string> {
+  const endpoint = isPath
+    ? `/api/v1/documents/by-path/html?path=${encodeURIComponent(target)}&include_reviews=${includeReviews}&standalone=false`
+    : `/api/v1/documents/${target}/html?include_reviews=${includeReviews}&standalone=false`;
+  return apiRequest<string>(endpoint, {
+    headers: { Accept: 'text/html' },
+  });
+}
+
+export async function fetchDocumentComments(id: string): Promise<ReviewComment[]> {
+  try {
+    return await apiRequest<ReviewComment[]>(`/api/v1/documents/${id}/comments`);
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchDocumentSuggestions(id: string): Promise<ReviewSuggestion[]> {
+  try {
+    return await apiRequest<ReviewSuggestion[]>(`/api/v1/documents/${id}/suggestions`);
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchDocumentTasks(id: string): Promise<ReviewTask[]> {
+  try {
+    return await apiRequest<ReviewTask[]>(`/api/v1/documents/${id}/tasks`);
+  } catch {
+    return [];
+  }
+}
