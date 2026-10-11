@@ -178,5 +178,11 @@ set_tests_properties(review_engine_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# LLM Tooling & REST Automation Integration test (Step 7.1)
+add_test(NAME e2e_llm_agent_simulation_test COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/e2e_llm_agent_simulation.py)
+set_tests_properties(e2e_llm_agent_simulation_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 

@@ -1361,3 +1361,58 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
   *Status criteria:* Post a task via curl REST endpoint: `POST /api/v1/documents/$DOC_ID/tasks`. Task card appears immediately in the browser Review Sidebar via WebSocket opcode `0x02`.
 
+---
+
+### Step 7.1: LLM Tooling & REST Automation Integration Test
+* **Status:** Complete (Commit: `master`)
+* **Deliverables:**
+  * End-to-End LLM Agent Simulation Suite (`tests/e2e_llm_agent_simulation.py`):
+    * Automated test script simulating an autonomous AI reviewer performing 5 core operations:
+      1. Read directory tree (`GET /api/v1/workspaces/tree`) to locate document targets.
+      2. Read raw Markdown content (`GET /api/v1/documents/{id}/raw`) without proprietary review markup.
+      3. Post contextual review comment (`POST /api/v1/documents/{id}/comments`) anchored to specific document text with real-time WebSocket Opcode `0x02` notification (`COMMENT_CREATED`).
+      4. Propose inline text replacement suggestion (`POST /api/v1/documents/{id}/suggestions`) with Opcode `0x02` notification (`SUGGESTION_CREATED`).
+      5. Create and resolve action item task (`POST /api/v1/documents/{id}/tasks` and `PATCH /api/v1/tasks/{id}`) with Opcode `0x02` notification (`TASK_TOGGLED`).
+    * Full database persistence validation confirming comment `OPEN`, suggestion `PENDING`, and task `is_completed: True`.
+    * Integrated into CTest suite in `tests/CMakeLists.txt` as `e2e_llm_agent_simulation_test`.
+* **Verification:**
+  ```bash
+  $ python3 tests/e2e_llm_agent_simulation.py --token $API_TOKEN
+  ======================================================================
+  === Phase 7, Step 7.1: LLM Tooling & REST Automation Integration Test ===
+  ======================================================================
+  [INIT] CME Server active
+  [AUTH] Using provided API token.
+  [SETUP] Created test document: ID=..., Path='specs/agent_review_....md'
+  [WS] Connected to document room. Listening for opcode 0x02 events...
+
+  --- Action 1: Read directory tree (GET /api/v1/workspaces/tree) ---
+    [PASS] Action 1: Successfully inspected workspace tree.
+
+  --- Action 2: Read document content (GET /api/v1/documents/{id}/raw) ---
+    [PASS] Action 2: Successfully retrieved raw markdown content.
+
+  --- Action 3: Post review comment (POST /api/v1/documents/{id}/comments) ---
+  [WS] Received Opcode 0x02 event: COMMENT_CREATED
+    [PASS] Action 3: Posted review comment and verified Opcode 0x02 COMMENT_CREATED fanout.
+
+  --- Action 4: Propose text suggestion (POST /api/v1/documents/{id}/suggestions) ---
+  [WS] Received Opcode 0x02 event: SUGGESTION_CREATED
+    [PASS] Action 4: Proposed edit suggestion and verified Opcode 0x02 SUGGESTION_CREATED fanout.
+
+  --- Action 5: Resolve task (PATCH /api/v1/tasks/{id}) ---
+  [WS] Received Opcode 0x02 event: TASK_CREATED
+  [WS] Received Opcode 0x02 event: TASK_TOGGLED
+    [PASS] Action 5: Resolved task and verified Opcode 0x02 TASK_TOGGLED fanout.
+
+  --- Verifying Authoritative Relational Database State ---
+    [PASS] Database state verified: comment OPEN, suggestion PENDING, task COMPLETED.
+
+  🎉 ALL 5 AI AGENT AUTOMATION ACTIONS PASSED!
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 14
+  ```
+  *Status criteria:* Script executes all 5 actions successfully; assertions confirm database records and WebSocket notifications emit as expected.
+
+
