@@ -711,6 +711,51 @@ Result<SuggestionRecord> ReviewService::accept_suggestion(
                 }
             }
 
+            // Strategy B quote fallback
+            if (!located && rec.anchor.contains("quote") && rec.anchor["quote"].is_object()) {
+                const auto& q = rec.anchor["quote"];
+                std::string exact = q.value("exact", "");
+                std::string prefix = q.value("prefix", "");
+                std::string suffix = q.value("suffix", "");
+                if (!exact.empty()) {
+                    if (!prefix.empty() && !suffix.empty()) {
+                        std::string full_pattern = prefix + exact + suffix;
+                        size_t p = content.find(full_pattern);
+                        if (p != std::string::npos) {
+                            offset = static_cast<uint32_t>(p + prefix.size());
+                            len = static_cast<uint32_t>(exact.size());
+                            located = true;
+                        }
+                    }
+                    if (!located && !prefix.empty()) {
+                        std::string pre_pattern = prefix + exact;
+                        size_t p = content.find(pre_pattern);
+                        if (p != std::string::npos) {
+                            offset = static_cast<uint32_t>(p + prefix.size());
+                            len = static_cast<uint32_t>(exact.size());
+                            located = true;
+                        }
+                    }
+                    if (!located && !suffix.empty()) {
+                        std::string post_pattern = exact + suffix;
+                        size_t p = content.find(post_pattern);
+                        if (p != std::string::npos) {
+                            offset = static_cast<uint32_t>(p);
+                            len = static_cast<uint32_t>(exact.size());
+                            located = true;
+                        }
+                    }
+                    if (!located) {
+                        size_t p = content.find(exact);
+                        if (p != std::string::npos) {
+                            offset = static_cast<uint32_t>(p);
+                            len = static_cast<uint32_t>(exact.size());
+                            located = true;
+                        }
+                    }
+                }
+            }
+
             if (!located && !rec.original_text.empty()) {
                 size_t pos = content.find(rec.original_text);
                 if (pos != std::string::npos) {

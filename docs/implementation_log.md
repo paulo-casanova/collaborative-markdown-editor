@@ -1176,14 +1176,76 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
   *Status criteria:* View scrolls smoothly to the target section; editing tools are hidden; comment overlay toggles cleanly; 100% passing across backend and frontend test suites.
 
+---
 
+### Step 6.1: Dual Text-Anchoring Engine
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Type System for Reviews & Anchoring (`frontend/src/review/types.ts`):
+    * `RelativePositionPoint`, `YjsRelativePosition`, `DualAnchor`, `W3CQuoteSelector`, `ReconciliationStatus`, `ReconciledAnchorResult`.
+    * Review domain model types: `CommentRecord`, `SuggestionRecord`, `TaskRecord`, `AuthorInfo`.
+  * Dual Text-Anchoring Engine (`frontend/src/review/textAnchoring.ts` and `frontend/src/utils/textAnchoring.ts`):
+    * **Strategy A (CRDT Relative Position Tracking):**
+      * `createRelativePosition`: Calculates Yjs relative positions (`anchor`, `head`) bound to immutable token IDs in the CRDT model.
+      * `resolveRelativePosition`: Resolves relative position coordinates back to absolute offsets in current document state.
+      * Preserves highlights through local and concurrent remote edits without database mutations.
+    * **Strategy B (W3C Web Annotation TextQuoteSelector Fallback):**
+      * `createQuoteSelector`: Extracts W3C Web Annotation compliant `exact`, `prefix`, and `suffix` context around the annotated text span.
+      * `matchQuoteSelector`: Multi-tiered quote resolution (full context prefix+exact+suffix, partial context prefix+exact / exact+suffix, exact occurrence with proximity disambiguation, and sliding-window fuzzy search).
+      * Recovers anchor coordinates when document is edited externally (e.g. Git / CLI editors) or CRDT clocks desynchronize.
+    * **Anchor Drift Reconciliation:**
+      * `reconcileAnchor`: Evaluates CRDT relative positions first; falls back to W3C quote matching and localized fuzzy search; dynamically regenerates relative positions on external edit detection; flags removed text as `'orphaned'`.
+      * `reconcileDocumentReviewItems`: Batch reconciles all open comments and suggestions when a document is opened.
+  * Backend Suggestion Acceptance Enhancement (`backend/src/review/review_service.cpp`):
+    * Extended `accept_suggestion` in `cme::review::ReviewService` to support Strategy B quote fallback (`exact`, `prefix`, `suffix`) when applying CRDT replacement deltas.
+  * Unit Testing Infrastructure (`frontend/vitest.config.ts`, `frontend/scripts/run-unit.js`, `frontend/package.json`):
+    * Configured Vitest 2.1 runner isolated from Playwright E2E tests.
+    * Configured `test:unit` npm script accepting `--spec <file>` parameter.
+  * Unit Test Suite (`frontend/tests/unit/text_anchoring.spec.ts`):
+    * 10 automated unit tests verifying:
+      1. Core Status Criteria: Anchoring comment at offset 100, inserting 50 characters at offset 10, confirming dynamic update to offset 150 without losing text reference (`Conflict-free Replicated Data Types`).
+      2. Backwards drift when characters are deleted prior to anchor.
+      3. Multi-peer concurrent editing synchronization across independent Y.Docs.
+      4. Internal anchor expansion when text is inserted directly inside the anchored span.
+      5. Strategy B quote recovery upon CRDT clock desynchronization (external edits).
+      6. Context-aware disambiguation of duplicate phrases.
+      7. Localized fuzzy matching for minor wording alterations.
+      8. Orphaned anchor identification on complete text deletion.
+      9. Full document batch reconciliation.
+      10. Fuzzy string similarity metric validation.
+* **Verification:**
+  ```bash
+  $ npm run test:unit -- --spec text_anchoring.spec.ts
+  RUN  v2.1.9 /home/pasc/cme/frontend
 
+  ✓ tests/unit/text_anchoring.spec.ts (10)
+    ✓ Step 6.1: Dual Text-Anchoring Engine (10)
+      ✓ Core Status Criteria Verification (1)
+        ✓ anchors a comment to character offset 100, inserts 50 characters at offset 10, and confirms anchor dynamically updates to offset 150 without losing text reference
+      ✓ Strategy A: CRDT Relative Position Tracking (3)
+        ✓ shifts anchor backwards when text is deleted prior to the anchor
+        ✓ preserves anchor positions through multi-client peer synchronization
+        ✓ expands anchor range when text is inserted directly inside the anchored span
+      ✓ Strategy B: W3C Web Annotation Quote Fallback (External Edits) (4)
+        ✓ recovers anchor coordinates using exact quote + prefix + suffix when CRDT clocks desynchronize
+        ✓ disambiguates recurring phrases using surrounding context prefix/suffix
+        ✓ performs localized fuzzy matching when small wording variations occur
+        ✓ flags anchor as orphaned when the target text was completely removed
+      ✓ Document Open Batch Reconciliation (1)
+        ✓ batch reconciles comment threads and suggestions across full document
+      ✓ String Similarity and Helpers (1)
+        ✓ computes accurate similarity metrics for fuzzy text comparison
 
+  Test Files  1 passed (1)
+        Tests  10 passed (10)
+     Duration  592ms
 
+  $ npm run test:e2e
+  Running 21 tests using 12 workers
+    21 passed (4.8s)
 
-
-
-
-
-
-
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 13
+  ```
+  *Status criteria:* Unit test anchors a comment to character offset 100, inserts 50 characters at offset 10, and confirms anchor dynamically updates to offset 150 without losing text reference; 10/10 unit tests, 21/21 Playwright tests, and 13/13 CTests passing.
