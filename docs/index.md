@@ -24,7 +24,10 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 * [User & Team Administration API & CLI](api/admin.md): Administrative user and team CRUD, DAG hierarchy management, and `cme-admin` CLI.
 * **WebSocket Framing Protocol**: Binary wire protocol opcodes (`0x00`–`0x04`) and CRDT synchronization deltas.
 
-### 5. Deployment & Operations *(Coming in Phase 7)*
+### 5. Real-Time Collaborative Engine
+* [Native Yjs CRDT C-FFI Architecture](crdt/yrs_ffi.md): Integration of `y-crdt` / `yrs` C-FFI (`libyrs`), `CrdtDoc` RAII model, and in-memory room coordination.
+
+### 6. Deployment & Operations *(Coming in Phase 7)*
 * **Configuration Reference**: Complete YAML schema and environment variable overrides.
 * **Deployment Topologies**: Embedded single-binary execution vs. Nginx reverse-proxy setup.
 * **Backup & Disaster Recovery**: Coordinated two-phase snapshotting, retention rotation, and recovery runbook.

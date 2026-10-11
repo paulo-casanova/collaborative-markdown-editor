@@ -9,6 +9,7 @@ pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
 
 find_library(USOCKETS_LIB uSockets PATHS "$ENV{HOME}/.local/usr/lib" REQUIRED)
 find_library(CRYPT_LIB crypt REQUIRED)
+find_library(YRS_LIB yrs PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/yrs/lib" "$ENV{HOME}/.local/usr/lib" REQUIRED)
 
 # md4c Markdown Parser (vendored C library)
 add_library(md4c STATIC
@@ -37,12 +38,16 @@ add_library(cme_core
     src/document/document_service.cpp
     src/renderer/markdown_renderer.cpp
     src/admin/admin_service.cpp
+    src/collab/crdt_doc.cpp
+    src/collab/document_room.cpp
+    src/collab/room_manager.cpp
     src/server/server.cpp
 )
 
 target_include_directories(cme_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/yrs/include>
         $<INSTALL_INTERFACE:include>
         "$ENV{HOME}/.local/usr/include"
 )
@@ -67,6 +72,7 @@ target_link_libraries(cme_core
         OpenSSL::Crypto
         ZLIB::ZLIB
         ${CRYPT_LIB}
+        ${YRS_LIB}
         md4c
 )
 

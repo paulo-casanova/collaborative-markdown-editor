@@ -483,7 +483,78 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ## Phase 3: Real-Time Collaborative Engine (CRDT & WebSockets)
 
 ### Step 3.1: Native Yjs CRDT C-FFI Integration
+* **Status:** Complete (Commit: Pending)
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Vendored official `y-crdt` (`yrs` / `yffi` v0.28.0) C-FFI header and shared library in `backend/third_party/yrs/include/libyrs.h` and `backend/third_party/yrs/lib/libyrs.so`.
+  * CMake build system integration discovering `libyrs` via `find_library` and linking with `cme_core`.
+  * Modern C++23 RAII container `cme::collab::CrdtDoc` (`backend/include/cme/collab/crdt_doc.hpp`, `backend/src/collab/crdt_doc.cpp`):
+    * Move-only ownership semantics managing `YDoc*`.
+    * Text manipulation on named branches (`insert_text`, `delete_text`, `set_text`, `get_text`, `get_text_length`).
+    * Lib0 v1 state vector extraction (`get_state_vector`) for `SyncStep1`.
+    * Differential delta generation (`get_state_diff`) against remote state vectors for `SyncStep2` or full document state snapshots.
+    * Atomic binary update ingestion (`apply_update`).
+  * In-memory collaborative room model `cme::collab::DocumentRoom` (`backend/include/cme/collab/document_room.hpp`, `backend/src/collab/document_room.cpp`):
+    * Mutex-guarded thread-safe CRDT mutations.
+    * Connected peer presence tracking (`PeerInfo`: `client_id`, `username`, `display_name`, `avatar_color`).
+    * Dirty state lifecycle tracking (`is_dirty_`, `last_edit_time_`, `last_flush_time_`) for debounced disk persistence.
+  * In-memory room coordinator `cme::collab::RoomManager` (`backend/include/cme/collab/room_manager.hpp`, `backend/src/collab/room_manager.cpp`):
+    * Multi-room lifecycle management (`get_or_create_room`, `get_room`, `remove_room`).
+    * Dirty room enumeration for background disk flusher workers.
+    * Wiring into `Server::get_health_status()` reporting active room counts.
+  * Integration test suite in `tests/backend/ycrdt_cffi_integration_test.cpp`.
+  * Architecture documentation in `docs/crdt/yrs_ffi.md` and indexed in `docs/index.md`.
+* **Verification:**
+  ```bash
+  $ ./build/tests/ycrdt_cffi_integration_test
+  ========================================================
+  === Native Yjs CRDT C-FFI Integration Test Suite     ===
+  ========================================================
+
+  [TEST 1] Testing CrdtDoc text operations and serialization...
+    [PASS] CrdtDoc text insertions, deletions, and set_text verified.
+
+  [TEST 2] Testing two-party Yjs binary sync protocol...
+    [PASS] Initial state synchronization (SyncStep1 -> SyncStep2) verified.
+
+  [TEST 3] Testing concurrent out-of-order edits and convergence...
+    Room A text: "The very quick brown fox jumps over the lazy dog."
+    Room B text: "The quick brown fox jumps over the extremely lazy dog in the park."
+    Converged text: "The very quick brown fox jumps over the extremely lazy dog in the park."
+    [PASS] Concurrent editing arrived at identical converged content.
+
+  [TEST 4] Testing three-peer diamond CRDT reconciliation...
+    3-Peer Converged text: "Base [Edit3] [Edit1] [Edit2]"
+    [PASS] Three-peer diamond reconciliation verified.
+
+  [TEST 5] Testing DocumentRoom dirty tracking and peer presence...
+    [PASS] DocumentRoom dirty tracking and peer presence validated.
+
+  [TEST 6] Testing RoomManager coordination...
+    [PASS] RoomManager room lifecycle and dirty querying validated.
+
+  [SUCCESS] Step 3.1 Native Yjs CRDT C-FFI Integration Test Suite passed 100%!
+
+  $ ctest --test-dir build --output-on-failure
+  1/10 Test  #1: version_test .....................   Passed    0.00 sec
+  2/10 Test  #2: smoke_test .......................   Passed    0.00 sec
+  3/10 Test  #3: db_permissions_dag_test ..........   Passed    0.06 sec
+  4/10 Test  #4: posix_storage_sal_test ...........   Passed    0.03 sec
+  5/10 Test  #5: server_health_test ...............   Passed    0.32 sec
+  6/10 Test  #6: auth_engine_test .................   Passed    0.96 sec
+  7/10 Test  #7: document_workspace_api_test ......   Passed    0.58 sec
+  8/10 Test  #8: markdown_renderer_test ...........   Passed    0.29 sec
+  9/10 Test  #9: admin_management_test ............   Passed    1.30 sec
+ 10/10 Test #10: ycrdt_cffi_integration_test ......   Passed    0.00 sec
+
+  100% tests passed, 0 tests failed out of 10
+  ```
+
+---
+
+### Step 3.2: WebSocket Server & Binary Wire Protocol Multiplexer
 * **Status:** Upcoming
+
 
 
 

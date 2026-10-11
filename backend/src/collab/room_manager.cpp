@@ -1,0 +1,51 @@
+#include "cme/collab/room_manager.hpp"
+
+namespace cme::collab {
+
+std::shared_ptr<DocumentRoom> RoomManager::get_or_create_room(
+    const std::string& document_id,
+    const std::string& initial_content,
+    const std::string& fs_path
+) {
+    std::lock_guard lock(mutex_);
+    auto it = rooms_.find(document_id);
+    if (it != rooms_.end()) {
+        return it->second;
+    }
+
+    auto room = std::make_shared<DocumentRoom>(document_id, initial_content, fs_path);
+    rooms_[document_id] = room;
+    return room;
+}
+
+std::shared_ptr<DocumentRoom> RoomManager::get_room(const std::string& document_id) const {
+    std::lock_guard lock(mutex_);
+    auto it = rooms_.find(document_id);
+    if (it != rooms_.end()) {
+        return it->second;
+    }
+    return nullptr;
+}
+
+bool RoomManager::remove_room(const std::string& document_id) {
+    std::lock_guard lock(mutex_);
+    return rooms_.erase(document_id) > 0;
+}
+
+std::vector<std::shared_ptr<DocumentRoom>> RoomManager::get_dirty_rooms() const {
+    std::lock_guard lock(mutex_);
+    std::vector<std::shared_ptr<DocumentRoom>> dirty;
+    for (const auto& [_, room] : rooms_) {
+        if (room && room->is_dirty()) {
+            dirty.push_back(room);
+        }
+    }
+    return dirty;
+}
+
+size_t RoomManager::active_room_count() const {
+    std::lock_guard lock(mutex_);
+    return rooms_.size();
+}
+
+} // namespace cme::collab

@@ -122,4 +122,19 @@ set_tests_properties(admin_management_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Native Yjs CRDT C-FFI Integration test (Step 3.1)
+add_executable(ycrdt_cffi_integration_test
+    backend/ycrdt_cffi_integration_test.cpp
+)
+target_link_libraries(ycrdt_cffi_integration_test PRIVATE cme_core)
+target_compile_features(ycrdt_cffi_integration_test PRIVATE cxx_std_23)
+set_target_properties(ycrdt_cffi_integration_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME ycrdt_cffi_integration_test COMMAND ycrdt_cffi_integration_test)
+set_tests_properties(ycrdt_cffi_integration_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 

@@ -87,7 +87,7 @@ nlohmann::json Server::get_health_status() {
     nlohmann::json health;
     health["version"] = CME_VERSION_STRING;
     health["uptime_seconds"] = uptime;
-    health["active_collab_rooms"] = 0;
+    health["active_collab_rooms"] = room_manager_ ? room_manager_->active_room_count() : 0;
 
     bool overall_healthy = true;
 
@@ -251,7 +251,10 @@ Result<void> Server::start() {
     user_service_ = std::make_shared<admin::UserService>(db_pool_);
     team_service_ = std::make_shared<admin::TeamService>(db_pool_);
 
-    // 6. Configure uWebSockets App
+    // 6. Initialize Collaborative Room Coordinator (Step 3.1)
+    room_manager_ = std::make_shared<collab::RoomManager>();
+
+    // 7. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
 

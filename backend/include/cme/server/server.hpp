@@ -15,6 +15,7 @@
 #include "cme/auth/auth_provider.hpp"
 #include "cme/document/document_service.hpp"
 #include "cme/admin/admin_service.hpp"
+#include "cme/collab/room_manager.hpp"
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <atomic>
@@ -91,6 +92,7 @@ public:
     [[nodiscard]] std::shared_ptr<document::DocumentService> document_service() const noexcept { return document_service_; }
     [[nodiscard]] std::shared_ptr<admin::UserService> user_service() const noexcept { return user_service_; }
     [[nodiscard]] std::shared_ptr<admin::TeamService> team_service() const noexcept { return team_service_; }
+    [[nodiscard]] std::shared_ptr<collab::RoomManager> room_manager() const noexcept { return room_manager_; }
 
 private:
     config::AppConfig config_;
@@ -103,6 +105,7 @@ private:
     std::shared_ptr<document::DocumentService> document_service_;
     std::shared_ptr<admin::UserService> user_service_;
     std::shared_ptr<admin::TeamService> team_service_;
+    std::shared_ptr<collab::RoomManager> room_manager_;
 
     std::chrono::system_clock::time_point start_time_;
     std::atomic<bool> is_running_{false};
