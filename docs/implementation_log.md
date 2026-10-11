@@ -555,6 +555,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ### Step 3.2: WebSocket Server & Binary Wire Protocol Multiplexer
 * **Status:** Complete
 * **Date Completed:** 2026-10-11
+* **Git Commit:** `c1e8baf`
 * **Deliverables:**
   * Contextual per-socket metadata struct `cme::collab::CollabSocketData` (`backend/include/cme/collab/collab_socket_data.hpp`).
   * WebSocket route `/ws/collab/:document_id` in `cme::server::Server` (`backend/src/server/server.cpp`):
