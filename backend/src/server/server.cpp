@@ -278,7 +278,10 @@ Result<void> Server::start() {
     );
     persistence_worker_->start();
 
-    // 8. Configure uWebSockets App
+    // 8. Initialize Review Engine Service (Step 3.4)
+    review_service_ = std::make_shared<review::ReviewService>(db_pool_, document_service_);
+
+    // 9. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
     uws_app_ = &app;
@@ -1630,6 +1633,478 @@ Result<void> Server::start() {
         auto del_res = team_service_->delete_team(team_id);
         if (!del_res.has_value()) {
             send_json(res, "404 Not Found", {{"error", "Team not found"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "deleted"}});
+    });
+
+    // =========================================================================
+    // Review Engine REST Endpoints & Opcode 0x02 Event Fanout (Step 3.4)
+    // =========================================================================
+
+    auto authenticate_user = [this, get_auth_context](auto* req, auto* res) -> std::optional<auth::UserIdentity> {
+        auto ctx = get_auth_context(req);
+        auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return std::nullopt;
+        }
+        return auth_res.value();
+    };
+
+    // --- Threaded Comments ---
+
+    // GET /api/v1/documents/:id/comments
+    app.get("/api/v1/documents/:id/comments", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string doc_id = url_decode(req->getParameter(0));
+        auto list_res = review_service_->list_comments(doc_id, *user);
+        if (!list_res.has_value()) {
+            if (list_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (list_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list comments"}});
+            }
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& c : list_res.value()) {
+            out.push_back(c.to_json());
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    // POST /api/v1/documents/:id/comments
+    app.post("/api/v1/documents/:id/comments", [this, get_auth_context](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string doc_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, doc_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            review::CreateCommentRequest req_data;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                req_data.content = j.value("content", "");
+                if (j.contains("anchor") && j["anchor"].is_object()) {
+                    req_data.anchor = j["anchor"];
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+            auto create_res = review_service_->create_comment(doc_id, *auth_res.value(), req_data);
+            if (!create_res.has_value()) {
+                if (create_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Forbidden: Comment access required"}});
+                } else if (create_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
+                } else {
+                    send_json(res, "400 Bad Request", {{"error", "Failed to create comment"}});
+                }
+                return;
+            }
+            broadcast_review_event(doc_id, {
+                {"event", "COMMENT_CREATED"},
+                {"document_id", doc_id},
+                {"comment", create_res.value().to_json()}
+            });
+            send_json(res, "201 Created", create_res.value().to_json());
+        });
+    });
+
+    // POST /api/v1/comments/:id/replies
+    app.post("/api/v1/comments/:id/replies", [this, get_auth_context](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string comment_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, comment_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            std::string content;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                content = j.value("content", "");
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+            auto reply_res = review_service_->reply_comment(comment_id, *auth_res.value(), content);
+            if (!reply_res.has_value()) {
+                if (reply_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Comment not found"}});
+                } else if (reply_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Forbidden: Comment access required"}});
+                } else {
+                    send_json(res, "400 Bad Request", {{"error", "Failed to reply to comment"}});
+                }
+                return;
+            }
+            broadcast_review_event(reply_res.value().document_id, {
+                {"event", "COMMENT_REPLIED"},
+                {"document_id", reply_res.value().document_id},
+                {"parent_id", comment_id},
+                {"comment", reply_res.value().to_json()}
+            });
+            send_json(res, "201 Created", reply_res.value().to_json());
+        });
+    });
+
+    // PATCH /api/v1/comments/:id/status
+    app.patch("/api/v1/comments/:id/status", [this, get_auth_context](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string comment_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, comment_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            std::string status = "RESOLVED";
+            try {
+                auto j = nlohmann::json::parse(*body);
+                status = j.value("status", "RESOLVED");
+            } catch (...) {}
+            auto update_res = review_service_->update_comment_status(comment_id, *auth_res.value(), status);
+            if (!update_res.has_value()) {
+                if (update_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Comment not found"}});
+                } else if (update_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access or author required"}});
+                } else {
+                    send_json(res, "400 Bad Request", {{"error", "Failed to update comment status"}});
+                }
+                return;
+            }
+            broadcast_review_event(update_res.value().document_id, {
+                {"event", "COMMENT_STATUS_CHANGED"},
+                {"document_id", update_res.value().document_id},
+                {"comment_id", comment_id},
+                {"status", status}
+            });
+            send_json(res, "200 OK", update_res.value().to_json());
+        });
+    });
+
+    // DELETE /api/v1/comments/:id
+    app.del("/api/v1/comments/:id", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string comment_id = url_decode(req->getParameter(0));
+        auto comm_res = review_service_->get_comment(comment_id, *user);
+        std::string doc_id;
+        if (comm_res.has_value()) {
+            doc_id = comm_res.value().document_id;
+        }
+        auto del_res = review_service_->delete_comment(comment_id, *user);
+        if (!del_res.has_value()) {
+            if (del_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Comment not found"}});
+            } else if (del_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access or author required"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to delete comment"}});
+            }
+            return;
+        }
+        if (!doc_id.empty()) {
+            broadcast_review_event(doc_id, {
+                {"event", "COMMENT_DELETED"},
+                {"document_id", doc_id},
+                {"comment_id", comment_id}
+            });
+        }
+        send_json(res, "200 OK", {{"status", "deleted"}});
+    });
+
+    // --- Inline Suggestions ---
+
+    // GET /api/v1/documents/:id/suggestions
+    app.get("/api/v1/documents/:id/suggestions", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string doc_id = url_decode(req->getParameter(0));
+        std::string status_param = std::string(req->getQuery("status"));
+        auto list_res = review_service_->list_suggestions(doc_id, *user, status_param);
+        if (!list_res.has_value()) {
+            if (list_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (list_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list suggestions"}});
+            }
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& s : list_res.value()) {
+            out.push_back(s.to_json());
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    // POST /api/v1/documents/:id/suggestions
+    app.post("/api/v1/documents/:id/suggestions", [this, get_auth_context](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string doc_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, doc_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            review::CreateSuggestionRequest req_data;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                req_data.original_text = j.value("original_text", "");
+                req_data.suggested_text = j.value("suggested_text", "");
+                if (j.contains("anchor") && j["anchor"].is_object()) {
+                    req_data.anchor = j["anchor"];
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+            auto sug_res = review_service_->create_suggestion(doc_id, *auth_res.value(), req_data);
+            if (!sug_res.has_value()) {
+                if (sug_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Forbidden: Comment access required"}});
+                } else if (sug_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
+                } else {
+                    send_json(res, "400 Bad Request", {{"error", "Failed to create suggestion"}});
+                }
+                return;
+            }
+            broadcast_review_event(doc_id, {
+                {"event", "SUGGESTION_CREATED"},
+                {"document_id", doc_id},
+                {"suggestion", sug_res.value().to_json()}
+            });
+            send_json(res, "201 Created", sug_res.value().to_json());
+        });
+    });
+
+    // POST /api/v1/suggestions/:id/accept
+    app.post("/api/v1/suggestions/:id/accept", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string suggestion_id = url_decode(req->getParameter(0));
+        auto accept_res = review_service_->accept_suggestion(
+            suggestion_id,
+            *user,
+            room_manager_,
+            [this](const std::string& did, std::span<const uint8_t> delta) {
+                std::string update_msg;
+                update_msg.reserve(2 + delta.size());
+                update_msg.push_back('\x00');
+                update_msg.push_back('\x03'); // SyncUpdate delta
+                update_msg.append(reinterpret_cast<const char*>(delta.data()), delta.size());
+                broadcast_to_room(did, update_msg, true);
+            }
+        );
+        if (!accept_res.has_value()) {
+            if (accept_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Suggestion not found"}});
+            } else if (accept_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access required to accept suggestions"}});
+            } else {
+                send_json(res, "400 Bad Request", {{"error", "Cannot accept suggestion"}});
+            }
+            return;
+        }
+        broadcast_review_event(accept_res.value().document_id, {
+            {"event", "SUGGESTION_ACCEPTED"},
+            {"document_id", accept_res.value().document_id},
+            {"suggestion", accept_res.value().to_json()}
+        });
+        send_json(res, "200 OK", accept_res.value().to_json());
+    });
+
+    // POST /api/v1/suggestions/:id/reject
+    app.post("/api/v1/suggestions/:id/reject", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string suggestion_id = url_decode(req->getParameter(0));
+        auto rej_res = review_service_->reject_suggestion(suggestion_id, *user);
+        if (!rej_res.has_value()) {
+            if (rej_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Suggestion not found"}});
+            } else if (rej_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access or author required"}});
+            } else {
+                send_json(res, "400 Bad Request", {{"error", "Cannot reject suggestion"}});
+            }
+            return;
+        }
+        broadcast_review_event(rej_res.value().document_id, {
+            {"event", "SUGGESTION_REJECTED"},
+            {"document_id", rej_res.value().document_id},
+            {"suggestion_id", suggestion_id}
+        });
+        send_json(res, "200 OK", rej_res.value().to_json());
+    });
+
+    // --- Action Item Tasks ---
+
+    // GET /api/v1/documents/:id/tasks
+    app.get("/api/v1/documents/:id/tasks", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string doc_id = url_decode(req->getParameter(0));
+        auto list_res = review_service_->list_tasks(doc_id, *user);
+        if (!list_res.has_value()) {
+            if (list_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (list_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list tasks"}});
+            }
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& t : list_res.value()) {
+            out.push_back(t.to_json());
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    // POST /api/v1/documents/:id/tasks
+    app.post("/api/v1/documents/:id/tasks", [this, get_auth_context](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string doc_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, doc_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            review::CreateTaskRequest req_data;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                req_data.description = j.value("description", "");
+                if (j.contains("comment_id") && j["comment_id"].is_string()) {
+                    req_data.comment_id = j["comment_id"];
+                }
+                if (j.contains("assignee_id") && j["assignee_id"].is_string()) {
+                    req_data.assignee_id = j["assignee_id"];
+                }
+                if (j.contains("due_date") && j["due_date"].is_string()) {
+                    req_data.due_date = j["due_date"];
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+            auto task_res = review_service_->create_task(doc_id, *auth_res.value(), req_data);
+            if (!task_res.has_value()) {
+                if (task_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Forbidden: Comment access required"}});
+                } else if (task_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
+                } else {
+                    send_json(res, "400 Bad Request", {{"error", "Failed to create task"}});
+                }
+                return;
+            }
+            broadcast_review_event(doc_id, {
+                {"event", "TASK_CREATED"},
+                {"document_id", doc_id},
+                {"task", task_res.value().to_json()}
+            });
+            send_json(res, "201 Created", task_res.value().to_json());
+        });
+    });
+
+    // PATCH /api/v1/tasks/:id
+    app.patch("/api/v1/tasks/:id", [this, get_auth_context](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string task_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, task_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            bool is_completed = true;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                if (j.contains("is_completed")) {
+                    is_completed = j["is_completed"].get<bool>();
+                }
+            } catch (...) {}
+            auto task_res = review_service_->update_task(task_id, *auth_res.value(), is_completed);
+            if (!task_res.has_value()) {
+                if (task_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Task not found"}});
+                } else if (task_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Forbidden: Comment access required"}});
+                } else {
+                    send_json(res, "400 Bad Request", {{"error", "Failed to update task"}});
+                }
+                return;
+            }
+            broadcast_review_event(task_res.value().document_id, {
+                {"event", "TASK_UPDATED"},
+                {"document_id", task_res.value().document_id},
+                {"task", task_res.value().to_json()}
+            });
+            send_json(res, "200 OK", task_res.value().to_json());
+        });
+    });
+
+    // DELETE /api/v1/tasks/:id
+    app.del("/api/v1/tasks/:id", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string task_id = url_decode(req->getParameter(0));
+        auto del_res = review_service_->delete_task(task_id, *user);
+        if (!del_res.has_value()) {
+            if (del_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Task not found"}});
+            } else if (del_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access required"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to delete task"}});
+            }
             return;
         }
         send_json(res, "200 OK", {{"status", "deleted"}});

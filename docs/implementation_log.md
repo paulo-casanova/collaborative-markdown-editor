@@ -778,7 +778,105 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 3.4: Review Engine Real-Time Synchronization
+* **Status:** Complete
+* **Deliverables:**
+  * Implemented `cme::review::ReviewService` (`backend/include/cme/review/review_service.hpp`, `backend/src/review/review_service.cpp`):
+    * Threaded Comments: `list_comments` (with nested reply trees), `create_comment` (anchored via text quote or offsets), `reply_comment`, `update_comment_status` (`OPEN` / `RESOLVED`), and `delete_comment`.
+    * Inline Suggestions: `list_suggestions` (with status filters), `create_suggestion`, `reject_suggestion`, and `accept_suggestion`.
+    * Action Item Tasks: `list_tasks`, `create_task`, `update_task` (`is_completed`), and `delete_task`.
+    * Live CRDT Reconciliation: when suggestions are accepted via `POST /api/v1/suggestions/:id/accept`, `accept_suggestion` updates the live `DocumentRoom` CRDT text in memory and broadcasts an incremental `SyncUpdate` delta (`0x00 0x03`).
+    * RBAC enforcement via `PermissionEngine::check_permission` and document ownership checks.
+  * Server REST Endpoints in `cme::server::Server` (`backend/src/server/server.cpp`):
+    * `/api/v1/documents/:id/comments` (`GET`, `POST`)
+    * `/api/v1/comments/:id/replies` (`POST`)
+    * `/api/v1/comments/:id/status` (`PATCH`)
+    * `/api/v1/comments/:id` (`DELETE`)
+    * `/api/v1/documents/:id/suggestions` (`GET`, `POST`)
+    * `/api/v1/suggestions/:id/accept` (`POST`)
+    * `/api/v1/suggestions/:id/reject` (`POST`)
+    * `/api/v1/documents/:id/tasks` (`GET`, `POST`)
+    * `/api/v1/tasks/:id` (`PATCH`, `DELETE`)
+  * Real-Time WebSocket Opcode `0x02` Event Fanout:
+    * Dispatches instant notifications to all collaborators in `room:<document_id>` upon mutation: `COMMENT_CREATED`, `COMMENT_REPLIED`, `COMMENT_STATUS_CHANGED`, `COMMENT_DELETED`, `SUGGESTION_CREATED`, `SUGGESTION_ACCEPTED`, `SUGGESTION_REJECTED`, `TASK_CREATED`, `TASK_UPDATED`.
+  * Python helper `tests/ws_review_listener.py` connecting over WebSocket and validating incoming Opcode `0x02` JSON payloads in real time.
+  * Automated integration test suite `tests/backend/review_engine_test.cpp` validating all 11 REST endpoints, live CRDT replacement in memory, and WebSocket Opcode `0x02` frame delivery.
+  * API documentation in `docs/api/review_engine.md` and indexed in `docs/index.md`.
+* **Verification:**
+  ```bash
+  $ ./build/tests/review_engine_test
+  ===============================================================
+  === CME Review Engine & Real-Time Sync Test Suite (Step 3.4) ===
+  ===============================================================
+
+  [STEP 1] Running schema migrations on test database...
+    - Migrations validated.
+
+  [STEP 2] Seeding test users (Alice, Bob) and document...
+    - Seeded Alice (id: 3424950f-f047-4a4a-963d-854d1eb33547) and Bob (id: fd0bce48-ed5a-4a8d-a1b2-ffd2c78c0cda)
+    - Seeded Document: f9c68ef4-858c-4183-8644-59d20a0a7b66
+
+  [STEP 3] Issuing session tokens...
+
+  [STEP 4] Launching CME Server daemon on port 18095...
+  [INFO] Storage backend initialized at: /tmp/cme_review_test_storage
+  [INFO] PostgreSQL connection pool initialized (8 connections).
+  [INFO] CME Server listening on http://127.0.0.1:18095
+
+  [STEP 5] Spawning WebSocket Review Listener (Opcode 0x02)...
+    - WebSocket listener connected to room and listening for 0x02 frames.
+
+  [STEP 6] Testing Threaded Comments & Real-Time Event Fanout...
+    - Created root comment (id: b666d4a2-5b3a-499f-ac18-551142bb2d6c).
+    [PASS] WebSocket Opcode 0x02 received COMMENT_CREATED notification!
+    - Created reply (id: b7782991-1427-4c1c-8cec-0deba365bbe2).
+    [PASS] WebSocket Opcode 0x02 received COMMENT_REPLIED notification!
+    [PASS] Threaded comment hierarchy verified (root with nested replies).
+    [PASS] WebSocket Opcode 0x02 received COMMENT_STATUS_CHANGED notification!
+
+  [STEP 7] Testing Inline Edit Suggestions & Live CRDT Text Injection...
+    [PASS] WebSocket Opcode 0x02 received SUGGESTION_CREATED notification!
+    [PASS] WebSocket Opcode 0x02 received SUGGESTION_REJECTED notification!
+    [PASS] WebSocket Opcode 0x02 received SUGGESTION_ACCEPTED notification!
+    [PASS] Live CRDT DocumentRoom updated with accepted suggestion text!
+      New content: # Review Engine
+
+  This is the refined and accepted text.
+  Here is line t...
+
+  [STEP 8] Testing Action Item Tasks Checklist & Events...
+    [PASS] WebSocket Opcode 0x02 received TASK_CREATED notification!
+    [PASS] WebSocket Opcode 0x02 received TASK_UPDATED notification!
+    [PASS] WebSocket Opcode 0x02 received COMMENT_DELETED notification!
+
+  [STEP 9] Terminating listener and server daemon...
+
+  ===============================================================
+  === ALL REVIEW ENGINE & REAL-TIME TESTS PASSED (100% OK)     ===
+  ===============================================================
+
+  $ ctest --test-dir build --output-on-failure
+  1/13 Test  #1: version_test .....................   Passed    0.00 sec
+  2/13 Test  #2: smoke_test .......................   Passed    0.00 sec
+  3/13 Test  #3: db_permissions_dag_test ..........   Passed    0.06 sec
+  4/13 Test  #4: posix_storage_sal_test ...........   Passed    0.03 sec
+  5/13 Test  #5: server_health_test ...............   Passed    0.32 sec
+  6/13 Test  #6: auth_engine_test .................   Passed    0.97 sec
+  7/13 Test  #7: document_workspace_api_test ......   Passed    0.63 sec
+  8/13 Test  #8: markdown_renderer_test ...........   Passed    0.30 sec
+  9/13 Test  #9: admin_management_test ............   Passed    1.30 sec
+  10/13 Test #10: ycrdt_cffi_integration_test ......   Passed    0.00 sec
+  11/13 Test #11: websocket_collab_test ............   Passed    0.53 sec
+  12/13 Test #12: persistence_debounced_test .......   Passed    3.21 sec
+  13/13 Test #13: review_engine_test ...............   Passed    1.61 sec
+
+  100% tests passed, 0 tests failed out of 13
+  ```
+
+---
+
+## Phase 4: Frontend Core & Collaborative TipTap Editor
 * **Status:** Upcoming
+
 
 
 

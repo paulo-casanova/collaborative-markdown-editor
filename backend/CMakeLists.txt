@@ -42,6 +42,7 @@ add_library(cme_core
     src/collab/document_room.cpp
     src/collab/room_manager.cpp
     src/collab/persistence_worker.cpp
+    src/review/review_service.cpp
     src/server/server.cpp
 )
 

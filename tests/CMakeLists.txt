@@ -164,5 +164,19 @@ set_tests_properties(persistence_debounced_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Review Engine & Real-Time Opcode 0x02 Sync test (Step 3.4)
+add_executable(review_engine_test
+    backend/review_engine_test.cpp
+)
+target_link_libraries(review_engine_test PRIVATE cme_core)
+target_compile_features(review_engine_test PRIVATE cxx_std_23)
+set_target_properties(review_engine_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME review_engine_test COMMAND review_engine_test)
+set_tests_properties(review_engine_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 
