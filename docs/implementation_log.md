@@ -318,7 +318,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
 
 ### Step 2.4: Server-Side Markdown to Semantic HTML Renderer
-* **Status:** Complete (Commit: pending)
+* **Status:** Complete (Commit: `e09a00d`)
 * **Deliverables:**
   * Vendored C Markdown Parser `md4c` (`backend/third_party/md4c/`) integrated via static library target in CMake with compile warning suppression.
   * `cme::renderer::MarkdownRenderer` (`backend/include/cme/renderer/markdown_renderer.hpp`, `backend/src/renderer/markdown_renderer.cpp`):
