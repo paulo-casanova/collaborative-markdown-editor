@@ -875,7 +875,52 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ## Phase 4: Frontend Core & Collaborative TipTap Editor
-* **Status:** Upcoming
+
+### Step 4.1: React 18 + Vite Scaffolding, Theme Architecture & Application Shell
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Initialized Vite React 18 TypeScript application (`frontend/package.json`, `tsconfig.json`, `vite.config.ts` with API/WebSocket reverse proxies).
+  * Multi-theme design tokens configured with Tailwind CSS (`tailwind.config.js`) and CSS variables (`src/index.css`) for Light, Dark, Sepia, and System themes.
+  * Zero-flash-of-unstyled-content (FOUC) prevention script in `index.html`.
+  * Client UI and theme state management:
+    * `useThemeStore` (`src/stores/themeStore.ts`): Light, Dark, Sepia, System modes with dynamic OS scheme listener and `localStorage` persistence.
+    * `useUIStore` (`src/stores/uiStore.ts`): Collapsible sidebar, review sidebar, dynamic breadcrumbs, sync status, and modal controllers.
+  * Data layer and API services with TanStack Query:
+    * API client with credentials & Bearer token support (`src/api/client.ts`).
+    * Auth service for user profile, login, logout, and PAT tokens (`src/api/auth.ts`).
+    * Health service for server telemetry probe (`src/api/health.ts`).
+    * Documents service for workspace tree and document CRUD (`src/api/documents.ts`).
+  * Top navigation header bar (`src/components/layout/Header.tsx`):
+    * Logged-in user profile pill (`UserProfilePill.tsx`) with avatar initials, background color, display name, admin badge, effective teams drawer, and logout.
+    * Application version & health badge (`HealthPopover.tsx`) showing `v0.1.0` with popover for uptime, PostgreSQL latency, POSIX storage free space, and active rooms.
+    * Document breadcrumbs with clickable hierarchy.
+    * Sync status badge (`Saved`, `Syncing...`, `Collab Live`, `Offline`).
+    * Mode switcher between Editor (`/documents/:id`) and Reader (`/docs/:id`).
+    * Theme switcher dropdown (`ThemeToggle.tsx`).
+  * Application shell and client-side routing (`src/App.tsx`, `src/components/layout/AppShell.tsx`, `Sidebar.tsx`):
+    * `/`: Dashboard workspace home (`HomePage.tsx`).
+    * `/documents/:id`: Document collaborative editor shell (`EditorPage.tsx`).
+    * `/docs/:id` / `/docs/*`: Distraction-free reader view (`ReaderPage.tsx`).
+    * `/trash`: Soft-deleted trash explorer (`TrashPage.tsx`).
+    * `/settings`: Preferences and Personal Access Tokens (`SettingsPage.tsx`).
+    * `/admin`: System administration console (`AdminPage.tsx`).
+    * Global modals for Login (`LoginModal.tsx`) and Personal Access Tokens (`TokensModal.tsx`).
+* **Verification:**
+  ```bash
+  $ cd frontend && npm install && npm run build
+  vite v5.4.21 building for production...
+  ✓ 1647 modules transformed.
+  dist/index.html                   1.20 kB │ gzip:  0.61 kB
+  dist/assets/index-ClpM1nA7.css   22.32 kB │ gzip:  5.14 kB
+  dist/assets/index-C7K-phCt.js   279.02 kB │ gzip: 81.19 kB
+  ✓ built in 1.32s
+
+  $ npm run preview -- --port 4173
+  ➜  Local:   http://localhost:4173/
+  ```
+  *Status criteria:* Web application compiles cleanly with zero TypeScript errors, renders the main shell with user profile pill and version badge, and toggles seamlessly between Light, Dark, Sepia, and System themes.
+
 
 
 

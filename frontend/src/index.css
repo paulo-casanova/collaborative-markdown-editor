@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root,
+[data-theme="light"] {
+  --cme-bg-base: #ffffff;
+  --cme-bg-subtle: #f8fafc;
+  --cme-bg-surface: #ffffff;
+  --cme-bg-hover: #f1f5f9;
+  --cme-bg-active: #e2e8f0;
+
+  --cme-text-base: #0f172a;
+  --cme-text-muted: #475569;
+  --cme-text-subtle: #94a3b8;
+  --cme-text-inverse: #ffffff;
+
+  --cme-border-base: #e2e8f0;
+  --cme-border-subtle: #f1f5f9;
+  --cme-border-strong: #cbd5e1;
+
+  --cme-primary: #2563eb;
+  --cme-primary-hover: #1d4ed8;
+  --cme-primary-subtle: #eff6ff;
+
+  --cme-accent: #7c3aed;
+  --cme-accent-subtle: #f5f3ff;
+}
+
+[data-theme="dark"] {
+  --cme-bg-base: #0b0f19;
+  --cme-bg-subtle: #111827;
+  --cme-bg-surface: #1e293b;
+  --cme-bg-hover: #334155;
+  --cme-bg-active: #475569;
+
+  --cme-text-base: #f8fafc;
+  --cme-text-muted: #94a3b8;
+  --cme-text-subtle: #64748b;
+  --cme-text-inverse: #0b0f19;
+
+  --cme-border-base: #334155;
+  --cme-border-subtle: #1e293b;
+  --cme-border-strong: #475569;
+
+  --cme-primary: #3b82f6;
+  --cme-primary-hover: #60a5fa;
+  --cme-primary-subtle: #1e293b;
+
+  --cme-accent: #8b5cf6;
+  --cme-accent-subtle: #2e1065;
+}
+
+[data-theme="sepia"] {
+  --cme-bg-base: #fbf0d9;
+  --cme-bg-subtle: #f4e5c0;
+  --cme-bg-surface: #fff8e8;
+  --cme-bg-hover: #ebd9ad;
+  --cme-bg-active: #dfcb9f;
+
+  --cme-text-base: #3d2b1f;
+  --cme-text-muted: #694f3b;
+  --cme-text-subtle: #967c66;
+  --cme-text-inverse: #fbf0d9;
+
+  --cme-border-base: #e3d2ab;
+  --cme-border-subtle: #ece1c2;
+  --cme-border-strong: #cbba94;
+
+  --cme-primary: #99582a;
+  --cme-primary-hover: #7f441c;
+  --cme-primary-subtle: #f5e7c8;
+
+  --cme-accent: #bc6c25;
+  --cme-accent-subtle: #faedcd;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--cme-bg-subtle);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--cme-border-strong);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--cme-text-subtle);
+}
