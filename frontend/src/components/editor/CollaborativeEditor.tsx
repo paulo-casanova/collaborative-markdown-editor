@@ -18,6 +18,9 @@ import { InlineMath } from './extensions/InlineMath';
 import { MermaidBlock } from './extensions/MermaidBlock';
 import { WikiLink } from './extensions/WikiLink';
 import { CmeCollabProvider } from '../../api/collabProvider';
+import { FloatingReviewMenu } from './FloatingReviewMenu';
+import { NewSuggestionModal } from '../review/NewSuggestionModal';
+import { NewCommentModal } from '../review/NewCommentModal';
 
 interface CollaborativeEditorProps {
   initialContent?: string;
@@ -28,6 +31,7 @@ interface CollaborativeEditorProps {
   };
   onChange?: (htmlOrJson: string) => void;
   editable?: boolean;
+  onEditorReady?: (editor: any) => void;
 }
 
 export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
@@ -36,6 +40,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   user,
   onChange,
   editable = true,
+  onEditorReady,
 }) => {
   const extensions = useMemo(() => {
     const baseExtensions: any[] = [
@@ -86,6 +91,13 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       extensions,
       content: provider ? undefined : initialContent,
       editable,
+      onCreate: ({ editor }) => {
+        try {
+          if (editor.view?.dom) {
+            (editor.view.dom as any).__tiptapEditor = editor;
+          }
+        } catch (_) {}
+      },
       onUpdate: ({ editor }) => {
         if (onChange) {
           onChange(editor.getHTML());
@@ -115,12 +127,36 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     }
   }, [user, provider]);
 
+  const onEditorReadyCalled = React.useRef(false);
+
+  // Expose editor instance when ready
+  useEffect(() => {
+    if (editor) {
+      try {
+        if (editor.view?.dom) {
+          (editor.view.dom as any).__tiptapEditor = editor;
+        }
+      } catch (_) {}
+      if (!onEditorReadyCalled.current && onEditorReady) {
+        onEditorReadyCalled.current = true;
+        onEditorReady(editor);
+      }
+    }
+  }, [editor, onEditorReady]);
+
   return (
-    <div className="collaborative-editor-root rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm flex flex-col">
-      {editable && <EditorToolbar editor={editor} />}
+    <div className="collaborative-editor-root rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm flex flex-col relative">
+      {editable && <EditorToolbar editor={editor} provider={provider} />}
       <div className="editor-content-viewport flex-1 overflow-y-auto">
         <EditorContent editor={editor} />
       </div>
+
+      {/* Floating Selection Menu */}
+      {editable && <FloatingReviewMenu editor={editor} provider={provider} />}
+
+      {/* New Suggestion / Comment Modals */}
+      <NewSuggestionModal />
+      <NewCommentModal />
     </div>
   );
 };

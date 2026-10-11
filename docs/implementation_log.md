@@ -1249,3 +1249,64 @@ This document tracks the incremental implementation of the Collaborative Markdow
   100% tests passed, 0 tests failed out of 13
   ```
   *Status criteria:* Unit test anchors a comment to character offset 100, inserts 50 characters at offset 10, and confirms anchor dynamically updates to offset 150 without losing text reference; 10/10 unit tests, 21/21 Playwright tests, and 13/13 CTests passing.
+
+---
+
+### Step 6.2: Threaded Comments & Inline Suggestions UI
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Review Store & Real-Time Sync (`frontend/src/stores/reviewStore.ts`):
+    * Centralized Zustand store coordinating review entities: comments, replies, suggestions, tasks.
+    * Real-time WebSocket event handler (opcode `0x02`): `COMMENT_CREATED`, `COMMENT_REPLIED`, `COMMENT_RESOLVED`, `COMMENT_DELETED`, `SUGGESTION_CREATED`, `SUGGESTION_ACCEPTED`, `SUGGESTION_REJECTED`, `TASK_CREATED`, `TASK_UPDATED`.
+    * Optimistic UI mutations and error resilience.
+  * Review REST API Client (`frontend/src/api/reviews.ts` & `frontend/src/api/documents.ts`):
+    * Comprehensive client methods for comment CRUD, nested replies, status toggling, suggestion proposal, acceptance, rejection, and task checklist toggling.
+  * `ReviewSidebar` Component (`frontend/src/components/review/ReviewSidebar.tsx`):
+    * Collapsible review panel docked alongside the collaborative editor.
+    * Filter tabs: `All`, `Comments`, `Diffs` (Suggestions), `Tasks`.
+    * Resolved filter toggle ("Show resolved & accepted") and dynamic total count badge.
+    * Automatic ordering by document offset and timestamp.
+  * `CommentCard` Component (`frontend/src/components/review/CommentCard.tsx`):
+    * Quoted anchor text snippet preview with amber highlight.
+    * Author avatar with personalized color, username, and relative timestamp.
+    * Thread resolution toggle button (`Resolve` / `Re-open`) modifying status to `RESOLVED` / `OPEN`.
+    * Nested threaded replies hierarchy.
+    * Reply input form with `@mention` autocomplete menu filtering active collaborators.
+  * `SuggestionCard` Component (`frontend/src/components/review/SuggestionCard.tsx`):
+    * Visual inline diff cards displaying red strikethrough deletion block (`diff-original`) and green replacement block (`diff-suggested`).
+    * Status badges: `PENDING`, `ACCEPTED`, `REJECTED`.
+    * `Accept` and `Reject` buttons:
+      * Accepting executes local ProseMirror transaction text replacement and commands backend to apply CRDT delta, synchronizing the replacement across all connected peers.
+  * `TaskCard` Component (`frontend/src/components/review/TaskCard.tsx`):
+    * Action item checklist with completion checkbox (`data-testid="task-checkbox"`), assignee badge, and due date.
+  * Contextual Composers & Floating Menu (`FloatingReviewMenu.tsx`, `NewSuggestionModal.tsx`, `NewCommentModal.tsx`):
+    * Floating selection menu appearing on text selection in TipTap editor providing 1-click "Suggest Edit" and "Comment" buttons.
+    * Modal composers for submitting text replacements and comments with anchor context.
+  * Toolbar & Pane Integration (`EditorToolbar.tsx`, `EditorPane.tsx`):
+    * Integrated "Reviews" toggle button with badge counter, "Suggesting Mode" toggle, and selection action buttons.
+    * Side-by-side split layout embedding `ReviewSidebar` directly next to `CollaborativeEditor`.
+  * Playwright E2E Test Suite (`frontend/tests/e2e/review_sidebar_suggestions.spec.ts`):
+    * Two automated browser tests:
+      1. Status criteria verification: Session 1 highlights a sentence, proposes replacement; Session 2 accepts the suggestion; confirms document text converges on replacement across both sessions and suggestion card marks as `ACCEPTED`.
+      2. Threaded comments, replies with `@mention`, and resolution toggle across concurrent sessions.
+* **Verification:**
+  ```bash
+  $ npx playwright test tests/e2e/review_sidebar_suggestions.spec.ts
+  Running 2 tests using 2 workers
+    ✓ Status criteria: proposes edit in Session 1, accepts in Session 2, verifies converged text and ACCEPTED status in both sessions (4.4s)
+    ✓ creates threaded comments, posts replies with @mention, and resolves discussion (4.3s)
+    2 passed (7.5s)
+
+  $ npm run test:e2e
+  Running 23 tests using 12 workers
+    23 passed (5.4s)
+
+  $ npm run test:unit
+  ✓ tests/unit/text_anchoring.spec.ts (10)
+    10 passed (620ms)
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 13
+  ```
+  *Status criteria:* Highlight a sentence, click "Suggest Edit", enter replacement text; in second session, click "Accept"; document text updates with replacement across both sessions and suggestion card marks as accepted.

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Editor } from '@tiptap/react';
 import {
   Bold,
@@ -20,13 +20,104 @@ import {
   Link2,
   Undo,
   Redo,
+  MessageSquare,
+  GitPullRequest,
 } from 'lucide-react';
+import { useReviewStore } from '../../stores/reviewStore';
+import { createDualAnchor } from '../../review/textAnchoring';
+import { CmeCollabProvider } from '../../api/collabProvider';
 
 interface EditorToolbarProps {
   editor: Editor | null;
+  provider?: CmeCollabProvider | null;
 }
 
-export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
+export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }) => {
+  const {
+    isSidebarOpen,
+    toggleSidebar,
+    comments,
+    suggestions,
+    tasks,
+    suggestingMode,
+    toggleSuggestingMode,
+    setPendingCommentSelection,
+    setPendingSuggestionSelection,
+  } = useReviewStore();
+
+  const [hasSelection, setHasSelection] = useState(false);
+  const [selectedText, setSelectedText] = useState('');
+  const [selectionRange, setSelectionRange] = useState<{ from: number; to: number } | null>(null);
+
+  useEffect(() => {
+    if (!editor) return;
+    const handleUpdate = () => {
+      const { selection, doc } = editor.state;
+      if (!selection.empty) {
+        const text = doc.textBetween(selection.from, selection.to, ' ');
+        if (text.trim().length > 0) {
+          setHasSelection(true);
+          setSelectedText(text);
+          setSelectionRange({ from: selection.from, to: selection.to });
+          return;
+        }
+      }
+      setHasSelection(false);
+      setSelectedText('');
+      setSelectionRange(null);
+    };
+
+    editor.on('selectionUpdate', handleUpdate);
+    return () => {
+      editor.off('selectionUpdate', handleUpdate);
+    };
+  }, [editor]);
+
+  const handleToolbarAddComment = () => {
+    if (!editor || !hasSelection || !selectionRange) return;
+    const fullText = editor.getText();
+    const ydoc = provider?.ydoc;
+    const ytype = ydoc ? ydoc.getText('content') : undefined;
+    const charStart = Math.max(0, selectionRange.from - 1);
+    const charEnd = Math.max(charStart, selectionRange.to - 1);
+
+    const anchor = ytype
+      ? createDualAnchor(ytype, charStart, charEnd, fullText)
+      : createDualAnchor(ydoc || (fullText as any), charStart, charEnd, fullText);
+
+    setPendingCommentSelection({
+      start: charStart,
+      end: charEnd,
+      text: selectedText,
+      anchor,
+    });
+  };
+
+  const handleToolbarSuggestEdit = () => {
+    if (!editor || !hasSelection || !selectionRange) return;
+    const fullText = editor.getText();
+    const ydoc = provider?.ydoc;
+    const ytype = ydoc ? ydoc.getText('content') : undefined;
+    const charStart = Math.max(0, selectionRange.from - 1);
+    const charEnd = Math.max(charStart, selectionRange.to - 1);
+
+    const anchor = ytype
+      ? createDualAnchor(ytype, charStart, charEnd, fullText)
+      : createDualAnchor(ydoc || (fullText as any), charStart, charEnd, fullText);
+
+    setPendingSuggestionSelection({
+      start: charStart,
+      end: charEnd,
+      text: selectedText,
+      anchor,
+    });
+  };
+
+  const openReviewsCount =
+    comments.filter((c) => c.status === 'OPEN').length +
+    suggestions.filter((s) => s.status === 'PENDING').length +
+    tasks.filter((t) => !t.is_completed).length;
+
   if (!editor) return null;
 
   const btnClass = (isActive: boolean = false) =>
@@ -257,6 +348,72 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor }) => {
       >
         <TableIcon className="w-3.5 h-3.5" />
       </button>
+
+      {divider}
+
+      {/* Suggest Edit */}
+      <button
+        type="button"
+        data-testid="toolbar-suggest-edit-btn"
+        disabled={!hasSelection}
+        onClick={handleToolbarSuggestEdit}
+        className={btnClass(false) + ' disabled:opacity-30 text-emerald-600 dark:text-emerald-400'}
+        title="Suggest edit on selected text"
+      >
+        <GitPullRequest className="w-3.5 h-3.5" />
+      </button>
+
+      {/* Add Comment */}
+      <button
+        type="button"
+        data-testid="toolbar-add-comment-btn"
+        disabled={!hasSelection}
+        onClick={handleToolbarAddComment}
+        className={btnClass(false) + ' disabled:opacity-30 text-cme-primary'}
+        title="Add review comment on selected text"
+      >
+        <MessageSquare className="w-3.5 h-3.5" />
+      </button>
+
+      {/* Suggesting Mode Toggle */}
+      <button
+        type="button"
+        data-testid="suggesting-mode-toggle"
+        onClick={() => toggleSuggestingMode()}
+        className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors ${
+          suggestingMode
+            ? 'bg-emerald-600 text-white shadow-xs'
+            : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+        }`}
+        title="Toggle Suggesting Mode"
+      >
+        {suggestingMode ? 'Suggesting' : 'Editing'}
+      </button>
+
+      {/* Reviews Sidebar Toggle */}
+      <button
+        type="button"
+        data-testid="toggle-reviews-btn"
+        onClick={() => toggleSidebar()}
+        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ml-auto transition-colors ${
+          isSidebarOpen
+            ? 'bg-cme-primary text-white shadow-xs'
+            : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+        }`}
+        title="Toggle Review Discussions Panel"
+      >
+        <MessageSquare className="w-3.5 h-3.5" />
+        <span>Reviews</span>
+        {openReviewsCount > 0 && (
+          <span
+            data-testid="toolbar-review-badge"
+            className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-white ml-0.5"
+          >
+            {openReviewsCount}
+          </span>
+        )}
+      </button>
     </div>
   );
 };
+

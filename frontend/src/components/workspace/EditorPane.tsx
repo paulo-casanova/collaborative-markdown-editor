@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -9,15 +9,19 @@ import {
   Package,
   X,
   AlignLeft,
+  MessageSquare,
 } from 'lucide-react';
 import { fetchDocument } from '../../api/documents';
 import { fetchCurrentUser } from '../../api/auth';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
+import { useReviewStore } from '../../stores/reviewStore';
 import { Badge } from '../common/Badge';
 import { CollaborativeEditor } from '../editor/CollaborativeEditor';
-import { CmeCollabProvider } from '../../api/collabProvider';
+import { CmeCollabProvider, CollabConnectionStatus, ReviewEventPayload } from '../../api/collabProvider';
 import { DocumentOutline } from '../navigation/DocumentOutline';
+import { ReviewSidebar } from '../review/ReviewSidebar';
+import { reconcileAnchor } from '../../review/textAnchoring';
 
 interface EditorPaneProps {
   documentId: string;
@@ -35,8 +39,33 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const { setBreadcrumbs, setSyncStatus } = useUIStore();
   const { updateTabMetadata } = useWorkspaceStore();
   const queryClient = useQueryClient();
-  const [provider, setProvider] = useState<CmeCollabProvider | null>(null);
   const [showOutline, setShowOutline] = useState<boolean>(false);
+  const [editorInstance, setEditorInstance] = useState<any>(null);
+
+  const handleEditorReady = useCallback((ed: any) => {
+    setEditorInstance((prev: any) => prev || ed);
+  }, []);
+
+  const provider = useMemo(() => {
+    if (!documentId) return null;
+    return new CmeCollabProvider(documentId);
+  }, [documentId]);
+
+  const {
+    initDocument,
+    handleWebSocketReviewEvent,
+    isSidebarOpen,
+    setSidebarOpen,
+    comments,
+    suggestions,
+    tasks,
+  } = useReviewStore();
+
+  useEffect(() => {
+    if (documentId) {
+      initDocument(documentId);
+    }
+  }, [documentId, initDocument]);
 
   const { data: user } = useQuery({
     queryKey: ['auth-me'],
@@ -81,12 +110,9 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
   // Manage Collaborative WebSocket Provider
   useEffect(() => {
-    if (!documentId) return;
+    if (!provider) return;
 
-    const collabProvider = new CmeCollabProvider(documentId);
-    setProvider(collabProvider);
-
-    const unsubStatus = collabProvider.onStatus((status) => {
+    const unsubStatus = provider.onStatus((status: CollabConnectionStatus) => {
       if (isPrimary) {
         if (status === 'connected') {
           setSyncStatus('live');
@@ -98,23 +124,23 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
       }
     });
 
-    const unsubReview = collabProvider.onReviewEvent(() => {
+    const unsubReview = provider.onReviewEvent((event: ReviewEventPayload) => {
+      handleWebSocketReviewEvent(event);
       queryClient.invalidateQueries({ queryKey: ['reviews', documentId] });
       queryClient.invalidateQueries({ queryKey: ['document', documentId] });
     });
 
-    collabProvider.connect();
+    provider.connect();
 
     return () => {
       unsubStatus();
       unsubReview();
-      collabProvider.destroy();
-      setProvider(null);
+      provider.destroy();
       if (isPrimary) {
         setSyncStatus('saved');
       }
     };
-  }, [documentId, isPrimary, setSyncStatus, queryClient]);
+  }, [provider, documentId, isPrimary, setSyncStatus, queryClient, handleWebSocketReviewEvent]);
 
   if (isLoading) {
     return (
@@ -174,6 +200,32 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               <span className="hidden sm:inline">Outline</span>
             </button>
 
+            <button
+              onClick={() => setSidebarOpen(!isSidebarOpen)}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                isSidebarOpen
+                  ? 'bg-cme-primary text-white border-cme-primary'
+                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+              }`}
+              title="Toggle Review Discussions Panel"
+              data-testid="editor-reviews-toggle"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Reviews</span>
+              {comments.filter((c) => c.status === 'OPEN').length +
+                suggestions.filter((s) => s.status === 'PENDING').length +
+                tasks.filter((t) => !t.is_completed).length > 0 && (
+                <span
+                  data-testid="editor-reviews-count"
+                  className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-white ml-0.5"
+                >
+                  {comments.filter((c) => c.status === 'OPEN').length +
+                    suggestions.filter((s) => s.status === 'PENDING').length +
+                    tasks.filter((t) => !t.is_completed).length}
+                </span>
+              )}
+            </button>
+
             <Link
               to={`/docs/${document.id}`}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
@@ -224,26 +276,84 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         </div>
       )}
 
-      {/* TipTap Collaborative Editor */}
-      <div className="flex-1 overflow-y-auto">
-        <CollaborativeEditor
-          provider={provider}
-          user={
-            user
-              ? {
-                  name: user.display_name || user.username,
-                  color: user.avatar_color || (isPrimary ? '#3b82f6' : '#8b5cf6'),
+      {/* Main Workspace Body: Collaborative Editor & Review Sidebar */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
+        <div className="flex-1 overflow-y-auto min-w-0 flex flex-col">
+          <CollaborativeEditor
+            key={provider?.ydoc.guid || 'editor'}
+            provider={provider}
+            user={
+              user
+                ? {
+                    name: user.display_name || user.username,
+                    color: user.avatar_color || (isPrimary ? '#3b82f6' : '#8b5cf6'),
+                  }
+                : undefined
+            }
+            initialContent={
+              document.content
+                ? `<h1>${document.title || 'Document'}</h1><p>${document.content
+                    .replace(/\n\n/g, '</p><p>')
+                    .replace(/\n/g, '<br/>')}</p>`
+                : `<h1>${document.title || 'Document'}</h1><p>Start writing markdown here...</p>`
+            }
+            onEditorReady={handleEditorReady}
+          />
+        </div>
+
+        {/* Review Sidebar */}
+        {isSidebarOpen && (
+          <ReviewSidebar
+            onApplyReplacement={(orig, rep, anchor) => {
+              try {
+                let ed = editorInstance;
+                if (!ed || ed.isDestroyed) {
+                  const domEl = typeof window !== 'undefined' ? window.document.querySelector('.collaborative-editor-root .ProseMirror') : null;
+                  ed = (domEl as any)?.__tiptapEditor;
                 }
-              : undefined
-          }
-          initialContent={
-            document.content
-              ? `<h1>${document.title || 'Document'}</h1><p>${document.content
-                  .replace(/\n\n/g, '</p><p>')
-                  .replace(/\n/g, '<br/>')}</p>`
-              : `<h1>${document.title || 'Document'}</h1><p>Start writing markdown here...</p>`
-          }
-        />
+                if (ed && !ed.isDestroyed) {
+                  let replaced = false;
+                  // First try exact node search in ProseMirror doc tree
+                  if (orig) {
+                    ed.state.doc.descendants((node: any, pos: number) => {
+                      if (!replaced && node.isText && node.text && node.text.includes(orig)) {
+                        const from = pos + node.text.indexOf(orig);
+                        const to = from + orig.length;
+                        ed
+                          .chain()
+                          .focus()
+                          .deleteRange({ from, to })
+                          .insertContentAt(from, rep)
+                          .run();
+                        replaced = true;
+                        return false;
+                      }
+                    });
+                  }
+
+                  // Fallback: use reconcileAnchor if not found via direct text search
+                  if (!replaced && anchor) {
+                    const currentText = ed.getText();
+                    const reconciled = reconcileAnchor(anchor, currentText);
+                    if (reconciled.range) {
+                      const from = reconciled.range.start + 1;
+                      const to = reconciled.range.end + 1;
+                      ed
+                        .chain()
+                        .focus()
+                        .deleteRange({ from, to })
+                        .insertContentAt(from, rep)
+                        .run();
+                      replaced = true;
+                    }
+                  }
+                }
+              } catch (e) {
+                console.warn('[EditorPane] onApplyReplacement warning:', e);
+              }
+            }}
+          />
+        )}
       </div>
     </div>
   );
