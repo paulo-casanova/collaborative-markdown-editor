@@ -1,21 +1,64 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { FileText, Clock, BookOpen, AlertCircle } from 'lucide-react';
 import { fetchDocument } from '../api/documents';
+import { fetchCurrentUser } from '../api/auth';
 import { useUIStore } from '../stores/uiStore';
 import { Badge } from '../components/common/Badge';
 import { CollaborativeEditor } from '../components/editor/CollaborativeEditor';
+import { CmeCollabProvider } from '../api/collabProvider';
 
 export const EditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const { setBreadcrumbs, setSyncStatus } = useUIStore();
+  const queryClient = useQueryClient();
+  const [provider, setProvider] = useState<CmeCollabProvider | null>(null);
+
+  const { data: user } = useQuery({
+    queryKey: ['auth-me'],
+    queryFn: fetchCurrentUser,
+    retry: false,
+  });
 
   const { data: document, isLoading, isError, error } = useQuery({
     queryKey: ['document', id],
     queryFn: () => (id ? fetchDocument(id) : Promise.reject('No ID')),
     enabled: !!id,
   });
+
+  // Manage Collaborative WebSocket Provider
+  useEffect(() => {
+    if (!id) return;
+
+    const collabProvider = new CmeCollabProvider(id);
+    setProvider(collabProvider);
+
+    const unsubStatus = collabProvider.onStatus((status) => {
+      if (status === 'connected') {
+        setSyncStatus('live');
+      } else if (status === 'connecting') {
+        setSyncStatus('syncing');
+      } else {
+        setSyncStatus('offline');
+      }
+    });
+
+    const unsubReview = collabProvider.onReviewEvent(() => {
+      queryClient.invalidateQueries({ queryKey: ['reviews', id] });
+      queryClient.invalidateQueries({ queryKey: ['document', id] });
+    });
+
+    collabProvider.connect();
+
+    return () => {
+      unsubStatus();
+      unsubReview();
+      collabProvider.destroy();
+      setProvider(null);
+      setSyncStatus('saved');
+    };
+  }, [id, setSyncStatus, queryClient]);
 
   useEffect(() => {
     if (document) {
@@ -29,12 +72,8 @@ export const EditorPage: React.FC = () => {
         { label: document.title || parts[parts.length - 1], isCurrent: true },
       ];
       setBreadcrumbs(breadcrumbList);
-      setSyncStatus('live');
     }
-    return () => {
-      setSyncStatus('saved');
-    };
-  }, [document, setBreadcrumbs, setSyncStatus]);
+  }, [document, setBreadcrumbs]);
 
   if (isLoading) {
     return (
@@ -105,6 +144,15 @@ export const EditorPage: React.FC = () => {
 
       {/* TipTap Collaborative Editor Container */}
       <CollaborativeEditor
+        provider={provider}
+        user={
+          user
+            ? {
+                name: user.display_name || user.username,
+                color: user.avatar_color || '#3b82f6',
+              }
+            : undefined
+        }
         initialContent={
           document.content
             ? `<h1>${document.title || 'Document'}</h1><p>${document.content.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br/>')}</p>`

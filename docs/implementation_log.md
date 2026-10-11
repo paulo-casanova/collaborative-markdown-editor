@@ -969,6 +969,55 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
   *Status criteria:* Playwright test renders a fixture containing math formulas, a flowchart diagram, and a wiki-link; verifies DOM elements render corresponding SVG/KaTeX trees.
 
+---
+
+### Step 4.3: Real-Time Sync & Cursor Presence Integration
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Full-Duplex Binary WebSocket Collab Provider (`frontend/src/api/collabProvider.ts`):
+    * 1-byte opcode framing:
+      * Opcode `0x00`: Yjs CRDT Synchronization (`0x01` SyncStep1, `0x02` SyncStep2, `0x03` SyncUpdate).
+      * Opcode `0x01`: Awareness and colored cursor presence propagation.
+      * Opcode `0x02`: Real-time review notifications (comments, suggestions, tasks).
+      * Opcode `0x03` / `0x04`: Ping/Pong heartbeat latency keepalives.
+    * Reconnection watchdog with exponential backoff (1s, 2s, 4s, 8s, up to 15s with jitter).
+    * Status listener dispatch (`connected`, `connecting`, `disconnected`) wired to `uiStore.setSyncStatus`.
+  * Collaborative TipTap Editor Extensions:
+    * TipTap `Collaboration` extension with Yjs `Y.Doc` binding (`@tiptap/extension-collaboration`).
+    * Custom `CollaborationCursor` extension (`src/components/editor/extensions/CollaborationCursor.ts`) leveraging `@tiptap/y-tiptap` for unified ProseMirror plugin key state.
+    * Remote cursor styles in `src/index.css` (`.collaboration-cursor__caret`, `.collaboration-cursor__label`).
+  * Real-Time User Presence Synchronization:
+    * Automatic awareness updates when user profile loads or changes.
+    * Peer departure awareness cleanup on disconnect or tab closure.
+  * Side-by-Side Dual Editor Test Harness (`src/pages/TestCollabPage.tsx` at `/test-collab`):
+    * Split-pane view for Alice (pink) and Bob (blue).
+    * Individual network disconnect/reconnect simulation toggles for offline partition testing.
+  * Playwright E2E Multi-Client Test Suite (`tests/e2e/collab_presence.spec.ts` & `playwright.config.ts`):
+    * Multi-webServer orchestration launching both `cme-server` and `npm run preview`.
+    * 4 comprehensive end-to-end tests:
+      1. Real-time typing synchronization between Alice and Bob over WebSocket.
+      2. Remote cursor presence rendering with collaborator carets and user name labels.
+      3. Network partition simulation, offline contribution typing, reconnect, and conflict-free CRDT merge.
+      4. Independent dual-window browser context collaboration on `/documents/:id`.
+* **Verification:**
+  ```bash
+  $ npm run test:e2e
+  Running 8 tests using 8 workers
+    ✓ renders syntax-highlighted code block with language selection and copy button (454ms)
+    ✓ renders Obsidian-style [[wiki-links]] and interactive reference popup (556ms)
+    ✓ renders KaTeX display math block with SVG/DOM formula trees (659ms)
+    ✓ renders Mermaid diagram and supports interactive zoom and source toggles (877ms)
+    ✓ synchronizes real-time keystrokes between Alice and Bob (867ms)
+    ✓ handles network partition, offline edits, and conflict-free CRDT reconnection merge (1.3s)
+    ✓ synchronizes across two independent browser windows on /documents/:id (1.1s)
+    ✓ renders remote cursor presence and collaborator labels (1.1s)
+
+    8 passed (3.4s)
+  ```
+  *Status criteria:* Launch two collaborative editing sessions side-by-side on `/documents/:id` and `/test-collab`; verify typing in Window A updates Window B in real time with Window A's colored cursor; disconnect network in Window A, type offline, reconnect network, and verify conflict-free convergence.
+
+
 
 
 

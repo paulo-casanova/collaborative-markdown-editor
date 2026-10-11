@@ -19,10 +19,18 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  webServer: {
-    command: 'npm run preview -- --port 4173',
-    url: 'http://127.0.0.1:4173',
-    reuseExistingServer: !process.env.CI,
-    timeout: 120000,
-  },
+  webServer: [
+    {
+      command: 'mkdir -p /tmp/cme_test_storage/content && /home/pasc/cme/build/bin/cme-server --data-dir /tmp/cme_test_storage --db-url "postgresql://cme:secret@localhost:5432/cme_test" --port 8080',
+      url: 'http://127.0.0.1:8080/api/v1/health',
+      reuseExistingServer: !process.env.CI,
+      timeout: 30000,
+    },
+    {
+      command: 'npm run preview -- --port 4173',
+      url: 'http://127.0.0.1:4173',
+      reuseExistingServer: !process.env.CI,
+      timeout: 120000,
+    },
+  ],
 });
