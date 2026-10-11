@@ -921,6 +921,55 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
   *Status criteria:* Web application compiles cleanly with zero TypeScript errors, renders the main shell with user profile pill and version badge, and toggles seamlessly between Light, Dark, Sepia, and System themes.
 
+---
+
+### Step 4.2: TipTap Editor Core & Custom Node Views
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * TipTap ProseMirror rich editor architecture (`@tiptap/react`, `@tiptap/starter-kit`, `@tiptap/pm`):
+    * Headings 1–3, bold, italic, strikethrough, inline code, blockquote, horizontal rule, bullet list, ordered list.
+    * GFM aligned tables (`@tiptap/extension-table`, `TableRow`, `TableCell`, `TableHeader`).
+    * Interactive task lists (`@tiptap/extension-task-list`, `@tiptap/extension-task-item`).
+  * Custom CodeBlock extension and React NodeView (`src/components/editor/extensions/CodeBlockCustom.tsx`):
+    * Multi-language dropdown selector (TypeScript, Python, C++, Bash, SQL, etc.).
+    * One-click clipboard copy button with visual feedback.
+    * Line numbering and theme-aware dark/light/sepia container.
+  * Custom KaTeX Display Math (`$$...$$`) NodeView (`src/components/editor/extensions/MathBlock.tsx`):
+    * Formula rendering via `katex` with embedded CSS typography.
+    * Interactive LaTeX editor with preview toggling and formula copy.
+    * Graceful syntax error banner.
+  * Custom KaTeX Inline Math (`$...$`) NodeView (`src/components/editor/extensions/InlineMath.tsx`):
+    * Inline chip rendering with click-to-edit input field.
+  * Custom Mermaid Diagram NodeView (`src/components/editor/extensions/MermaidBlock.tsx`):
+    * SVG diagram generation using `mermaid.render()` with theme-aware palettes (`mermaidRenderer.ts`).
+    * Interactive controls: Zoom In (`+`), Zoom Out (`-`), Reset Zoom (`100%`).
+    * Edit Source vs. Diagram Preview toggles.
+    * Diagram source copying and non-crashing syntax error banners.
+  * Custom Obsidian-Style WikiLink NodeView (`src/components/editor/extensions/WikiLink.tsx`):
+    * Supports `[[target]]` and `[[target|label]]` syntax.
+    * Real-time input rule parsing while typing.
+    * Inline document badge with interactive reference popover and navigation shortcut.
+  * Editor Toolbar component (`src/components/editor/EditorToolbar.tsx`):
+    * Formatting marks, headings, lists, tables, code blocks, math, Mermaid, and wiki-links.
+  * Top-Level Editor Component (`src/components/editor/CollaborativeEditor.tsx`):
+    * Integrated into `EditorPage.tsx` and test harness `TestEditorPage.tsx`.
+  * Playwright E2E test suite (`tests/e2e/editor_nodes.spec.ts` & `playwright.config.ts`):
+    * Validates math formulas, flowchart diagrams, wiki-links, and code blocks in headless Chromium.
+* **Verification:**
+  ```bash
+  $ npm run test:e2e -- --spec editor_nodes.spec.ts
+  Running 4 tests using 4 workers
+    ✓ renders syntax-highlighted code block with language selection and copy button (425ms)
+    ✓ renders Obsidian-style [[wiki-links]] and interactive reference popup (418ms)
+    ✓ renders KaTeX display math block with SVG/DOM formula trees (616ms)
+    ✓ renders Mermaid diagram and supports interactive zoom and source toggles (823ms)
+
+    4 passed (2.3s)
+  ```
+  *Status criteria:* Playwright test renders a fixture containing math formulas, a flowchart diagram, and a wiki-link; verifies DOM elements render corresponding SVG/KaTeX trees.
+
+
 
 
 

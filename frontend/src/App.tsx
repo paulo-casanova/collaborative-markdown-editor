@@ -8,6 +8,7 @@ import { ReaderPage } from './pages/ReaderPage';
 import { TrashPage } from './pages/TrashPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
+import { TestEditorPage } from './pages/TestEditorPage';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,6 +32,7 @@ export const App: React.FC = () => {
             <Route path="trash" element={<TrashPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="admin" element={<AdminPage />} />
+            <Route path="test-editor" element={<TestEditorPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

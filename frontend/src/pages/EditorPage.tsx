@@ -1,10 +1,11 @@
 import React, { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { FileText, Clock, BookOpen, AlertCircle, Sparkles } from 'lucide-react';
+import { FileText, Clock, BookOpen, AlertCircle } from 'lucide-react';
 import { fetchDocument } from '../api/documents';
 import { useUIStore } from '../stores/uiStore';
 import { Badge } from '../components/common/Badge';
+import { CollaborativeEditor } from '../components/editor/CollaborativeEditor';
 
 export const EditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -102,21 +103,14 @@ export const EditorPage: React.FC = () => {
         </div>
       </div>
 
-      {/* TipTap Collaborative Editor Container (Ready for Step 4.2 & 4.3) */}
-      <div className="min-h-[500px] border border-cme-border-base rounded-2xl bg-cme-bg-surface p-6 shadow-sm space-y-4">
-        <div className="p-3 bg-cme-bg-subtle rounded-xl border border-cme-border-base flex items-center justify-between text-xs">
-          <div className="flex items-center gap-2 text-cme-primary font-medium">
-            <Sparkles className="w-4 h-4" />
-            <span>TipTap ProseMirror Collaborative Editor Engine</span>
-          </div>
-          <span className="font-mono text-cme-text-muted">Opcode 0x00 Yjs Wire Bound</span>
-        </div>
-
-        {/* Content Preview */}
-        <div className="prose prose-sm dark:prose-invert max-w-none text-cme-text-base font-sans leading-relaxed whitespace-pre-wrap">
-          {document.content || '*Document is empty.*'}
-        </div>
-      </div>
+      {/* TipTap Collaborative Editor Container */}
+      <CollaborativeEditor
+        initialContent={
+          document.content
+            ? `<h1>${document.title || 'Document'}</h1><p>${document.content.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br/>')}</p>`
+            : `<h1>${document.title || 'Document'}</h1><p>Start writing markdown here...</p>`
+        }
+      />
     </div>
   );
 };

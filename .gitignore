@@ -62,6 +62,8 @@ Thumbs.db
 node_modules/
 dist/
 .npm/
+test-results/
+playwright-report/
 
 # Package managers
 vcpkg_installed/
