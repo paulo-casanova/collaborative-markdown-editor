@@ -140,6 +140,18 @@ nlohmann::json Server::get_health_status() {
     }
     health["storage"] = storage_status;
 
+    // Persistence subsystem metrics (Step 3.3)
+    nlohmann::json persistence_status;
+    if (persistence_worker_) {
+        persistence_status["status"] = persistence_worker_->is_running() ? "running" : "stopped";
+        persistence_status["total_flushes"] = persistence_worker_->total_flushes();
+        persistence_status["total_snapshots"] = persistence_worker_->total_snapshots();
+        persistence_status["total_evictions"] = persistence_worker_->total_evictions();
+    } else {
+        persistence_status["status"] = "unconfigured";
+    }
+    health["persistence"] = persistence_status;
+
     health["status"] = overall_healthy ? "healthy" : "degraded";
 
     return health;
@@ -257,7 +269,16 @@ Result<void> Server::start() {
     // 6. Initialize Collaborative Room Coordinator (Step 3.1)
     room_manager_ = std::make_shared<collab::RoomManager>();
 
-    // 7. Configure uWebSockets App
+    // 7. Initialize Persistence Worker (Step 3.3)
+    persistence_worker_ = std::make_shared<collab::PersistenceWorker>(
+        room_manager_,
+        storage_,
+        db_pool_,
+        persistence_config_
+    );
+    persistence_worker_->start();
+
+    // 8. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
     uws_app_ = &app;
@@ -1921,6 +1942,9 @@ Result<void> Server::start() {
 
 void Server::stop() {
     if (is_running_.exchange(false)) {
+        if (persistence_worker_) {
+            persistence_worker_->stop();
+        }
         if (uws_loop_) {
             auto *loop = static_cast<uWS::Loop*>(uws_loop_);
             loop->defer([this]() {

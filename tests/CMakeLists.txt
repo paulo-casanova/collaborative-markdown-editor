@@ -150,5 +150,19 @@ set_tests_properties(websocket_collab_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# In-Memory DocumentRoom Debounced Persistence & Eviction test (Step 3.3)
+add_executable(persistence_debounced_test
+    backend/persistence_debounced_test.cpp
+)
+target_link_libraries(persistence_debounced_test PRIVATE cme_core)
+target_compile_features(persistence_debounced_test PRIVATE cxx_std_23)
+set_target_properties(persistence_debounced_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME persistence_debounced_test COMMAND persistence_debounced_test)
+set_tests_properties(persistence_debounced_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 

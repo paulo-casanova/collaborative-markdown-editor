@@ -665,7 +665,121 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 3.3: In-Memory DocumentRoom & Debounced Persistence
+* **Status:** Complete
+* **Deliverables:**
+  * Added `create_snapshot` virtual method to `IStorageBackend` (`backend/include/cme/storage/storage_backend.hpp`).
+  * Implemented `create_snapshot(relative_path, content)` in `PosixStorageBackend` (`backend/include/cme/storage/posix_storage_backend.hpp`, `backend/src/storage/posix_storage_backend.cpp`):
+    * Atomic write using temporary nonce files (`.<name>.<nonce>.tmp`) and atomic POSIX renaming.
+    * Chronological date-partitioning: `snapshots/YYYY/MM/<YYYY-MM-DD-HH-MM-SS>_<sanitized_name>.md`.
+  * Added `get_all_rooms()` to `cme::collab::RoomManager` (`backend/include/cme/collab/room_manager.hpp`, `backend/src/collab/room_manager.cpp`).
+  * Implemented `cme::collab::PersistenceWorker` (`backend/include/cme/collab/persistence_worker.hpp`, `backend/src/collab/persistence_worker.cpp`):
+    * Configurable background writer thread evaluating dirty rooms at 200ms resolution.
+    * Debounced idle flush window: flushes after 5s of inactivity.
+    * Maximum continuous editing flush interval: forces flush every 300s.
+    * Synchronizes PostgreSQL `documents.updated_at = NOW()`.
+    * Eviction policy: automatically evicts clean rooms with 0 peers from RAM; flushes dirty rooms before eviction (zero data loss).
+    * Teardown safety: `flush_all_dirty()` on shutdown.
+  * Server daemon integration (`backend/include/cme/server/server.hpp`, `backend/src/server/server.cpp`):
+    * Spawns `persistence_worker_` on `Server::start()`, terminates cleanly on `Server::stop()`.
+    * Exposes persistence metrics (`total_flushes`, `total_snapshots`, `total_evictions`, `status`) in `/api/v1/health`.
+    * Supports transparent rehydration of evicted documents from disk when collaborators connect.
+  * Helper tool `tests/ws_edit_simulator.py` driving real Yjs CRDT edit deltas via WebSocket and `libyrs.so` FFI.
+  * Integration test suite `tests/backend/persistence_debounced_test.cpp` verifying:
+    * Inactive debounce window (disk untouched during active editing).
+    * Debounced flush, disk content synchronization, and snapshot creation.
+    * In-memory room eviction on peer disconnect.
+    * Zero data loss when disconnecting with pending unpersisted edits.
+    * End-to-end WebSocket keystroke injection via Python simulator.
+    * Transparent rehydration of evicted rooms upon client reconnection.
+    * Health probe reporting.
+  * Architectural documentation in `docs/crdt/persistence.md` and indexed in `docs/index.md`.
+* **Verification:**
+  ```bash
+  $ ./build/tests/persistence_debounced_test
+  ===============================================================
+  === CME Debounced Persistence & Eviction Test Suite (Step 3.3) ===
+  ===============================================================
+
+  [STEP 1] Running schema migrations on test database...
+    - Migrations applied successfully.
+
+  [STEP 2] Seeding test user and test document...
+    - Seeded user_id: d0d6a36a-1c49-4f5d-820d-fe7f1108afdf
+    - Seeded doc_id: e56a8a88-7a06-43f9-8fe9-a795c4679117
+    - Initial file created at storage path.
+
+  [STEP 3] Testing PersistenceWorker unit lifecycle...
+    - Debounce active: disk unchanged immediately after edit.
+    - Debounced flush succeeded: disk content synchronized & snapshot created.
+    - Found snapshot: 2026-10-11-13-44-55_notes_debounced_note.md
+    - Clean room with 0 peers successfully evicted from RAM.
+    - Dirty room flushed prior to eviction: zero data loss verified.
+
+  [STEP 4] Generating session token for ws_edit_simulator...
+    - Generated session token: 8677afd83da03aca...
+
+  [STEP 5] Launching CME Server daemon with debounced persistence worker...
+  [INFO] Storage backend initialized at: /tmp/cme_persist_test_storage
+  [INFO] PostgreSQL connection pool initialized (8 connections).
+  [INFO] CME Server listening on http://127.0.0.1:18094
+    - Server daemon & persistence worker active.
+
+  [STEP 6] Simulating real collaborator keystrokes via WebSocket...
+  Executing: python3 tests/ws_edit_simulator.py --url ws://127.0.0.1:18094/ws/collab/e56a8a88-7a06-43f9-8fe9-a795c4679117 --token ... --insert "\n\n### WebSocket CRDT Keystroke Injected!\n" --delay 0.1
+
+  [SIMULATOR] Connecting to ws://127.0.0.1:18094/ws/collab/e56a8a88-7a06-43f9-8fe9-a795c4679117...
+  [SIMULATOR] Server initial state vector received (10 bytes)
+  [SIMULATOR] Server SyncStep2 delta received (104 bytes)
+  [SIMULATOR] Computed edit delta: 67 bytes. Emitting SyncUpdate...
+  [SIMULATOR] Delta sent successfully.
+  [SIMULATOR] Disconnecting cleanly.
+
+    - ws_edit_simulator finished with exit code 0.
+
+  [STEP 7] Awaiting debounced flush window (700ms)...
+    - [PASS] File on POSIX disk contains injected WebSocket keystrokes!
+    - [PASS] Inactive collaborative room automatically evicted from memory.
+    - [PASS] Server health probe reports persistence worker metrics:
+      Flushes: 1, Snapshots: 1, Evictions: 1
+
+  [STEP 8] Reconnecting to evicted room to test transparent disk rehydration...
+  [SIMULATOR] Connecting to ws://127.0.0.1:18094/ws/collab/e56a8a88-7a06-43f9-8fe9-a795c4679117...
+  [SIMULATOR] Server initial state vector received (10 bytes)
+  [SIMULATOR] Server SyncStep2 delta received (148 bytes)
+  [SIMULATOR] Computed edit delta: 50 bytes. Emitting SyncUpdate...
+  [SIMULATOR] Delta sent successfully.
+  [SIMULATOR] Disconnecting cleanly.
+    - [PASS] Room rehydrated from disk, applied second edit, flushed, and re-evicted!
+
+  [STEP 9] Stopping server and shutting down gracefully...
+    - Server shutdown complete.
+
+  ===============================================================
+  === ALL PERSISTENCE & EVICTION TESTS PASSED (100% SUCCESS)  ===
+  ===============================================================
+
+  $ ctest --test-dir build --output-on-failure
+  1/12 Test  #1: version_test .....................   Passed    0.00 sec
+  2/12 Test  #2: smoke_test .......................   Passed    0.00 sec
+  3/12 Test  #3: db_permissions_dag_test ..........   Passed    0.05 sec
+  4/12 Test  #4: posix_storage_sal_test ...........   Passed    0.02 sec
+  5/12 Test  #5: server_health_test ...............   Passed    0.32 sec
+  6/12 Test  #6: auth_engine_test .................   Passed    0.92 sec
+  7/12 Test  #7: document_workspace_api_test ......   Passed    0.57 sec
+  8/12 Test  #8: markdown_renderer_test ...........   Passed    0.30 sec
+  9/12 Test  #9: admin_management_test ............   Passed    1.16 sec
+  10/12 Test #10: ycrdt_cffi_integration_test ......   Passed    0.00 sec
+  11/12 Test #11: websocket_collab_test ............   Passed    0.50 sec
+  12/12 Test #12: persistence_debounced_test .......   Passed    3.20 sec
+
+  100% tests passed, 0 tests failed out of 12
+  ```
+
+---
+
+### Step 3.4: Review Engine Real-Time Synchronization
 * **Status:** Upcoming
+
 
 
 

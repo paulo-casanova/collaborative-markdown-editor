@@ -17,6 +17,7 @@
 #include "cme/admin/admin_service.hpp"
 #include "cme/collab/room_manager.hpp"
 #include "cme/collab/collab_socket_data.hpp"
+#include "cme/collab/persistence_worker.hpp"
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <atomic>
@@ -104,9 +105,13 @@ public:
     [[nodiscard]] std::shared_ptr<admin::UserService> user_service() const noexcept { return user_service_; }
     [[nodiscard]] std::shared_ptr<admin::TeamService> team_service() const noexcept { return team_service_; }
     [[nodiscard]] std::shared_ptr<collab::RoomManager> room_manager() const noexcept { return room_manager_; }
+    [[nodiscard]] std::shared_ptr<collab::PersistenceWorker> persistence_worker() const noexcept { return persistence_worker_; }
+    void set_persistence_config(collab::PersistenceConfig config) noexcept { persistence_config_ = config; }
+    [[nodiscard]] const collab::PersistenceConfig& persistence_config() const noexcept { return persistence_config_; }
 
 private:
     config::AppConfig config_;
+    collab::PersistenceConfig persistence_config_{};
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::PosixStorageBackend> storage_;
     std::shared_ptr<auth::IAdminProvider> admin_provider_;
@@ -117,6 +122,7 @@ private:
     std::shared_ptr<admin::UserService> user_service_;
     std::shared_ptr<admin::TeamService> team_service_;
     std::shared_ptr<collab::RoomManager> room_manager_;
+    std::shared_ptr<collab::PersistenceWorker> persistence_worker_;
 
     std::chrono::system_clock::time_point start_time_;
     std::atomic<bool> is_running_{false};

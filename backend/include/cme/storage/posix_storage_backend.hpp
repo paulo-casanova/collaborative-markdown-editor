@@ -72,6 +72,11 @@ public:
 
     Result<bool> is_bundle(const std::string& relative_path) override;
 
+    Result<std::string> create_snapshot(
+        const std::string& relative_path,
+        std::string_view content
+    ) override;
+
     /**
      * @brief Access the configured root path.
      */
@@ -86,6 +91,16 @@ public:
      * @brief Access the trash root path (root_path / "trash").
      */
     [[nodiscard]] const std::filesystem::path& trash_root() const noexcept { return trash_root_; }
+
+    /**
+     * @brief Access the snapshots root path (root_path / "snapshots").
+     */
+    [[nodiscard]] const std::filesystem::path& snapshots_root() const noexcept { return snapshots_root_; }
+
+    /**
+     * @brief Access the backups root path (root_path / "backups").
+     */
+    [[nodiscard]] const std::filesystem::path& backups_root() const noexcept { return backups_root_; }
 
 private:
     std::filesystem::path root_path_;

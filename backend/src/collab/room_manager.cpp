@@ -43,6 +43,18 @@ std::vector<std::shared_ptr<DocumentRoom>> RoomManager::get_dirty_rooms() const 
     return dirty;
 }
 
+std::vector<std::shared_ptr<DocumentRoom>> RoomManager::get_all_rooms() const {
+    std::lock_guard lock(mutex_);
+    std::vector<std::shared_ptr<DocumentRoom>> all;
+    all.reserve(rooms_.size());
+    for (const auto& [_, room] : rooms_) {
+        if (room) {
+            all.push_back(room);
+        }
+    }
+    return all;
+}
+
 size_t RoomManager::active_room_count() const {
     std::lock_guard lock(mutex_);
     return rooms_.size();

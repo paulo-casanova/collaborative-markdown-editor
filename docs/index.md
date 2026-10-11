@@ -26,6 +26,7 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 
 ### 5. Real-Time Collaborative Engine
 * [Native Yjs CRDT C-FFI Architecture](crdt/yrs_ffi.md): Integration of `y-crdt` / `yrs` C-FFI (`libyrs`), `CrdtDoc` RAII model, and in-memory room coordination.
+* [In-Memory Room & Debounced Persistence](crdt/persistence.md): Debounced flusher lifecycle, date-partitioned snapshots, memory eviction, and transparent rehydration.
 
 ### 6. Deployment & Operations *(Coming in Phase 7)*
 * **Configuration Reference**: Complete YAML schema and environment variable overrides.

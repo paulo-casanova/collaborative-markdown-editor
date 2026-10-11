@@ -1,0 +1,168 @@
+#include "cme/collab/persistence_worker.hpp"
+#include <iostream>
+
+namespace cme::collab {
+
+PersistenceWorker::PersistenceWorker(
+    std::shared_ptr<RoomManager> room_manager,
+    std::shared_ptr<storage::IStorageBackend> storage,
+    std::shared_ptr<db::ConnectionPool> db_pool,
+    PersistenceConfig config
+) : room_manager_(std::move(room_manager)),
+    storage_(std::move(storage)),
+    db_pool_(std::move(db_pool)),
+    config_(config) {}
+
+PersistenceWorker::~PersistenceWorker() {
+    stop();
+}
+
+void PersistenceWorker::start() {
+    if (is_running_.exchange(true)) {
+        return;
+    }
+    worker_thread_ = std::thread(&PersistenceWorker::worker_loop, this);
+}
+
+void PersistenceWorker::stop() {
+    if (is_running_.exchange(false)) {
+        {
+            std::lock_guard<std::mutex> lock(cv_mutex_);
+            cv_.notify_all();
+        }
+        if (worker_thread_.joinable()) {
+            worker_thread_.join();
+        }
+        flush_all_dirty();
+    }
+}
+
+Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
+    if (!storage_) {
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    std::string fs_path = room.fs_path();
+    if (fs_path.empty()) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    std::string content = room.get_content();
+
+    // Determine bundle path
+    bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+    std::string content_file = is_bundle ? (fs_path + "/index.md") : fs_path;
+
+    // 1. Atomic write to active content storage
+    auto write_res = storage_->write_file(content_file, content, true);
+    if (!write_res.has_value()) {
+        std::cerr << "[ERROR] PersistenceWorker failed to write file: " << content_file << "\n";
+        return write_res;
+    }
+
+    // 2. Create date-partitioned snapshot
+    if (config_.enable_snapshots) {
+        auto snap_res = storage_->create_snapshot(content_file, content);
+        if (snap_res.has_value()) {
+            total_snapshots_++;
+        } else {
+            std::cerr << "[WARN] PersistenceWorker failed to create snapshot for: " << content_file << "\n";
+        }
+    }
+
+    // 3. Update PostgreSQL updated_at timestamp
+    if (db_pool_ && !room.document_id().empty()) {
+        auto conn_res = db_pool_->acquire();
+        if (conn_res.has_value()) {
+            try {
+                pqxx::work tx(conn_res->get());
+                tx.exec_params(
+                    "UPDATE documents SET updated_at = NOW() WHERE id = $1::uuid;",
+                    room.document_id()
+                );
+                tx.commit();
+            } catch (...) {}
+        }
+    }
+
+    // 4. Mark room clean
+    room.mark_clean();
+    total_flushes_++;
+    return {};
+}
+
+size_t PersistenceWorker::flush_all_dirty() {
+    if (!room_manager_) return 0;
+    auto dirty_rooms = room_manager_->get_dirty_rooms();
+    size_t flushed = 0;
+    for (auto& room : dirty_rooms) {
+        if (room && room->is_dirty()) {
+            auto res = flush_room(*room);
+            if (res.has_value()) {
+                flushed++;
+            }
+        }
+    }
+    return flushed;
+}
+
+void PersistenceWorker::worker_loop() {
+    while (is_running_) {
+        {
+            std::unique_lock<std::mutex> lock(cv_mutex_);
+            cv_.wait_for(lock, config_.check_interval, [this]() {
+                return !is_running_.load();
+            });
+        }
+
+        if (!is_running_) break;
+
+        if (!room_manager_) continue;
+
+        auto now = std::chrono::system_clock::now();
+        auto all_rooms = room_manager_->get_all_rooms();
+        std::vector<std::string> to_evict;
+
+        for (auto& room : all_rooms) {
+            if (!room) continue;
+
+            // 1. Check debounced flush conditions
+            if (room->is_dirty()) {
+                auto idle_dur = std::chrono::duration_cast<std::chrono::milliseconds>(now - room->last_edit_time());
+                auto flush_dur = std::chrono::duration_cast<std::chrono::milliseconds>(now - room->last_flush_time());
+
+                if (idle_dur >= config_.idle_delay || flush_dur >= config_.max_interval) {
+                    flush_room(*room);
+                }
+            }
+
+            // 2. Check room eviction conditions
+            if (config_.auto_evict_idle_rooms && room->peer_count() == 0) {
+                // If still dirty after idle window, flush it before eviction
+                if (room->is_dirty()) {
+                    auto idle_dur = std::chrono::duration_cast<std::chrono::milliseconds>(now - room->last_edit_time());
+                    if (idle_dur >= config_.idle_delay) {
+                        flush_room(*room);
+                    }
+                }
+
+                // If clean and has 0 peers, schedule eviction
+                if (!room->is_dirty() && room->peer_count() == 0) {
+                    to_evict.push_back(room->document_id());
+                }
+            }
+        }
+
+        // Execute room evictions
+        for (const auto& doc_id : to_evict) {
+            auto r = room_manager_->get_room(doc_id);
+            if (r && r->peer_count() == 0 && !r->is_dirty()) {
+                if (room_manager_->remove_room(doc_id)) {
+                    total_evictions_++;
+                }
+            }
+        }
+    }
+}
+
+} // namespace cme::collab

@@ -47,6 +47,11 @@ public:
     [[nodiscard]] std::vector<std::shared_ptr<DocumentRoom>> get_dirty_rooms() const;
 
     /**
+     * @brief Collects all active rooms currently managed in memory.
+     */
+    [[nodiscard]] std::vector<std::shared_ptr<DocumentRoom>> get_all_rooms() const;
+
+    /**
      * @brief Returns total active collaborative room count.
      */
     [[nodiscard]] size_t active_room_count() const;

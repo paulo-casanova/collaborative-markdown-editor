@@ -137,6 +137,17 @@ public:
      * @return Result<bool> True if bundle, false if standard directory or file.
      */
     virtual Result<bool> is_bundle(const std::string& relative_path) = 0;
+
+    /**
+     * @brief Creates an immutable date-partitioned snapshot under snapshots/YYYY/MM/...
+     * @param relative_path Document path relative to content root.
+     * @param content Snapshot content body.
+     * @return Result<std::string> Relative snapshot path or ErrorCode.
+     */
+    virtual Result<std::string> create_snapshot(
+        const std::string& relative_path,
+        std::string_view content
+    ) = 0;
 };
 
 } // namespace cme::storage

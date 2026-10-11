@@ -453,4 +453,64 @@ Result<bool> PosixStorageBackend::is_bundle(const std::string& relative_path) {
     return is_bundle_path(*target_res);
 }
 
+Result<std::string> PosixStorageBackend::create_snapshot(
+    const std::string& relative_path,
+    std::string_view content
+) {
+    if (relative_path.empty()) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto now = std::chrono::system_clock::now();
+    std::time_t tt = std::chrono::system_clock::to_time_t(now);
+    std::tm tm_buf{};
+    gmtime_r(&tt, &tm_buf);
+
+    char year_str[8];
+    char month_str[8];
+    char ts_str[32];
+    std::strftime(year_str, sizeof(year_str), "%Y", &tm_buf);
+    std::strftime(month_str, sizeof(month_str), "%m", &tm_buf);
+    std::strftime(ts_str, sizeof(ts_str), "%Y-%m-%d-%H-%M-%S", &tm_buf);
+
+    std::filesystem::path snap_dir = snapshots_root_ / year_str / month_str;
+    std::error_code ec;
+    std::filesystem::create_directories(snap_dir, ec);
+    if (ec) {
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    std::string sanitized = sanitize_path_for_id(relative_path);
+    if (!sanitized.ends_with(".md")) {
+        sanitized += ".md";
+    }
+    std::string snap_filename = std::string(ts_str) + "_" + sanitized;
+    std::filesystem::path final_path = snap_dir / snap_filename;
+    std::filesystem::path tmp_path = snap_dir / ("." + snap_filename + "." + std::to_string(get_random_nonce()) + ".tmp");
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) {
+            return std::unexpected(ErrorCode::IoError);
+        }
+        out.write(content.data(), static_cast<std::streamsize>(content.size()));
+        out.flush();
+        if (!out.good()) {
+            std::filesystem::remove(tmp_path, ec);
+            return std::unexpected(ErrorCode::IoError);
+        }
+        out.close();
+
+        std::filesystem::rename(tmp_path, final_path, ec);
+        if (ec) {
+            std::filesystem::remove(tmp_path, ec);
+            return std::unexpected(ErrorCode::IoError);
+        }
+    }
+
+    std::string rel_result = std::string(year_str) + "/" + month_str + "/" + snap_filename;
+    return rel_result;
+}
+
 } // namespace cme::storage
