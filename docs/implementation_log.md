@@ -483,7 +483,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ## Phase 3: Real-Time Collaborative Engine (CRDT & WebSockets)
 
 ### Step 3.1: Native Yjs CRDT C-FFI Integration
-* **Status:** Complete (Commit: Pending)
+* **Status:** Complete (Commit: `a99e549`)
 * **Date Completed:** 2026-10-11
 * **Deliverables:**
   * Vendored official `y-crdt` (`yrs` / `yffi` v0.28.0) C-FFI header and shared library in `backend/third_party/yrs/include/libyrs.h` and `backend/third_party/yrs/lib/libyrs.so`.
