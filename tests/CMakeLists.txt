@@ -136,5 +136,19 @@ set_tests_properties(ycrdt_cffi_integration_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# WebSocket Server & Binary Wire Protocol Multiplexer test (Step 3.2)
+add_executable(websocket_collab_test
+    backend/websocket_collab_test.cpp
+)
+target_link_libraries(websocket_collab_test PRIVATE cme_core)
+target_compile_features(websocket_collab_test PRIVATE cxx_std_23)
+set_target_properties(websocket_collab_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME websocket_collab_test COMMAND websocket_collab_test)
+set_tests_properties(websocket_collab_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 

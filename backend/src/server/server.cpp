@@ -2,6 +2,8 @@
 #include "cme/version.hpp"
 #include "cme/auth/crypto_utils.hpp"
 #include "cme/renderer/markdown_renderer.hpp"
+#include "cme/collab/collab_socket_data.hpp"
+#include "cme/collab/document_room.hpp"
 #include <uWebSockets/App.h>
 #include <libusockets.h>
 #include <iostream>
@@ -9,6 +11,7 @@
 #include <chrono>
 #include <cctype>
 #include <vector>
+#include <span>
 #include <utility>
 
 namespace cme::server {
@@ -257,6 +260,7 @@ Result<void> Server::start() {
     // 7. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
+    uws_app_ = &app;
 
     // CORS Preflight handler
     app.options("/*", [](auto *res, auto *req) {
@@ -1610,6 +1614,287 @@ Result<void> Server::start() {
         send_json(res, "200 OK", {{"status", "deleted"}});
     });
 
+    // =========================================================================
+    // Real-Time Collaborative CRDT & WebSockets Engine (Step 3.2)
+    // =========================================================================
+    app.ws<collab::CollabSocketData>("/ws/collab/:document_id", {
+        .compression = uWS::DISABLED,
+        .maxPayloadLength = 16 * 1024 * 1024,
+        .idleTimeout = 120,
+        .maxBackpressure = 1 * 1024 * 1024,
+        .closeOnBackpressureLimit = false,
+        .resetIdleTimeoutOnSend = false,
+        .sendPingsAutomatically = true,
+        .maxLifetime = 0,
+        .upgrade = [this](auto *res, auto *req, auto *context) {
+            std::string doc_id = url_decode(req->getParameter(0));
+            std::string sec_key = std::string(req->getHeader("sec-websocket-key"));
+            std::string sec_proto = std::string(req->getHeader("sec-websocket-protocol"));
+            std::string sec_ext = std::string(req->getHeader("sec-websocket-extensions"));
+
+            std::string auth_hdr = std::string(req->getHeader("authorization"));
+            std::string cookie_hdr = std::string(req->getHeader("cookie"));
+
+            std::string del_header_name = config_.authn.delegated_header;
+            std::string del_email_name = config_.authn.delegated_email_header;
+            for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+            std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+            // Query parameter fallback (?token= or ?access_token=)
+            if (auth_hdr.empty()) {
+                std::string token_param = std::string(req->getQuery("token"));
+                if (token_param.empty()) {
+                    token_param = std::string(req->getQuery("access_token"));
+                }
+                if (!token_param.empty()) {
+                    auth_hdr = "Bearer " + token_param;
+                }
+            }
+
+            // Sec-WebSocket-Protocol fallback (e.g. "bearer, <token>")
+            if (auth_hdr.empty() && !sec_proto.empty()) {
+                auto comma_pos = sec_proto.find(',');
+                if (comma_pos != std::string::npos) {
+                    std::string sub1 = sec_proto.substr(0, comma_pos);
+                    std::string sub2 = sec_proto.substr(comma_pos + 1);
+                    auto trim = [](std::string s) {
+                        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.erase(s.begin());
+                        while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+                        return s;
+                    };
+                    sub1 = trim(sub1);
+                    sub2 = trim(sub2);
+                    if (sub1 == "bearer" && !sub2.empty()) {
+                        auth_hdr = "Bearer " + sub2;
+                    } else if (!sub1.empty()) {
+                        auth_hdr = "Bearer " + sub1;
+                    }
+                } else if (sec_proto.rfind("bearer ", 0) == 0) {
+                    auth_hdr = "Bearer " + sec_proto.substr(7);
+                } else if (sec_proto != "bearer") {
+                    auth_hdr = "Bearer " + sec_proto;
+                }
+            }
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                res->writeStatus("401 Unauthorized");
+                res->writeHeader("Content-Type", "application/json");
+                res->end(nlohmann::json{
+                    {"error", "Unauthorized"},
+                    {"message", "Authentication required for collaborative session"}
+                }.dump());
+                return;
+            }
+
+            auto user = *auth_res.value();
+
+            // Load document room if not loaded
+            auto room = room_manager_->get_room(doc_id);
+            std::string fs_path;
+            if (!room) {
+                auto doc_res = document_service_->get_document_by_id(doc_id, user);
+                if (!doc_res.has_value()) {
+                    if (doc_res.error() == ErrorCode::PermissionDenied) {
+                        res->writeStatus("403 Forbidden");
+                        res->writeHeader("Content-Type", "application/json");
+                        res->end(nlohmann::json{
+                            {"error", "Forbidden"},
+                            {"message", "Insufficient permissions for collaborative document room"}
+                        }.dump());
+                        return;
+                    }
+                    res->writeStatus("404 Not Found");
+                    res->writeHeader("Content-Type", "application/json");
+                    res->end(nlohmann::json{
+                        {"error", "NotFound"},
+                        {"message", "Document does not exist"}
+                    }.dump());
+                    return;
+                }
+                fs_path = doc_res->path;
+                room = room_manager_->get_or_create_room(doc_id, doc_res->content, fs_path);
+            } else {
+                fs_path = room->fs_path();
+            }
+
+            // Check permissions
+            auto access_res = evaluate_access(user, doc_id, fs_path);
+            if (!access_res.has_value() || access_res.value() == db::AccessLevel::None) {
+                res->writeStatus("403 Forbidden");
+                res->writeHeader("Content-Type", "application/json");
+                res->end(nlohmann::json{
+                    {"error", "Forbidden"},
+                    {"message", "Insufficient permissions for collaborative document room"}
+                }.dump());
+                return;
+            }
+
+            db::AccessLevel access_lvl = access_res.value();
+
+            collab::CollabSocketData socket_data{
+                .document_id = doc_id,
+                .topic = "room:" + doc_id,
+                .client_id = auth::generate_random_token(16),
+                .user_id = user.user_id,
+                .username = user.username,
+                .display_name = user.display_name.empty() ? user.username : user.display_name,
+                .avatar_color = user.avatar_color.empty() ? "#3b82f6" : user.avatar_color,
+                .is_authenticated = true,
+                .is_admin = user.is_system_admin,
+                .access_level = access_lvl
+            };
+
+            res->template upgrade<collab::CollabSocketData>(
+                std::move(socket_data),
+                sec_key,
+                sec_proto,
+                sec_ext,
+                context
+            );
+        },
+        .open = [this](auto *ws) {
+            auto *data = ws->getUserData();
+            if (!data) return;
+
+            ws->subscribe(data->topic);
+
+            auto room = room_manager_->get_room(data->document_id);
+            if (!room) {
+                room = room_manager_->get_or_create_room(data->document_id);
+            }
+
+            room->add_peer(data->client_id, data->username, data->display_name, data->avatar_color);
+
+            // Phase 1 (Sync Handshake): Server sends its current state vector (SyncStep1) to client
+            auto sv = room->get_state_vector();
+            std::string frame;
+            frame.reserve(2 + sv.size());
+            frame.push_back('\x00'); // CRDT Sync
+            frame.push_back('\x01'); // SyncStep1
+            frame.append(reinterpret_cast<const char*>(sv.data()), sv.size());
+            ws->send(frame, uWS::OpCode::BINARY);
+        },
+        .message = [this](auto *ws, std::string_view msg, uWS::OpCode opCode) {
+            (void)opCode;
+            if (msg.empty()) return;
+            auto *data = ws->getUserData();
+            if (!data) return;
+
+            uint8_t opcode = static_cast<uint8_t>(msg[0]);
+            std::string_view payload = msg.substr(1);
+
+            auto room = room_manager_->get_room(data->document_id);
+            if (!room) {
+                room = room_manager_->get_or_create_room(data->document_id);
+            }
+
+            switch (opcode) {
+                case 0x00: { // 0x00: CRDT Synchronization (Yjs Wire Format)
+                    if (payload.empty()) return;
+                    uint8_t subtype = static_cast<uint8_t>(payload[0]);
+                    std::string_view sub_payload = payload.substr(1);
+
+                    switch (subtype) {
+                        case 0x01: { // Subtype 0x01: SyncStep1 (Client transmits local state vector)
+                            std::span<const uint8_t> remote_sv(
+                                reinterpret_cast<const uint8_t*>(sub_payload.data()),
+                                sub_payload.size()
+                            );
+                            auto diff = room->compute_sync_step2(remote_sv);
+                            std::string reply;
+                            reply.reserve(2 + diff.size());
+                            reply.push_back('\x00');
+                            reply.push_back('\x02'); // SyncStep2
+                            reply.append(reinterpret_cast<const char*>(diff.data()), diff.size());
+                            ws->send(reply, uWS::OpCode::BINARY);
+                            break;
+                        }
+                        case 0x02: { // Subtype 0x02: SyncStep2 (Client returns missing document updates)
+                            if (data->access_level >= db::AccessLevel::Edit || data->is_admin) {
+                                std::span<const uint8_t> update_data(
+                                    reinterpret_cast<const uint8_t*>(sub_payload.data()),
+                                    sub_payload.size()
+                                );
+                                auto apply_res = room->apply_client_update(update_data);
+                                if (apply_res.has_value()) {
+                                    std::string broadcast_msg;
+                                    broadcast_msg.reserve(2 + sub_payload.size());
+                                    broadcast_msg.push_back('\x00');
+                                    broadcast_msg.push_back('\x03'); // SyncUpdate
+                                    broadcast_msg.append(sub_payload.data(), sub_payload.size());
+                                    ws->publish(data->topic, broadcast_msg, uWS::OpCode::BINARY);
+                                }
+                            }
+                            break;
+                        }
+                        case 0x03: { // Subtype 0x03: SyncUpdate (Incremental document edit delta)
+                            if (data->access_level >= db::AccessLevel::Edit || data->is_admin) {
+                                std::span<const uint8_t> update_data(
+                                    reinterpret_cast<const uint8_t*>(sub_payload.data()),
+                                    sub_payload.size()
+                                );
+                                auto apply_res = room->apply_client_update(update_data);
+                                if (apply_res.has_value()) {
+                                    ws->publish(data->topic, msg, uWS::OpCode::BINARY);
+                                }
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                    break;
+                }
+                case 0x01: { // 0x01: Awareness and cursor coordinates
+                    ws->publish(data->topic, msg, uWS::OpCode::BINARY);
+                    break;
+                }
+                case 0x02: { // 0x02: Review event notifications
+                    ws->publish(data->topic, msg, uWS::OpCode::BINARY);
+                    break;
+                }
+                case 0x03: { // 0x03: Ping heartbeat
+                    std::string pong;
+                    pong.reserve(1 + payload.size());
+                    pong.push_back('\x04'); // 0x04: Pong heartbeat
+                    pong.append(payload.data(), payload.size());
+                    ws->send(pong, uWS::OpCode::BINARY);
+                    break;
+                }
+                case 0x04: { // 0x04: Pong heartbeat
+                    break;
+                }
+                default:
+                    break;
+            }
+        },
+        .close = [&app, this](auto *ws, int code, std::string_view message) {
+            (void)code;
+            (void)message;
+            auto *data = ws->getUserData();
+            if (!data) return;
+
+            auto room = room_manager_->get_room(data->document_id);
+            if (room) {
+                room->remove_peer(data->client_id);
+            }
+
+            nlohmann::json departure_payload = {
+                {"type", "departure"},
+                {"client_id", data->client_id},
+                {"username", data->username}
+            };
+            std::string dep_msg;
+            dep_msg.push_back('\x01');
+            dep_msg.append(departure_payload.dump());
+            app.publish(data->topic, dep_msg, uWS::OpCode::BINARY);
+        }
+    });
+
     // Bind listener
     app.listen(config_.server.bind, config_.server.port, [this](auto *token) {
         if (token) {
@@ -1630,6 +1915,7 @@ Result<void> Server::start() {
     // Run epoll event loop (blocks until loop is stopped)
     app.run();
 
+    uws_app_ = nullptr;
     return {};
 }
 
@@ -1642,9 +1928,31 @@ void Server::stop() {
                     us_listen_socket_close(0, static_cast<struct us_listen_socket_t*>(us_listen_socket_));
                     us_listen_socket_ = nullptr;
                 }
+                if (uws_app_) {
+                    auto *app = static_cast<uWS::App*>(uws_app_);
+                    app->close();
+                }
             });
         }
     }
+}
+
+void Server::broadcast_review_event(const std::string& document_id, const nlohmann::json& payload) {
+    std::string msg;
+    msg.push_back('\x02'); // Opcode 0x02: Review event
+    msg.append(payload.dump());
+    broadcast_to_room(document_id, msg, true);
+}
+
+void Server::broadcast_to_room(const std::string& document_id, std::string_view message, bool binary) {
+    if (!uws_app_ || !uws_loop_) return;
+    auto* loop = static_cast<uWS::Loop*>(uws_loop_);
+    auto* app = static_cast<uWS::App*>(uws_app_);
+    std::string topic = "room:" + document_id;
+    std::string msg_copy(message);
+    loop->defer([app, topic = std::move(topic), msg = std::move(msg_copy), binary]() {
+        app->publish(topic, msg, binary ? uWS::OpCode::BINARY : uWS::OpCode::TEXT);
+    });
 }
 
 } // namespace cme::server

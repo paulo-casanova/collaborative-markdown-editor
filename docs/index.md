@@ -22,7 +22,7 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 * [Document & Workspace Tree REST API](api/documents.md): Document CRUD, workspace directory trees, raw markdown streaming, and bundle assets.
 * [Markdown to Semantic HTML Renderer API](api/renderer.md): SSR endpoints with KaTeX math, Mermaid diagrams, wiki links, and review overlays.
 * [User & Team Administration API & CLI](api/admin.md): Administrative user and team CRUD, DAG hierarchy management, and `cme-admin` CLI.
-* **WebSocket Framing Protocol**: Binary wire protocol opcodes (`0x00`–`0x04`) and CRDT synchronization deltas.
+* [WebSocket Framing Protocol](api/websocket_protocol.md): Binary wire protocol opcodes (`0x00`–`0x04`), handshake authentication, and CRDT synchronization deltas.
 
 ### 5. Real-Time Collaborative Engine
 * [Native Yjs CRDT C-FFI Architecture](crdt/yrs_ffi.md): Integration of `y-crdt` / `yrs` C-FFI (`libyrs`), `CrdtDoc` RAII model, and in-memory room coordination.

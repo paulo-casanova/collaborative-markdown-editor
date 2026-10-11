@@ -553,7 +553,119 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 3.2: WebSocket Server & Binary Wire Protocol Multiplexer
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Contextual per-socket metadata struct `cme::collab::CollabSocketData` (`backend/include/cme/collab/collab_socket_data.hpp`).
+  * WebSocket route `/ws/collab/:document_id` in `cme::server::Server` (`backend/src/server/server.cpp`):
+    * Five-way handshake authentication: `Authorization: Bearer <token>`, `Cookie: cme_session=<token>`, `?token=<token>`, `Sec-WebSocket-Protocol: bearer, <token>`, and reverse-proxy delegated headers (`X-Remote-User`, `X-Remote-Email`).
+    * Pre-upgrade access control: HTTP `401 Unauthorized` on missing/invalid credentials, `403 Forbidden` on insufficient access level, `404 Not Found` on non-existent document.
+    * 1-byte binary wire protocol decoder & multiplexer:
+      * `0x00`: CRDT Synchronization (`0x01` SyncStep1, `0x02` SyncStep2, `0x03` SyncUpdate).
+      * `0x01`: Live collaborator awareness & cursor coordinates broadcasting, plus peer departure notification frames.
+      * `0x02`: Real-time review event notifications (comments, suggestions, tasks).
+      * `0x03` / `0x04`: Ping/Pong heartbeat round-trip ($0.040\text{ ms}$ latency, beating the $< 10\text{ ms}$ threshold).
+    * `broadcast_review_event()` and `broadcast_to_room()` helper APIs for server-side asynchronous broadcasts.
+  * Automated protocol compliance runner in Python (`tests/ws_protocol_runner.py`).
+  * Integration test suite in `tests/backend/websocket_collab_test.cpp`.
+  * Protocol documentation in `docs/api/websocket_protocol.md` and indexed in `docs/index.md`.
+* **Verification:**
+  ```bash
+  $ ./build/tests/websocket_collab_test
+  ========================================================
+  === CME WebSocket Collaboration & Protocol Test Suite ===
+  ========================================================
+
+  [STEP 1] Running schema migrations on test database...
+    - Migrations applied successfully.
+
+  [STEP 2] Seeding test user and test document...
+    - Seeded user_id: f33b06a5-5d5a-4224-8513-7f8f30a093f1
+    - Seeded doc_id: 3bd56e72-27f6-4663-83af-79fa7c5ac00e
+
+  [STEP 3] Generating session token for ws_tester...
+    - Generated session token: 444c59f739de7061...
+
+  [STEP 4] Launching CME Server daemon on port 18086...
+  [INFO] Storage backend initialized at: /tmp/cme_ws_test_storage
+  [INFO] PostgreSQL connection pool initialized (8 connections).
+  [INFO] CME Server listening on http://127.0.0.1:18086
+    - Server daemon initialized and listening.
+
+  [STEP 5] Invoking Python WebSocket Protocol Runner...
+  Executing: python3 tests/ws_protocol_runner.py --url ws://127.0.0.1:18086/ws/collab/3bd56e72-27f6-4663-83af-79fa7c5ac00e --token 444c59f739de7061...
+
+  ==================================================================
+  === CME WebSocket Wire Protocol Compliance Test Runner       ===
+  ==================================================================
+  Target URL: ws://127.0.0.1:18086/ws/collab/3bd56e72-27f6-4663-83af-79fa7c5ac00e
+
+  [TEST 1] Connecting with Authorization: Bearer <token>...
+    ✓ Handshake accepted: server SyncStep1 state vector received (10 bytes)
+
+  [TEST 2] Testing CRDT State Vector Sync Handshake (SyncStep1 -> SyncStep2)...
+    ✓ Server replied with SyncStep2 delta payload (76 bytes)
+
+  [TEST 3] Testing Opcode 0x03 Ping -> 0x04 Pong Heartbeat Latency...
+    ✓ Pong response verified in 0.040 ms (Status criteria: < 10ms)
+
+  [TEST 4] Connecting using ?token= query parameter...
+    ✓ Authentication via ?token= query parameter validated
+
+  [TEST 5] Connecting using Cookie: cme_session=<token>...
+    ✓ Authentication via Cookie header validated
+
+  [TEST 6] Connecting using Sec-WebSocket-Protocol: bearer, <token>...
+    ✓ Subprotocol authentication validated (negotiated: bearer)
+
+  [TEST 7] Testing Multi-Peer Broadcast (Awareness & SyncUpdate)...
+    ✓ Peer 2 received Peer 1's live awareness frame
+    ✓ Peer 2 received Peer 1's review event notification
+    ✓ Peer 2 received Peer 1's CRDT SyncUpdate delta
+
+  [TEST 8] Testing Authentication Rejection with Invalid Token...
+    ✓ Connection rejected with HTTP 401 Unauthorized as expected
+
+  [TEST 9] Testing Non-Existent Document Rejection (HTTP 404)...
+    ✓ Connection rejected with HTTP 404 Not Found as expected
+
+  ==================================================================
+  === All 9 WebSocket Protocol Tests PASSED Successfully!       ===
+  ==================================================================
+
+  [STEP 6] Python test runner completed successfully (code 0).
+
+  [STEP 7] Testing server.broadcast_review_event()...
+    - broadcast_review_event dispatched without exceptions.
+
+  [STEP 8] Shutting down server daemon...
+    - Server terminated cleanly.
+
+  ========================================================
+  === ALL WEBSOCKET TESTS PASSED (100% SUCCESS)         ===
+  ========================================================
+
+  $ ctest --test-dir build --output-on-failure
+  1/11 Test  #1: version_test .....................   Passed    0.00 sec
+  2/11 Test  #2: smoke_test .......................   Passed    0.00 sec
+  3/11 Test  #3: db_permissions_dag_test ..........   Passed    0.05 sec
+  4/11 Test  #4: posix_storage_sal_test ...........   Passed    0.03 sec
+  5/11 Test  #5: server_health_test ...............   Passed    0.32 sec
+  6/11 Test  #6: auth_engine_test .................   Passed    0.94 sec
+  7/11 Test  #7: document_workspace_api_test ......   Passed    0.62 sec
+  8/11 Test  #8: markdown_renderer_test ...........   Passed    0.30 sec
+  9/11 Test  #9: admin_management_test ............   Passed    1.30 sec
+ 10/11 Test #10: ycrdt_cffi_integration_test ......   Passed    0.00 sec
+ 11/11 Test #11: websocket_collab_test ............   Passed    0.57 sec
+
+  100% tests passed, 0 tests failed out of 11
+  ```
+
+---
+
+### Step 3.3: In-Memory DocumentRoom & Debounced Persistence
 * **Status:** Upcoming
+
 
 
 

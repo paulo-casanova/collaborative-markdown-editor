@@ -16,6 +16,7 @@
 #include "cme/document/document_service.hpp"
 #include "cme/admin/admin_service.hpp"
 #include "cme/collab/room_manager.hpp"
+#include "cme/collab/collab_socket_data.hpp"
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <atomic>
@@ -82,6 +83,16 @@ public:
         const std::string& fs_path
     );
 
+    /**
+     * @brief Broadcasts a review event to all peers connected to a document room.
+     */
+    void broadcast_review_event(const std::string& document_id, const nlohmann::json& payload);
+
+    /**
+     * @brief Broadcasts an arbitrary binary or text message to all peers connected to a document room.
+     */
+    void broadcast_to_room(const std::string& document_id, std::string_view message, bool binary = true);
+
     [[nodiscard]] const config::AppConfig& config() const noexcept { return config_; }
     [[nodiscard]] std::shared_ptr<db::ConnectionPool> db_pool() const noexcept { return db_pool_; }
     [[nodiscard]] std::shared_ptr<storage::PosixStorageBackend> storage() const noexcept { return storage_; }
@@ -111,6 +122,7 @@ private:
     std::atomic<bool> is_running_{false};
     void* us_listen_socket_{nullptr};
     void* uws_loop_{nullptr};
+    void* uws_app_{nullptr};
 };
 
 } // namespace cme::server
