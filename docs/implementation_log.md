@@ -388,10 +388,26 @@ This document tracks the incremental implementation of the Collaborative Markdow
 
 ---
 
+### Step 2.5: User & Team Administration Engine (REST API & `cme-admin` CLI)
+* **Status:** Next
+* **Deliverables Plan:**
+  * `cme::auth::UserService` & `cme::auth::TeamService` managing CRUD on `users`, `teams`, `team_members`, and `team_parents` with DAG cycle validation.
+  * REST API routing in `Server` under `/api/v1/admin/*`:
+    * User Management: `GET /api/v1/admin/users`, `POST /api/v1/admin/users`, `GET /api/v1/admin/users/:id`, `PUT /api/v1/admin/users/:id`, `DELETE /api/v1/admin/users/:id`.
+    * Team Management: `GET /api/v1/admin/teams`, `POST /api/v1/admin/teams`, `GET /api/v1/admin/teams/:id`, `PUT /api/v1/admin/teams/:id`, `DELETE /api/v1/admin/teams/:id`.
+    * Membership & DAG: `GET /api/v1/admin/teams/:id/members`, `POST /api/v1/admin/teams/:id/members`, `DELETE /api/v1/admin/teams/:id/members/:user_id`, `POST /api/v1/admin/teams/:id/parents`, `DELETE /api/v1/admin/teams/:id/parents/:parent_id`.
+  * `cme-admin` CLI utility (`src/admin_main.cpp`) providing subcommands:
+    * `user list`, `user create`, `user set-admin`, `user reset-password`
+    * `team list`, `team create`, `team add-member`, `team remove-member`, `team add-parent`
+  * Integration test suite in `tests/backend/admin_management_test.cpp`.
+
+---
+
 ## Phase 3: Real-Time Collaborative Engine (CRDT & WebSockets)
 
 ### Step 3.1: Native Yjs CRDT C-FFI Integration
-* **Status:** Next
+* **Status:** Upcoming
+
 
 
 
