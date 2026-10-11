@@ -114,7 +114,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ## Phase 2: Core Backend Engine & REST API Foundation
 
 ### Step 2.1: Server Daemon Skeleton & Health Probe
-* **Status:** Complete
+* **Status:** Complete (Commit: `fef2c1b`)
 * **Date Completed:** 2026-10-11
 * **Deliverables:**
   * Multi-tier configuration loader in `cme::config::AppConfig` (`backend/include/cme/config/config.hpp`, `backend/src/config/config.cpp`) supporting YAML file parsing (`yaml-cpp`), environment variable overrides (`CME_*`), and CLI flag prioritization.
@@ -665,7 +665,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 3.3: In-Memory DocumentRoom & Debounced Persistence
-* **Status:** Complete
+* **Status:** Complete (Commit: `63e2bbb`)
 * **Deliverables:**
   * Added `create_snapshot` virtual method to `IStorageBackend` (`backend/include/cme/storage/storage_backend.hpp`).
   * Implemented `create_snapshot(relative_path, content)` in `PosixStorageBackend` (`backend/include/cme/storage/posix_storage_backend.hpp`, `backend/src/storage/posix_storage_backend.cpp`):
@@ -778,7 +778,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 3.4: Review Engine Real-Time Synchronization
-* **Status:** Complete
+* **Status:** Complete (Commit: `ebdf434`)
 * **Deliverables:**
   * Implemented `cme::review::ReviewService` (`backend/include/cme/review/review_service.hpp`, `backend/src/review/review_service.cpp`):
     * Threaded Comments: `list_comments` (with nested reply trees), `create_comment` (anchored via text quote or offsets), `reply_comment`, `update_comment_status` (`OPEN` / `RESOLVED`), and `delete_comment`.
