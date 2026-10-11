@@ -20,6 +20,7 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 * [Health Probe API](api/health.md): `GET /api/v1/health` operational metrics and JSON schema.
 * [Authentication & Authorization API](api/auth.md): Pluggable AuthN (Challenge / Delegated JIT), Admin providers, Sessions, and Personal Access Tokens.
 * [Document & Workspace Tree REST API](api/documents.md): Document CRUD, workspace directory trees, raw markdown streaming, and bundle assets.
+* [Markdown to Semantic HTML Renderer API](api/renderer.md): SSR endpoints with KaTeX math, Mermaid diagrams, wiki links, and review overlays.
 * **WebSocket Framing Protocol**: Binary wire protocol opcodes (`0x00`–`0x04`) and CRDT synchronization deltas.
 
 ### 5. Deployment & Operations *(Coming in Phase 7)*

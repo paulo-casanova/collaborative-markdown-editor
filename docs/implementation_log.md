@@ -317,9 +317,81 @@ This document tracks the incremental implementation of the Collaborative Markdow
   100% tests passed, 0 tests failed out of 7
   ```
 
+### Step 2.4: Server-Side Markdown to Semantic HTML Renderer
+* **Status:** Complete (Commit: pending)
+* **Deliverables:**
+  * Vendored C Markdown Parser `md4c` (`backend/third_party/md4c/`) integrated via static library target in CMake with compile warning suppression.
+  * `cme::renderer::MarkdownRenderer` (`backend/include/cme/renderer/markdown_renderer.hpp`, `backend/src/renderer/markdown_renderer.cpp`):
+    * High-performance AST/SAX transforms with strict CommonMark & GFM dialect compliance.
+    * Heading anchor slug generation (`<h1 id="...">...</h1>`) with collision disambiguation (`slug`, `slug-1`, `slug-2`).
+    * Inline math `$formula$` converted to `<span class="katex-inline" data-expr="formula">$formula$</span>`.
+    * Display math `$$formula$$` converted to `<div class="katex-display" data-expr="formula">$$formula$$</div>`.
+    * Mermaid diagram code blocks (` ```mermaid `) converted into `<div class="mermaid">...</div>`.
+    * Standard code blocks formatted with language classes (`<pre><code class="language-...">...</code></pre>`).
+    * Obsidian-style Wiki link cross-references (`[[target]]` and `[[target|label]]`) converted to `<a class="wiki-link" href="..." data-target="...">`.
+    * GFM aligned tables (`<table>`, `<thead>`, `<tbody>`, `<tr>`, `<th align="...">`, `<td align="...">`).
+    * Task list items (`- [ ]`, `- [x]`) rendered with disabled `<input type="checkbox" ... />`.
+    * Standalone HTML5 document generator (`options.standalone = true`) embedding modern Obsidian/GitHub CSS typography, dark/light theme variables, KaTeX stylesheet and auto-render scripts, and Mermaid.js ESM initialization.
+    * Review annotations overlay (`options.include_reviews = true`) integrating active comments, suggestions with diff rendering (`<del>`, `<ins>`), and action items.
+    * Strict HTML and attribute entity-escaping for comprehensive XSS protection.
+  * Review Subsystem Query Engine in `DocumentService::get_document_reviews` (`backend/src/document/document_service.cpp`):
+    * Joins `comments`, `suggestions`, `tasks`, and `users` tables in PostgreSQL, enforced under document-level `READ` permissions.
+  * REST API routing in `cme::server::Server` (`backend/src/server/server.cpp`):
+    * `GET /api/v1/documents/:id/html`: Document rendering by database UUID, supporting `?standalone=true` and `?include_reviews=true`.
+    * `GET /api/v1/documents/by-path/html`: Document rendering by relative path, supporting `?standalone=true` and `?include_reviews=true`.
+    * Header-ordered `send_html` helper guaranteeing HTTP/1.1 response status code before headers.
+  * Comprehensive test suite in `tests/backend/markdown_renderer_test.cpp`:
+    * Unit tests for core elements, slugs, KaTeX math stubs, Mermaid diagrams, code blocks, wiki links, standalone HTML5 document structure, and review subsystem overlay.
+    * Live integration tests with running `Server` daemon and PostgreSQL database verifying 200 responses, `Content-Type: text/html; charset=utf-8`, grep verification for spec criteria (`grep -E "<html|<h1"`), 401 unauthorized rejection, and 404 not found handling.
+  * API documentation in `docs/api/renderer.md` and updated index in `docs/index.md`.
+* **Verification:**
+  ```bash
+  $ ./build/tests/markdown_renderer_test
+  [TEST] Starting Server-Side Markdown to Semantic HTML Renderer Test Suite (Step 2.4)...
+    -> Testing core Markdown element rendering...
+       [PASS] Core elements, slugs, and task lists rendered successfully.
+    -> Testing KaTeX math transforms...
+       [PASS] KaTeX math stubs transformed accurately.
+    -> Testing Mermaid diagram transformations and syntax code blocks...
+       [PASS] Mermaid diagram blocks converted into <div class="mermaid">.
+    -> Testing wiki links and standalone HTML wrapper...
+       [PASS] Standalone HTML5 document with embedded styles and wiki links validated.
+    -> Testing review annotations overlay rendering...
+       [PASS] Reviews, comments, suggestions, and tasks overlay rendered successfully.
+    -> Testing Server REST endpoints (/api/v1/documents/:id/html and /by-path/html)...
+  [INFO] Storage backend initialized at: /tmp/cme_renderer_test_1791678229210495684
+  [INFO] PostgreSQL connection pool initialized (8 connections).
+  [INFO] CME Server listening on http://127.0.0.1:18089
+       [PASS] GET /api/v1/documents/:id/html?standalone=true matches <html> and <h1>.
+       [PASS] GET /api/v1/documents/by-path/html returns semantic HTML with review overlay.
+       [PASS] Unauthorized request rejected with 401.
+       [PASS] Non-existent document returns 404.
+  [SUCCESS] Step 2.4 Server-Side Markdown to Semantic HTML Renderer verified 100%!
+
+  $ ctest --test-dir build --output-on-failure
+  1/8 Test #1: version_test .....................   Passed    0.00 sec
+  2/8 Test #2: smoke_test .......................   Passed    0.00 sec
+  3/8 Test #3: db_permissions_dag_test ..........   Passed    0.06 sec
+  4/8 Test #4: posix_storage_sal_test ...........   Passed    0.03 sec
+  5/8 Test #5: server_health_test ...............   Passed    0.32 sec
+  6/8 Test #6: auth_engine_test .................   Passed    0.94 sec
+  7/8 Test #7: document_workspace_api_test ......   Passed    0.59 sec
+  8/8 Test #8: markdown_renderer_test ...........   Passed    0.29 sec
+
+  100% tests passed, 0 tests failed out of 8
+
+  # Verification via curl specification criteria:
+  $ curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/documents/$DOC_ID/html?standalone=true" | grep -E "<html|<h1"
+  <html lang="en">
+  <h1 id="introduction-to-ssr">Introduction to SSR</h1>
+  ```
+
 ---
 
-### Step 2.4: Server-Side Markdown to Semantic HTML Renderer
+## Phase 3: Real-Time Collaborative Engine (CRDT & WebSockets)
+
+### Step 3.1: Native Yjs CRDT C-FFI Integration
 * **Status:** Next
+
 
 

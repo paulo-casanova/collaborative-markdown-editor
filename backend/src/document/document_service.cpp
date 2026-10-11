@@ -764,4 +764,114 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
     return items;
 }
 
+Result<renderer::ReviewBundle> DocumentService::get_document_reviews(
+    const std::string& doc_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+
+        // Check if doc exists and retrieve fs_path
+        auto rows = tx.exec_params(
+            "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+            doc_id
+        );
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        std::string fs_path = rows[0][0].as<std::string>();
+
+        auto access_res = check_access(user, doc_id, fs_path);
+        if (!access_res.has_value()) {
+            return std::unexpected(access_res.error());
+        }
+        if (access_res.value() < db::AccessLevel::Read) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+
+        renderer::ReviewBundle bundle;
+
+        // Fetch comments
+        auto comment_rows = tx.exec_params(
+            "SELECT c.id::text, c.content, c.status, "
+            "       TO_CHAR(c.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "       u.username, u.display_name "
+            "FROM comments c "
+            "JOIN users u ON c.author_id = u.id "
+            "WHERE c.document_id = $1::uuid "
+            "ORDER BY c.created_at ASC;",
+            doc_id
+        );
+        for (const auto& r : comment_rows) {
+            bundle.comments.push_back({
+                .id = r[0].as<std::string>(),
+                .author_username = r[4].as<std::string>(),
+                .author_display_name = r[5].as<std::string>(),
+                .content = r[1].as<std::string>(),
+                .status = r[2].as<std::string>(),
+                .created_at = r[3].as<std::string>()
+            });
+        }
+
+        // Fetch suggestions
+        auto suggestion_rows = tx.exec_params(
+            "SELECT s.id::text, s.original_text, s.suggested_text, s.status, "
+            "       TO_CHAR(s.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "       u.username, u.display_name "
+            "FROM suggestions s "
+            "JOIN users u ON s.author_id = u.id "
+            "WHERE s.document_id = $1::uuid "
+            "ORDER BY s.created_at ASC;",
+            doc_id
+        );
+        for (const auto& r : suggestion_rows) {
+            bundle.suggestions.push_back({
+                .id = r[0].as<std::string>(),
+                .author_username = r[5].as<std::string>(),
+                .author_display_name = r[6].as<std::string>(),
+                .original_text = r[1].as<std::string>(),
+                .suggested_text = r[2].as<std::string>(),
+                .status = r[3].as<std::string>(),
+                .created_at = r[4].as<std::string>()
+            });
+        }
+
+        // Fetch tasks
+        auto task_rows = tx.exec_params(
+            "SELECT t.id::text, t.description, t.is_completed, "
+            "       TO_CHAR(t.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "       COALESCE(u.username, ''), COALESCE(u.display_name, '') "
+            "FROM tasks t "
+            "LEFT JOIN users u ON t.assignee_id = u.id "
+            "WHERE t.document_id = $1::uuid "
+            "ORDER BY t.created_at ASC;",
+            doc_id
+        );
+        for (const auto& r : task_rows) {
+            bundle.tasks.push_back({
+                .id = r[0].as<std::string>(),
+                .description = r[1].as<std::string>(),
+                .is_completed = r[2].as<bool>(),
+                .assignee_username = r[4].as<std::string>(),
+                .assignee_display_name = r[5].as<std::string>(),
+                .created_at = r[3].as<std::string>()
+            });
+        }
+
+        return bundle;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] get_document_reviews failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 } // namespace cme::document

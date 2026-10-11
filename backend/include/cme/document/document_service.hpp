@@ -16,6 +16,7 @@
 #include "cme/db/connection_pool.hpp"
 #include "cme/db/permission_engine.hpp"
 #include "cme/storage/posix_storage_backend.hpp"
+#include "cme/renderer/markdown_renderer.hpp"
 
 namespace cme::document {
 
@@ -154,6 +155,14 @@ public:
      * @brief Generates the hierarchical workspace tree filtered by user READ permissions.
      */
     Result<nlohmann::json> get_workspace_tree(const auth::UserIdentity& user);
+
+    /**
+     * @brief Retrieves active reviews, comments, suggestions, and tasks for a document.
+     */
+    Result<renderer::ReviewBundle> get_document_reviews(
+        const std::string& doc_id,
+        const auth::UserIdentity& user
+    );
 
 private:
     std::shared_ptr<db::ConnectionPool> db_pool_;

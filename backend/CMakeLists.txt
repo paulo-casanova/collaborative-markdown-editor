@@ -10,6 +10,19 @@ pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
 find_library(USOCKETS_LIB uSockets PATHS "$ENV{HOME}/.local/usr/lib" REQUIRED)
 find_library(CRYPT_LIB crypt REQUIRED)
 
+# md4c Markdown Parser (vendored C library)
+add_library(md4c STATIC
+    third_party/md4c/md4c.c
+    third_party/md4c/entity.c
+)
+target_include_directories(md4c
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c>
+)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(md4c PRIVATE -w)
+endif()
+
 add_library(cme_core
     src/version.cpp
     src/config/config.cpp
@@ -22,6 +35,7 @@ add_library(cme_core
     src/auth/session_manager.cpp
     src/auth/auth_provider.cpp
     src/document/document_service.cpp
+    src/renderer/markdown_renderer.cpp
     src/server/server.cpp
 )
 
@@ -52,6 +66,7 @@ target_link_libraries(cme_core
         OpenSSL::Crypto
         ZLIB::ZLIB
         ${CRYPT_LIB}
+        md4c
 )
 
 # CME Server Executable

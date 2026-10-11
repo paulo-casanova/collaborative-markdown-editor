@@ -1,6 +1,7 @@
 #include "cme/server/server.hpp"
 #include "cme/version.hpp"
 #include "cme/auth/crypto_utils.hpp"
+#include "cme/renderer/markdown_renderer.hpp"
 #include <uWebSockets/App.h>
 #include <libusockets.h>
 #include <iostream>
@@ -33,6 +34,17 @@ void send_json(
         res->writeHeader(name, val);
     }
     res->end(payload.dump(2));
+}
+
+void send_html(
+    auto* res,
+    std::string_view status,
+    const std::string& html_body
+) {
+    res->writeStatus(status);
+    write_cors_headers(res);
+    res->writeHeader("Content-Type", "text/html; charset=utf-8");
+    res->end(html_body);
 }
 
 std::string url_decode(std::string_view in) {
@@ -536,6 +548,64 @@ Result<void> Server::start() {
         send_json(res, "200 OK", {{"tree", tree_res.value()}});
     });
 
+    // GET /api/v1/documents/by-path/html
+    app.get("/api/v1/documents/by-path/html", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string path_param = url_decode(req->getQuery("path"));
+        if (path_param.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Query parameter 'path' is required"}});
+            return;
+        }
+
+        std::string standalone_param = std::string(req->getQuery("standalone"));
+        std::string reviews_param = std::string(req->getQuery("include_reviews"));
+        bool standalone = (standalone_param == "true" || standalone_param == "1");
+        bool include_reviews = (reviews_param == "true" || reviews_param == "1");
+
+        auto doc_res = document_service_->get_document_by_path(path_param, *auth_res.value());
+        if (!doc_res.has_value()) {
+            if (doc_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to retrieve document"}});
+            }
+            return;
+        }
+
+        renderer::ReviewBundle reviews;
+        if (include_reviews) {
+            auto reviews_res = document_service_->get_document_reviews(doc_res.value().id, *auth_res.value());
+            if (reviews_res.has_value()) {
+                reviews = std::move(reviews_res.value());
+            }
+        }
+
+        renderer::RenderOptions opts{
+            .standalone = standalone,
+            .title = doc_res.value().title.empty() ? "Document" : doc_res.value().title,
+            .include_reviews = include_reviews
+        };
+
+        std::string html = renderer::MarkdownRenderer::render_to_html(doc_res.value().content, opts, reviews);
+        send_html(res, "200 OK", html);
+    });
+
     // GET /api/v1/documents/by-path
     app.get("/api/v1/documents/by-path", [this](auto *res, auto *req) {
         std::string auth_hdr = std::string(req->getHeader("authorization"));
@@ -640,6 +710,59 @@ Result<void> Server::start() {
 
             send_json(res, "201 Created", doc_res.value().to_json(true));
         });
+    });
+
+    // GET /api/v1/documents/:id/html
+    app.get("/api/v1/documents/:id/html", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string standalone_param = std::string(req->getQuery("standalone"));
+        std::string reviews_param = std::string(req->getQuery("include_reviews"));
+        bool standalone = (standalone_param == "true" || standalone_param == "1");
+        bool include_reviews = (reviews_param == "true" || reviews_param == "1");
+
+        auto doc_res = document_service_->get_document_by_id(doc_id, *auth_res.value());
+        if (!doc_res.has_value()) {
+            if (doc_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to retrieve document"}});
+            }
+            return;
+        }
+
+        renderer::ReviewBundle reviews;
+        if (include_reviews) {
+            auto reviews_res = document_service_->get_document_reviews(doc_id, *auth_res.value());
+            if (reviews_res.has_value()) {
+                reviews = std::move(reviews_res.value());
+            }
+        }
+
+        renderer::RenderOptions opts{
+            .standalone = standalone,
+            .title = doc_res.value().title.empty() ? "Document" : doc_res.value().title,
+            .include_reviews = include_reviews
+        };
+
+        std::string html = renderer::MarkdownRenderer::render_to_html(doc_res.value().content, opts, reviews);
+        send_html(res, "200 OK", html);
     });
 
     // GET /api/v1/documents/:id/raw
