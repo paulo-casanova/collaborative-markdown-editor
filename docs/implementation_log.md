@@ -389,17 +389,94 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 2.5: User & Team Administration Engine (REST API & `cme-admin` CLI)
-* **Status:** Next
-* **Deliverables Plan:**
-  * `cme::auth::UserService` & `cme::auth::TeamService` managing CRUD on `users`, `teams`, `team_members`, and `team_parents` with DAG cycle validation.
-  * REST API routing in `Server` under `/api/v1/admin/*`:
-    * User Management: `GET /api/v1/admin/users`, `POST /api/v1/admin/users`, `GET /api/v1/admin/users/:id`, `PUT /api/v1/admin/users/:id`, `DELETE /api/v1/admin/users/:id`.
-    * Team Management: `GET /api/v1/admin/teams`, `POST /api/v1/admin/teams`, `GET /api/v1/admin/teams/:id`, `PUT /api/v1/admin/teams/:id`, `DELETE /api/v1/admin/teams/:id`.
-    * Membership & DAG: `GET /api/v1/admin/teams/:id/members`, `POST /api/v1/admin/teams/:id/members`, `DELETE /api/v1/admin/teams/:id/members/:user_id`, `POST /api/v1/admin/teams/:id/parents`, `DELETE /api/v1/admin/teams/:id/parents/:parent_id`.
-  * `cme-admin` CLI utility (`src/admin_main.cpp`) providing subcommands:
-    * `user list`, `user create`, `user set-admin`, `user reset-password`
-    * `team list`, `team create`, `team add-member`, `team remove-member`, `team add-parent`
-  * Integration test suite in `tests/backend/admin_management_test.cpp`.
+* **Status:** Complete (Commit: Pending)
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Native C++23 administration service classes in `backend/include/cme/admin/admin_service.hpp` and `backend/src/admin/admin_service.cpp`:
+    * `UserService`: Listing, retrieval, account creation with salted bcrypt password hashing, role updates, administrative elevation, password reset, and cascading account deletion.
+    * `TeamService`: Team CRUD, membership assignment with granular roles (`member`, `lead`), DAG parent link management, and recursive CTE cycle prevention.
+  * Multi-Parent Directed Acyclic Graph (DAG) cycle detection query in PostgreSQL:
+    * Recursively traverses existing team descendants before creating a new edge in `team_parents`.
+    * Rejects circular parent links and self-parenting with `ErrorCode::InvalidArgument`.
+  * Administrative REST API endpoints in `Server` daemon under `/api/v1/admin/*`, guarded by `is_admin` checks:
+    * `GET /api/v1/admin/users`: List users without sensitive password hashes.
+    * `POST /api/v1/admin/users`: Register user account (201 Created / 409 Conflict).
+    * `GET /api/v1/admin/users/:id`: Get user profile by UUID or username.
+    * `PUT /api/v1/admin/users/:id`: Update user attributes, role, or password.
+    * `DELETE /api/v1/admin/users/:id`: Permanently delete user.
+    * `GET /api/v1/admin/teams`: List all teams.
+    * `POST /api/v1/admin/teams`: Register a team.
+    * `GET /api/v1/admin/teams/:id`: Get team details.
+    * `PUT /api/v1/admin/teams/:id`: Update team attributes.
+    * `DELETE /api/v1/admin/teams/:id`: Permanently delete team.
+    * `GET /api/v1/admin/teams/:id/members`: List team members with roles.
+    * `POST /api/v1/admin/teams/:id/members`: Assign user to team or update role.
+    * `DELETE /api/v1/admin/teams/:id/members/:user_id`: Remove member from team.
+    * `GET /api/v1/admin/teams/:id/parents`: List direct parent teams in DAG.
+    * `POST /api/v1/admin/teams/:id/parents`: Link parent team (rejects circular DAG cycles with 400).
+    * `DELETE /api/v1/admin/teams/:id/parents/:parent_id`: Unlink parent team.
+  * Standalone CLI binary `cme-admin` (`backend/src/admin_main.cpp`) supporting `user` (`list`, `create`, `get`, `set-admin`, `reset-password`, `delete`) and `team` (`list`, `create`, `get`, `add-member`, `remove-member`, `list-members`, `add-parent`, `remove-parent`, `list-parents`, `delete`) subcommands.
+  * Comprehensive integration test suite in `tests/backend/admin_management_test.cpp`.
+  * API & CLI documentation in `docs/api/admin.md` and indexed in `docs/index.md`.
+* **Verification:**
+  ```bash
+  $ ./build/tests/admin_management_test
+  ========================================================
+  === CME Admin Management & DAG Engine Test Suite     ===
+  ========================================================
+
+  [TEST 1] Testing direct UserService operations...
+    [PASS] Duplicate username rejected with AlreadyExists.
+    [PASS] User elevation to admin verified.
+    [PASS] Password reset and bcrypt hash verified.
+
+  [TEST 2] Testing TeamService & DAG Hierarchy operations...
+    [PASS] Team membership assignments and roles verified.
+    [PASS] Multi-level DAG inheritance verified (Frontend -> Platform -> Eng).
+  [WARN] Cycle detected in team hierarchy: baff0723-1f16-43c0-b7bd-88442ea4d10f is already a descendant of 63341ac4-738c-4a50-8847-1df46df50f22
+    [PASS] Directed cycle detected and rejected!
+    [PASS] Self-parenting detected and rejected!
+    [PASS] Diamond DAG multi-parent hierarchy verified.
+
+  [TEST 3] Testing cme-admin CLI executable...
+  [SUCCESS] Created user 'test_cli_charlie' (ID: 9ef1a67e-3105-415e-9273-739aef4c7775)
+    [PASS] cme-admin user create & list validated.
+  [SUCCESS] Created team 'test_cli_team' (ID: c04156ef-30b9-4ab1-90a1-5765349ade74)
+  [SUCCESS] Added user 'test_cli_charlie' to team 'test_cli_team' as 'lead'.
+    [PASS] cme-admin team create & add-member validated.
+  [SUCCESS] Deleted user 'test_cli_charlie'.
+  [SUCCESS] Deleted team 'test_cli_team'.
+    [PASS] cme-admin delete user & team validated.
+
+  [TEST 4] Testing live Server Daemon Admin REST API routes...
+  [INFO] Storage backend initialized at: /tmp/cme_admin_server_storage
+  [INFO] PostgreSQL connection pool initialized (8 connections).
+  [INFO] CME Server listening on http://127.0.0.1:18092
+    [PASS] Admin endpoints properly reject unauthenticated (401) and non-admin (403) requests.
+    [PASS] GET /api/v1/admin/users returned 9 user records.
+    [PASS] POST /api/v1/admin/users successfully created user (201 Created).
+    [PASS] GET & PUT /api/v1/admin/users/:id succeeded.
+    [PASS] POST & GET /api/v1/admin/teams succeeded.
+    [PASS] REST team membership assignment and listing verified.
+  [WARN] Cycle detected in team hierarchy: eff09126-5ee9-40ef-95ad-c1aa0e5852cd is already a descendant of c1346a58-a192-4b06-a3f9-fea3565b28c9
+    [PASS] REST circular DAG inheritance rejected with 400 Bad Request.
+    [PASS] REST deletion of memberships, parents, users, and teams verified.
+
+  [SUCCESS] Step 2.5 User & Team Administration Engine Test Suite passed 100%!
+
+  $ ctest --test-dir build --output-on-failure
+  1/9 Test #1: version_test .....................   Passed    0.00 sec
+  2/9 Test #2: smoke_test .......................   Passed    0.00 sec
+  3/9 Test #3: db_permissions_dag_test ..........   Passed    0.05 sec
+  4/9 Test #4: posix_storage_sal_test ...........   Passed    0.02 sec
+  5/9 Test #5: server_health_test ...............   Passed    0.32 sec
+  6/9 Test #6: auth_engine_test .................   Passed    0.95 sec
+  7/9 Test #7: document_workspace_api_test ......   Passed    0.63 sec
+  8/9 Test #8: markdown_renderer_test ...........   Passed    0.29 sec
+  9/9 Test #9: admin_management_test ............   Passed    1.34 sec
+
+  100% tests passed, 0 tests failed out of 9
+  ```
 
 ---
 

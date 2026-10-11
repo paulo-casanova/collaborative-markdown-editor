@@ -247,7 +247,11 @@ Result<void> Server::start() {
     // 4. Initialize Document Management Service
     document_service_ = std::make_shared<document::DocumentService>(db_pool_, storage_);
 
-    // 5. Configure uWebSockets App
+    // 5. Initialize Admin Management Services (Step 2.5)
+    user_service_ = std::make_shared<admin::UserService>(db_pool_);
+    team_service_ = std::make_shared<admin::TeamService>(db_pool_);
+
+    // 6. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
 
@@ -1094,6 +1098,513 @@ Result<void> Server::start() {
         }
 
         send_json(res, "200 OK", {{"status", "deleted"}, {"trash_id", del_res.value()}});
+    });
+
+    // ==========================================================================
+    // Admin REST API Endpoints (Step 2.5)
+    // ==========================================================================
+    auto get_auth_context = [this](auto* req) {
+        struct AuthCtx {
+            std::string auth_hdr;
+            std::string cookie_hdr;
+            std::string remote_user_hdr;
+            std::string remote_email_hdr;
+        };
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return AuthCtx{
+            .auth_hdr = std::string(req->getHeader("authorization")),
+            .cookie_hdr = std::string(req->getHeader("cookie")),
+            .remote_user_hdr = std::string(req->getHeader(del_header_name)),
+            .remote_email_hdr = std::string(req->getHeader(del_email_name))
+        };
+    };
+
+    auto verify_admin_access = [this](const auto& ctx, auto* res) -> std::optional<auth::UserIdentity> {
+        auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return std::nullopt;
+        }
+        if (!auth_res.value()->is_system_admin) {
+            send_json(res, "403 Forbidden", {{"error", "Forbidden: Admin privileges required"}});
+            return std::nullopt;
+        }
+        return auth_res.value();
+    };
+
+    // GET /api/v1/admin/users
+    app.get("/api/v1/admin/users", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        auto list_res = user_service_->list_users();
+        if (!list_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list users"}});
+            return;
+        }
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& u : *list_res) {
+            arr.push_back(u.to_json());
+        }
+        send_json(res, "200 OK", arr);
+    });
+
+    // POST /api/v1/admin/users
+    app.post("/api/v1/admin/users", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, ctx, verify_admin_access](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto user_opt = verify_admin_access(ctx, res);
+            if (!user_opt) return;
+
+            admin::CreateUserRequest create_req;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("username") && json["username"].is_string()) {
+                    create_req.username = json["username"].get<std::string>();
+                }
+                if (json.contains("password") && json["password"].is_string()) {
+                    create_req.password = json["password"].get<std::string>();
+                }
+                if (json.contains("display_name") && json["display_name"].is_string()) {
+                    create_req.display_name = json["display_name"].get<std::string>();
+                }
+                if (json.contains("avatar_color") && json["avatar_color"].is_string()) {
+                    create_req.avatar_color = json["avatar_color"].get<std::string>();
+                }
+                if (json.contains("is_admin") && json["is_admin"].is_boolean()) {
+                    create_req.is_system_admin = json["is_admin"].get<bool>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (create_req.username.empty() || create_req.password.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Missing username or password"}});
+                return;
+            }
+
+            auto create_res = user_service_->create_user(create_req);
+            if (!create_res.has_value()) {
+                if (create_res.error() == ErrorCode::AlreadyExists) {
+                    send_json(res, "409 Conflict", {{"error", "Username already exists"}});
+                } else if (create_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid user parameters"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to create user"}});
+                }
+                return;
+            }
+
+            send_json(res, "201 Created", create_res->to_json());
+        });
+    });
+
+    // GET /api/v1/admin/users/:id
+    app.get("/api/v1/admin/users/:id", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        std::string user_id = std::string(req->getParameter(0));
+        auto get_res = user_service_->get_user_by_id(user_id);
+        if (!get_res.has_value()) {
+            send_json(res, "404 Not Found", {{"error", "User not found"}});
+            return;
+        }
+        send_json(res, "200 OK", get_res->to_json());
+    });
+
+    // PUT /api/v1/admin/users/:id
+    app.put("/api/v1/admin/users/:id", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string user_id = std::string(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, ctx, user_id, verify_admin_access](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto user_opt = verify_admin_access(ctx, res);
+            if (!user_opt) return;
+
+            admin::UpdateUserRequest update_req;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("display_name") && json["display_name"].is_string()) {
+                    update_req.display_name = json["display_name"].get<std::string>();
+                }
+                if (json.contains("avatar_color") && json["avatar_color"].is_string()) {
+                    update_req.avatar_color = json["avatar_color"].get<std::string>();
+                }
+                if (json.contains("is_admin") && json["is_admin"].is_boolean()) {
+                    update_req.is_system_admin = json["is_admin"].get<bool>();
+                }
+                if (json.contains("password") && json["password"].is_string()) {
+                    update_req.password = json["password"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            auto upd_res = user_service_->update_user(user_id, update_req);
+            if (!upd_res.has_value()) {
+                if (upd_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "User not found"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to update user"}});
+                }
+                return;
+            }
+            send_json(res, "200 OK", upd_res->to_json());
+        });
+    });
+
+    // DELETE /api/v1/admin/users/:id
+    app.del("/api/v1/admin/users/:id", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        std::string user_id = std::string(req->getParameter(0));
+        auto del_res = user_service_->delete_user(user_id);
+        if (!del_res.has_value()) {
+            send_json(res, "404 Not Found", {{"error", "User not found"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "deleted"}});
+    });
+
+    // GET /api/v1/admin/teams/:id/members
+    app.get("/api/v1/admin/teams/:id/members", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        std::string team_id = std::string(req->getParameter(0));
+        auto mem_res = team_service_->list_members(team_id);
+        if (!mem_res.has_value()) {
+            if (mem_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Team not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list members"}});
+            }
+            return;
+        }
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& m : *mem_res) {
+            arr.push_back(m.to_json());
+        }
+        send_json(res, "200 OK", arr);
+    });
+
+    // POST /api/v1/admin/teams/:id/members
+    app.post("/api/v1/admin/teams/:id/members", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string team_id = std::string(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, ctx, team_id, verify_admin_access](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto user_opt = verify_admin_access(ctx, res);
+            if (!user_opt) return;
+
+            std::string user_identifier;
+            std::string role = "member";
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("user_id") && json["user_id"].is_string()) {
+                    user_identifier = json["user_id"].get<std::string>();
+                } else if (json.contains("username") && json["username"].is_string()) {
+                    user_identifier = json["username"].get<std::string>();
+                }
+                if (json.contains("role") && json["role"].is_string()) {
+                    role = json["role"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (user_identifier.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Missing user_id or username"}});
+                return;
+            }
+
+            auto add_res = team_service_->add_member(team_id, user_identifier, role);
+            if (!add_res.has_value()) {
+                if (add_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Team or user not found"}});
+                } else if (add_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid role (must be 'member' or 'lead')"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to add member"}});
+                }
+                return;
+            }
+            send_json(res, "200 OK", {{"status", "member_added"}});
+        });
+    });
+
+    // DELETE /api/v1/admin/teams/:id/members/:user_id
+    app.del("/api/v1/admin/teams/:id/members/:user_id", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        std::string team_id = std::string(req->getParameter(0));
+        std::string user_id = std::string(req->getParameter(1));
+
+        auto rem_res = team_service_->remove_member(team_id, user_id);
+        if (!rem_res.has_value()) {
+            send_json(res, "404 Not Found", {{"error", "Membership not found"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "member_removed"}});
+    });
+
+    // GET /api/v1/admin/teams/:id/parents
+    app.get("/api/v1/admin/teams/:id/parents", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        std::string team_id = std::string(req->getParameter(0));
+        auto p_res = team_service_->list_parents(team_id);
+        if (!p_res.has_value()) {
+            if (p_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Team not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list parent teams"}});
+            }
+            return;
+        }
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& p : *p_res) {
+            arr.push_back(p.to_json());
+        }
+        send_json(res, "200 OK", arr);
+    });
+
+    // POST /api/v1/admin/teams/:id/parents
+    app.post("/api/v1/admin/teams/:id/parents", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string team_id = std::string(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, ctx, team_id, verify_admin_access](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto user_opt = verify_admin_access(ctx, res);
+            if (!user_opt) return;
+
+            std::string parent_identifier;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("parent_id") && json["parent_id"].is_string()) {
+                    parent_identifier = json["parent_id"].get<std::string>();
+                } else if (json.contains("parent_name") && json["parent_name"].is_string()) {
+                    parent_identifier = json["parent_name"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (parent_identifier.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Missing parent_id or parent_name"}});
+                return;
+            }
+
+            auto link_res = team_service_->add_parent(team_id, parent_identifier);
+            if (!link_res.has_value()) {
+                if (link_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Team or parent team not found"}});
+                } else if (link_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Circular DAG inheritance or self-parenting detected"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to link parent team"}});
+                }
+                return;
+            }
+            send_json(res, "200 OK", {{"status", "parent_linked"}});
+        });
+    });
+
+    // DELETE /api/v1/admin/teams/:id/parents/:parent_id
+    app.del("/api/v1/admin/teams/:id/parents/:parent_id", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        std::string team_id = std::string(req->getParameter(0));
+        std::string parent_id = std::string(req->getParameter(1));
+
+        auto unlink_res = team_service_->remove_parent(team_id, parent_id);
+        if (!unlink_res.has_value()) {
+            send_json(res, "404 Not Found", {{"error", "Parent relationship not found"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "parent_unlinked"}});
+    });
+
+    // GET /api/v1/admin/teams
+    app.get("/api/v1/admin/teams", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        auto list_res = team_service_->list_teams();
+        if (!list_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list teams"}});
+            return;
+        }
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& t : *list_res) {
+            arr.push_back(t.to_json());
+        }
+        send_json(res, "200 OK", arr);
+    });
+
+    // POST /api/v1/admin/teams
+    app.post("/api/v1/admin/teams", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, ctx, verify_admin_access](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto user_opt = verify_admin_access(ctx, res);
+            if (!user_opt) return;
+
+            admin::CreateTeamRequest create_req;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("name") && json["name"].is_string()) {
+                    create_req.name = json["name"].get<std::string>();
+                }
+                if (json.contains("description") && json["description"].is_string()) {
+                    create_req.description = json["description"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (create_req.name.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Missing team name"}});
+                return;
+            }
+
+            auto create_res = team_service_->create_team(create_req);
+            if (!create_res.has_value()) {
+                if (create_res.error() == ErrorCode::AlreadyExists) {
+                    send_json(res, "409 Conflict", {{"error", "Team name already exists"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to create team"}});
+                }
+                return;
+            }
+            send_json(res, "201 Created", create_res->to_json());
+        });
+    });
+
+    // GET /api/v1/admin/teams/:id
+    app.get("/api/v1/admin/teams/:id", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        std::string team_id = std::string(req->getParameter(0));
+        auto get_res = team_service_->get_team_by_id(team_id);
+        if (!get_res.has_value()) {
+            send_json(res, "404 Not Found", {{"error", "Team not found"}});
+            return;
+        }
+        send_json(res, "200 OK", get_res->to_json());
+    });
+
+    // PUT /api/v1/admin/teams/:id
+    app.put("/api/v1/admin/teams/:id", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        std::string team_id = std::string(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, ctx, team_id, verify_admin_access](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto user_opt = verify_admin_access(ctx, res);
+            if (!user_opt) return;
+
+            admin::UpdateTeamRequest update_req;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("name") && json["name"].is_string()) {
+                    update_req.name = json["name"].get<std::string>();
+                }
+                if (json.contains("description") && json["description"].is_string()) {
+                    update_req.description = json["description"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            auto upd_res = team_service_->update_team(team_id, update_req);
+            if (!upd_res.has_value()) {
+                if (upd_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Team not found"}});
+                } else if (upd_res.error() == ErrorCode::AlreadyExists) {
+                    send_json(res, "409 Conflict", {{"error", "Team name already exists"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to update team"}});
+                }
+                return;
+            }
+            send_json(res, "200 OK", upd_res->to_json());
+        });
+    });
+
+    // DELETE /api/v1/admin/teams/:id
+    app.del("/api/v1/admin/teams/:id", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        std::string team_id = std::string(req->getParameter(0));
+        auto del_res = team_service_->delete_team(team_id);
+        if (!del_res.has_value()) {
+            send_json(res, "404 Not Found", {{"error", "Team not found"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "deleted"}});
     });
 
     // Bind listener

@@ -36,6 +36,7 @@ add_library(cme_core
     src/auth/auth_provider.cpp
     src/document/document_service.cpp
     src/renderer/markdown_renderer.cpp
+    src/admin/admin_service.cpp
     src/server/server.cpp
 )
 
@@ -93,8 +94,21 @@ target_link_libraries(cme-migrate
 
 target_compile_features(cme-migrate PRIVATE cxx_std_23)
 
-set_target_properties(cme-server cme-migrate PROPERTIES
+# CME Admin CLI Executable
+add_executable(cme-admin
+    src/admin_main.cpp
+)
+
+target_link_libraries(cme-admin
+    PRIVATE
+        cme_core
+)
+
+target_compile_features(cme-admin PRIVATE cxx_std_23)
+
+set_target_properties(cme-server cme-migrate cme-admin PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
     INSTALL_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
 )
+

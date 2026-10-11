@@ -108,3 +108,18 @@ set_tests_properties(markdown_renderer_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# User & Team Administration Engine test (Step 2.5)
+add_executable(admin_management_test
+    backend/admin_management_test.cpp
+)
+target_link_libraries(admin_management_test PRIVATE cme_core)
+target_compile_features(admin_management_test PRIVATE cxx_std_23)
+set_target_properties(admin_management_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME admin_management_test COMMAND admin_management_test)
+set_tests_properties(admin_management_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
