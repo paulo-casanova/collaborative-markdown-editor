@@ -240,7 +240,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 2.3: Document & Workspace Tree REST API
-* **Status:** Complete (Commit: pending)
+* **Status:** Complete (Commit: `dff849d`)
 * **Deliverables:**
   * `cme::document::DocumentRecord` & `cme::document::CreateDocumentRequest` models (`backend/include/cme/document/document_service.hpp`).
   * `cme::document::DocumentService` (`backend/include/cme/document/document_service.hpp`, `backend/src/document/document_service.cpp`):
