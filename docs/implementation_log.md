@@ -240,6 +240,86 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 2.3: Document & Workspace Tree REST API
+* **Status:** Complete (Commit: pending)
+* **Deliverables:**
+  * `cme::document::DocumentRecord` & `cme::document::CreateDocumentRequest` models (`backend/include/cme/document/document_service.hpp`).
+  * `cme::document::DocumentService` (`backend/include/cme/document/document_service.hpp`, `backend/src/document/document_service.cpp`):
+    * Complete CRUD operations bridging PostgreSQL `documents` metadata and POSIX Storage Abstraction Layer (SAL).
+    * Bundle management (`.bundle` detection, `index.md` content routing, and image directories).
+    * Automatic title derivation from first `# ` Markdown heading or filename stem.
+    * Path normalization, path traversal rejection (`..`), and automatic `.md` extension enforcement.
+    * Disconnected file reconciliation (auto-indexing disk files on `by-path` lookup).
+    * Atomic move and rename across directories.
+    * Soft-deletion to `trash/` with metadata retention headers.
+    * Asset upload (`upload_asset`) and binary reading (`read_asset`) for document-adjacent images.
+    * Hierarchical workspace tree builder (`get_workspace_tree`) with per-node `READ` permission filtering.
+  * REST API routing in `cme::server::Server` (`backend/src/server/server.cpp`):
+    * `GET /api/v1/workspaces/tree`: Workspace directory tree.
+    * `GET /api/v1/documents/by-path`: Path-based document lookup with URL query decoding.
+    * `GET /api/v1/documents/:id`: Full document metadata and markdown content.
+    * `GET /api/v1/documents/:id/raw`: Streaming raw UTF-8 `text/markdown`.
+    * `POST /api/v1/documents`: Document creation (JSON body).
+    * `PUT /api/v1/documents/:id`: Document update.
+    * `PATCH /api/v1/documents/:id/move`: Moving/renaming document path.
+    * `DELETE /api/v1/documents/:id`: Soft-deletion.
+    * `POST /api/v1/documents/:id/assets`: Asset upload.
+    * `GET /api/v1/documents/:id/assets/:filename`: Asset streaming.
+  * Automated integration test suite in `tests/backend/document_workspace_api_test.cpp`.
+  * API documentation in `docs/api/documents.md`.
+* **Verification:**
+  ```bash
+  $ ./build/tests/document_workspace_api_test
+  ========================================================
+  === CME Document & Workspace Tree REST API Test Suite ===
+  ========================================================
+
+  [TEST 1] Testing DocumentService direct operations...
+    - Document creation on disk & DB verified.
+    - Document retrieval by UUID verified.
+    - Document lookup by relative path verified.
+    - Raw markdown streaming verified.
+    - Document content update verified.
+    - Document move/rename in storage and DB verified.
+    - Asset upload and read verified.
+    - Document bundle creation and SAL detection verified.
+    - Workspace tree recursive resolution verified.
+    - Soft-delete to trash and database purge verified.
+
+  [TEST 2] Testing HTTP REST API endpoints on live server daemon...
+  [INFO] Storage backend initialized at: /tmp/cme_doc_server_storage
+  [INFO] PostgreSQL connection pool initialized (8 connections).
+  [INFO] CME Server listening on http://127.0.0.1:18083
+    - POST /api/v1/documents created document ID: f59393ec-7409-4bb0-9ec9-b9421a3531fb
+    - GET /api/v1/documents/{id}/raw returned exact expected markdown.
+    - GET /api/v1/documents/by-path returned document JSON.
+    - GET /api/v1/documents/{id} returned full document payload.
+    - PUT /api/v1/documents/{id} updated document content.
+    - PATCH /api/v1/documents/{id}/move renamed document successfully.
+    - POST and GET /api/v1/documents/{id}/assets verified.
+    - GET /api/v1/workspaces/tree returned workspace hierarchy.
+    - DELETE /api/v1/documents/{id} soft-deleted document to trash (404 on subsequent get).
+
+  [TEST] Stopping server...
+
+  ========================================================
+  === ALL DOCUMENT & WORKSPACE TESTS PASSED!           ===
+  ========================================================
+
+  $ ctest --test-dir build --output-on-failure
+  1/7 Test #1: version_test .....................   Passed    0.00 sec
+  2/7 Test #2: smoke_test .......................   Passed    0.00 sec
+  3/7 Test #3: db_permissions_dag_test ..........   Passed    0.05 sec
+  4/7 Test #4: posix_storage_sal_test ...........   Passed    0.03 sec
+  5/7 Test #5: server_health_test ...............   Passed    0.32 sec
+  6/7 Test #6: auth_engine_test .................   Passed    0.95 sec
+  7/7 Test #7: document_workspace_api_test ......   Passed    0.61 sec
+
+  100% tests passed, 0 tests failed out of 7
+  ```
+
+---
+
+### Step 2.4: Server-Side Markdown to Semantic HTML Renderer
 * **Status:** Next
 
 

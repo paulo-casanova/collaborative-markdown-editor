@@ -13,6 +13,7 @@
 #include "cme/auth/admin_provider.hpp"
 #include "cme/auth/session_manager.hpp"
 #include "cme/auth/auth_provider.hpp"
+#include "cme/document/document_service.hpp"
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <atomic>
@@ -86,6 +87,7 @@ public:
     [[nodiscard]] std::shared_ptr<auth::SessionManager> session_manager() const noexcept { return session_manager_; }
     [[nodiscard]] std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider() const noexcept { return delegated_provider_; }
     [[nodiscard]] std::shared_ptr<auth::ChallengeAuthProvider> challenge_provider() const noexcept { return challenge_provider_; }
+    [[nodiscard]] std::shared_ptr<document::DocumentService> document_service() const noexcept { return document_service_; }
 
 private:
     config::AppConfig config_;
@@ -95,6 +97,7 @@ private:
     std::shared_ptr<auth::SessionManager> session_manager_;
     std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider_;
     std::shared_ptr<auth::ChallengeAuthProvider> challenge_provider_;
+    std::shared_ptr<document::DocumentService> document_service_;
 
     std::chrono::system_clock::time_point start_time_;
     std::atomic<bool> is_running_{false};

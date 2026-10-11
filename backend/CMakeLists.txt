@@ -21,6 +21,7 @@ add_library(cme_core
     src/auth/admin_provider.cpp
     src/auth/session_manager.cpp
     src/auth/auth_provider.cpp
+    src/document/document_service.cpp
     src/server/server.cpp
 )
 

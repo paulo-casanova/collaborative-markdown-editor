@@ -79,3 +79,17 @@ add_test(NAME auth_engine_test COMMAND auth_engine_test)
 set_tests_properties(auth_engine_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
+
+# Document & Workspace Tree REST API test
+add_executable(document_workspace_api_test
+    backend/document_workspace_api_test.cpp
+)
+target_link_libraries(document_workspace_api_test PRIVATE cme_core)
+target_compile_features(document_workspace_api_test PRIVATE cxx_std_23)
+set_target_properties(document_workspace_api_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME document_workspace_api_test COMMAND document_workspace_api_test)
+set_tests_properties(document_workspace_api_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)

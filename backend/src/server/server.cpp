@@ -16,7 +16,7 @@ namespace {
 
 void write_cors_headers(auto* res) {
     res->writeHeader("Access-Control-Allow-Origin", "*");
-    res->writeHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Remote-User, X-Remote-Email");
+    res->writeHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Remote-User, X-Remote-Email, X-Asset-Filename");
     res->writeHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
 }
 
@@ -33,6 +33,30 @@ void send_json(
         res->writeHeader(name, val);
     }
     res->end(payload.dump(2));
+}
+
+std::string url_decode(std::string_view in) {
+    std::string out;
+    out.reserve(in.size());
+    for (size_t i = 0; i < in.size(); ++i) {
+        if (in[i] == '%' && i + 2 < in.size()) {
+            auto hex_val = [](int c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            int h = hex_val(in[i + 1]);
+            int l = hex_val(in[i + 2]);
+            if (h >= 0 && l >= 0) {
+                out.push_back(static_cast<char>((h << 4) | l));
+                i += 2;
+                continue;
+            }
+        }
+        out.push_back(in[i]);
+    }
+    return out;
 }
 
 } // namespace
@@ -208,7 +232,10 @@ Result<void> Server::start() {
     );
     challenge_provider_ = std::make_shared<auth::ChallengeAuthProvider>(db_pool_, admin_provider_);
 
-    // 4. Configure uWebSockets App
+    // 4. Initialize Document Management Service
+    document_service_ = std::make_shared<document::DocumentService>(db_pool_, storage_);
+
+    // 5. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
 
@@ -477,6 +504,473 @@ Result<void> Server::start() {
         }
 
         send_json(res, "200 OK", {{"tokens", tokens_json}});
+    });
+
+    // =========================================================================
+    // Workspace & Document CRUD REST Endpoints (Step 2.3)
+    // =========================================================================
+
+    // GET /api/v1/workspaces/tree
+    app.get("/api/v1/workspaces/tree", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto tree_res = document_service_->get_workspace_tree(*auth_res.value());
+        if (!tree_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to load workspace tree"}});
+            return;
+        }
+
+        send_json(res, "200 OK", {{"tree", tree_res.value()}});
+    });
+
+    // GET /api/v1/documents/by-path
+    app.get("/api/v1/documents/by-path", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string path_param = url_decode(req->getQuery("path"));
+        if (path_param.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Query parameter 'path' is required"}});
+            return;
+        }
+
+        auto doc_res = document_service_->get_document_by_path(path_param, *auth_res.value());
+        if (!doc_res.has_value()) {
+            if (doc_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to retrieve document"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", doc_res.value().to_json(true));
+    });
+
+    // POST /api/v1/documents
+    app.post("/api/v1/documents", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            document::CreateDocumentRequest create_req;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("path") && json["path"].is_string()) {
+                    create_req.path = json["path"].get<std::string>();
+                }
+                if (json.contains("content") && json["content"].is_string()) {
+                    create_req.content = json["content"].get<std::string>();
+                }
+                if (json.contains("title") && json["title"].is_string()) {
+                    create_req.title = json["title"].get<std::string>();
+                }
+                if (json.contains("is_bundle") && json["is_bundle"].is_boolean()) {
+                    create_req.is_bundle = json["is_bundle"].get<bool>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (create_req.path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Field 'path' is required"}});
+                return;
+            }
+
+            auto doc_res = document_service_->create_document(create_req, *auth_res.value());
+            if (!doc_res.has_value()) {
+                if (doc_res.error() == ErrorCode::AlreadyExists) {
+                    send_json(res, "409 Conflict", {{"error", "Document already exists at path"}});
+                } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (doc_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid path specification"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to create document"}});
+                }
+                return;
+            }
+
+            send_json(res, "201 Created", doc_res.value().to_json(true));
+        });
+    });
+
+    // GET /api/v1/documents/:id/raw
+    app.get("/api/v1/documents/:id/raw", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto raw_res = document_service_->get_document_raw(doc_id, *auth_res.value());
+        if (!raw_res.has_value()) {
+            if (raw_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (raw_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to read document"}});
+            }
+            return;
+        }
+
+        res->writeStatus("200 OK");
+        write_cors_headers(res);
+        res->writeHeader("Content-Type", "text/markdown; charset=utf-8");
+        res->end(raw_res.value());
+    });
+
+    // PATCH /api/v1/documents/:id/move
+    app.patch("/api/v1/documents/:id/move", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string new_path;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("new_path") && json["new_path"].is_string()) {
+                    new_path = json["new_path"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (new_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Field 'new_path' is required"}});
+                return;
+            }
+
+            auto doc_res = document_service_->move_document(doc_id, new_path, *auth_res.value());
+            if (!doc_res.has_value()) {
+                if (doc_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
+                } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (doc_res.error() == ErrorCode::AlreadyExists) {
+                    send_json(res, "409 Conflict", {{"error", "Target path already exists"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to move document"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", doc_res.value().to_json(false));
+        });
+    });
+
+    // POST /api/v1/documents/:id/assets
+    app.post("/api/v1/documents/:id/assets", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string fn_query = url_decode(req->getQuery("filename"));
+        std::string fn_header = std::string(req->getHeader("x-asset-filename"));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, doc_id, fn_query, fn_header, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string filename = !fn_query.empty() ? fn_query : fn_header;
+            std::string_view data = *body;
+
+            // Optional JSON format {"filename": "...", "content": "..."}
+            if (filename.empty() && !body->empty() && body->front() == '{') {
+                try {
+                    auto json = nlohmann::json::parse(*body);
+                    if (json.contains("filename") && json["filename"].is_string()) {
+                        filename = json["filename"].get<std::string>();
+                    }
+                    if (json.contains("content") && json["content"].is_string()) {
+                        *body = json["content"].get<std::string>();
+                        data = *body;
+                    }
+                } catch (...) {}
+            }
+
+            if (filename.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Asset filename required via ?filename= query, X-Asset-Filename header, or JSON body"}});
+                return;
+            }
+
+            auto upload_res = document_service_->upload_asset(doc_id, filename, data, *auth_res.value());
+            if (!upload_res.has_value()) {
+                if (upload_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
+                } else if (upload_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to upload asset"}});
+                }
+                return;
+            }
+
+            send_json(res, "201 Created", {
+                {"filename", filename},
+                {"path", upload_res.value()}
+            });
+        });
+    });
+
+    // GET /api/v1/documents/:id/assets/:filename
+    app.get("/api/v1/documents/:id/assets/:filename", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string filename = std::string(req->getParameter(1));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto asset_res = document_service_->read_asset(doc_id, filename, *auth_res.value());
+        if (!asset_res.has_value()) {
+            if (asset_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Asset not found"}});
+            } else if (asset_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to read asset"}});
+            }
+            return;
+        }
+
+        std::string content_type = "application/octet-stream";
+        if (filename.ends_with(".png")) content_type = "image/png";
+        else if (filename.ends_with(".jpg") || filename.ends_with(".jpeg")) content_type = "image/jpeg";
+        else if (filename.ends_with(".svg")) content_type = "image/svg+xml";
+        else if (filename.ends_with(".webp")) content_type = "image/webp";
+
+        res->writeStatus("200 OK");
+        write_cors_headers(res);
+        res->writeHeader("Content-Type", content_type);
+        res->end(asset_res.value());
+    });
+
+    // GET /api/v1/documents/:id
+    app.get("/api/v1/documents/:id", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto doc_res = document_service_->get_document_by_id(doc_id, *auth_res.value());
+        if (!doc_res.has_value()) {
+            if (doc_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to read document"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", doc_res.value().to_json(true));
+    });
+
+    // PUT /api/v1/documents/:id
+    app.put("/api/v1/documents/:id", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string content;
+            std::optional<std::string> title;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("content") && json["content"].is_string()) {
+                    content = json["content"].get<std::string>();
+                }
+                if (json.contains("title") && json["title"].is_string()) {
+                    title = json["title"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            auto doc_res = document_service_->update_document(doc_id, content, title, *auth_res.value());
+            if (!doc_res.has_value()) {
+                if (doc_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
+                } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to update document"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", doc_res.value().to_json(true));
+        });
+    });
+
+    // DELETE /api/v1/documents/:id
+    app.del("/api/v1/documents/:id", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto del_res = document_service_->delete_document(doc_id, *auth_res.value());
+        if (!del_res.has_value()) {
+            if (del_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (del_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to delete document"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", {{"status", "deleted"}, {"trash_id", del_res.value()}});
     });
 
     // Bind listener
