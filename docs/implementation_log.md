@@ -1017,6 +1017,72 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
   *Status criteria:* Launch two collaborative editing sessions side-by-side on `/documents/:id` and `/test-collab`; verify typing in Window A updates Window B in real time with Window A's colored cursor; disconnect network in Window A, type offline, reconnect network, and verify conflict-free convergence.
 
+---
+
+## Phase 5: Navigation, Multi-Document Workflow & Reading Mode
+
+### Step 5.1: Hierarchical File Tree, Search & Recent Documents
+* **Status:** Complete
+* **Date Completed:** 2026-10-11
+* **Deliverables:**
+  * Backend REST Endpoints & Service Implementations:
+    * `GET /api/v1/users/me/recents`: Returns recently modified documents with limit query parameter.
+    * `GET /api/v1/search?q=...&path=...&limit=...`: Full-text document search with highlighted contextual match snippets.
+    * `GET /api/v1/trash`: Lists soft-deleted items preserved in the POSIX `trash/` directory.
+    * `POST /api/v1/trash/:id/restore`: Restores soft-deleted file or bundle back to active workspace tree.
+    * `DELETE /api/v1/trash/:id`: Permanently purges entry from disk storage.
+    * C++ Core implementations in `backend/src/document/document_service.cpp` & `backend/src/server/server.cpp`.
+    * Integration test suite extended in `tests/backend/document_workspace_api_test.cpp` verifying all 14 REST operations.
+  * Frontend API Clients (`frontend/src/api/documents.ts`):
+    * Typed functions: `fetchWorkspaceTree`, `fetchRecentDocuments`, `searchDocuments`, `fetchTrash`, `restoreTrash`, `purgeTrash`, `createDocument`, `moveDocument`, `deleteDocument`.
+  * Frontend Navigation & Search UI Components:
+    * `FileTree` component (`src/components/navigation/FileTree.tsx`):
+      * Hierarchical tree renderer with automatic nested path building (`buildTree`).
+      * Distinct package icon and title display for `.bundle` document bundles.
+      * Interactive folder expand/collapse state.
+      * Header action buttons: New Document (`+`), New Folder, and Refresh Explorer.
+      * Right-click context menus: New Document, New Folder, Rename (atomic move), Delete to Trash.
+      * HTML5 drag-and-drop: drag documents and drop into target folders with instant `PATCH /api/v1/documents/:id/move` execution.
+    * `RecentDocuments` drawer (`src/components/navigation/RecentDocuments.tsx`):
+      * Collapsible section displaying recent documents with relative time-ago badges (`just now`, `5m ago`, `2h ago`).
+      * Direct navigation on click.
+    * `SearchModal` global dialog (`src/components/search/SearchModal.tsx`):
+      * Keyboard shortcuts: `Cmd+K` / `Ctrl+K` toggle, `Esc` close, arrow keys `↑` `↓` navigation, `Enter` select.
+      * Debounced query querying `GET /api/v1/search`.
+      * Search result cards with `<mark>` keyword match highlighting and snippet preview.
+      * Header and Sidebar search buttons with `⌘K` badge.
+    * `TrashPage` explorer (`src/pages/TrashPage.tsx` at `/trash`):
+      * Displays soft-deleted documents and bundles with path, size (formatted in KB/MB), and deletion timestamp.
+      * One-click "Restore" button with prompt to immediately open restored document.
+      * "Purge" button with confirmation to permanently delete from disk.
+  * Playwright E2E Test Suite (`frontend/tests/e2e/filetree_search_trash.spec.ts`):
+    * 5 automated end-to-end browser tests:
+      1. Hierarchical FileTree rendering with bundles and folder expansion.
+      2. New document creation via FileTree modal and navigation to editor.
+      3. Global search via `Ctrl+K` with keyword highlighting and document selection.
+      4. Recent documents display in sidebar drawer.
+      5. Soft-deletion to Trash, explorer listing, and one-click restoration.
+* **Verification:**
+  ```bash
+  $ npx playwright test tests/e2e/filetree_search_trash.spec.ts
+  Running 5 tests using 5 workers
+    ✓ displays hierarchical FileTree with bundles and expands folders (326ms)
+    ✓ lists recently modified documents in RecentDocuments drawer (322ms)
+    ✓ soft-deletes document to Trash, displays in /trash, and restores it (478ms)
+    ✓ creates a new document via FileTree modal and navigates to editor (574ms)
+    ✓ executes global search via Ctrl+K with keyword highlighting and navigates to document (810ms)
+    5 passed (2.7s)
+
+  $ npx playwright test
+  Running 13 tests using 12 workers
+    13 passed (4.0s)
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 13
+  ```
+  *Status criteria:* Directory manipulations and search queries operate with instant UI response; soft-deleted items recover smoothly from trash; 13/13 backend CTest suites and 13/13 frontend Playwright tests passing.
+
+
 
 
 

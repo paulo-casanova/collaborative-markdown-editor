@@ -4,6 +4,8 @@
 #include <sstream>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <iomanip>
 #include <map>
 
 namespace cme::document {
@@ -872,6 +874,292 @@ Result<renderer::ReviewBundle> DocumentService::get_document_reviews(
         std::cerr << "[ERROR] get_document_reviews failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
+}
+
+Result<nlohmann::json> DocumentService::get_recent_documents(
+    const auth::UserIdentity& user,
+    size_t limit
+) {
+    if (!db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+            "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+            "FROM documents "
+            "ORDER BY updated_at DESC "
+            "LIMIT $1;",
+            std::max(static_cast<size_t>(1), std::min(limit * 2, static_cast<size_t>(100)))
+        );
+
+        nlohmann::json results = nlohmann::json::array();
+        for (const auto& r : rows) {
+            std::string doc_id = r[0].as<std::string>();
+            std::string fs_path = r[1].as<std::string>();
+            auto access = check_access(user, doc_id, fs_path);
+            if (access.has_value() && access.value() >= db::AccessLevel::Read) {
+                bool is_bundle = storage_ ? storage_->is_bundle(fs_path).value_or(false) : false;
+                results.push_back({
+                    {"id", doc_id},
+                    {"path", fs_path},
+                    {"title", r[2].as<std::string>()},
+                    {"owner_user_id", r[3].as<std::string>()},
+                    {"created_at", r[4].as<std::string>()},
+                    {"updated_at", r[5].as<std::string>()},
+                    {"is_bundle", is_bundle}
+                });
+                if (results.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return results;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] get_recent_documents failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<nlohmann::json> DocumentService::search_documents(
+    const std::string& query,
+    const std::string& path_prefix,
+    size_t limit,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_ || !storage_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    if (query.empty()) {
+        return nlohmann::json::array();
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    auto to_lower = [](std::string s) {
+        for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        return s;
+    };
+    std::string lq = to_lower(query);
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT id, fs_path, title, "
+            "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+            "FROM documents "
+            "WHERE ($1 = '' OR fs_path LIKE $1 || '%') "
+            "ORDER BY updated_at DESC;",
+            path_prefix
+        );
+
+        nlohmann::json results = nlohmann::json::array();
+        for (const auto& r : rows) {
+            std::string doc_id = r[0].as<std::string>();
+            std::string fs_path = r[1].as<std::string>();
+            std::string title = r[2].as<std::string>();
+            std::string updated_at = r[3].as<std::string>();
+
+            auto access = check_access(user, doc_id, fs_path);
+            if (!access.has_value() || access.value() < db::AccessLevel::Read) {
+                continue;
+            }
+
+            std::string ltitle = to_lower(title);
+            std::string lpath = to_lower(fs_path);
+            std::string snippet;
+            std::string match_type;
+
+            if (ltitle.find(lq) != std::string::npos) {
+                match_type = "title";
+                snippet = "Matched title: " + title;
+            } else if (lpath.find(lq) != std::string::npos) {
+                match_type = "path";
+                snippet = "Matched path: " + fs_path;
+            } else {
+                auto raw_res = storage_->read_file(fs_path);
+                if (raw_res.has_value()) {
+                    const auto& content = raw_res.value();
+                    std::string lcontent = to_lower(content);
+                    auto pos = lcontent.find(lq);
+                    if (pos != std::string::npos) {
+                        match_type = "content";
+                        size_t start = pos > 35 ? pos - 35 : 0;
+                        size_t end = std::min(content.size(), pos + lq.size() + 35);
+                        std::string sub = content.substr(start, end - start);
+                        for (auto& ch : sub) {
+                            if (ch == '\n' || ch == '\r') ch = ' ';
+                        }
+                        snippet = (start > 0 ? "..." : "") + sub + (end < content.size() ? "..." : "");
+                    }
+                }
+            }
+
+            if (!match_type.empty()) {
+                bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+                results.push_back({
+                    {"id", doc_id},
+                    {"path", fs_path},
+                    {"title", title},
+                    {"snippet", snippet},
+                    {"match_type", match_type},
+                    {"updated_at", updated_at},
+                    {"is_bundle", is_bundle}
+                });
+                if (results.size() >= limit) {
+                    break;
+                }
+            }
+        }
+        return results;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] search_documents failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<nlohmann::json> DocumentService::list_trash(const auth::UserIdentity& user) {
+    (void)user;
+    if (!storage_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto list_res = storage_->list_trash();
+    if (!list_res.has_value()) {
+        return std::unexpected(list_res.error());
+    }
+
+    nlohmann::json items = nlohmann::json::array();
+    for (const auto& node : list_res.value()) {
+        std::time_t t = std::chrono::system_clock::to_time_t(node.last_modified);
+        std::tm tm{};
+#if defined(_WIN32)
+        gmtime_s(&tm, &t);
+#else
+        gmtime_r(&t, &tm);
+#endif
+        std::ostringstream ss;
+        ss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+
+        items.push_back({
+            {"id", node.name},
+            {"path", node.relative_path},
+            {"name", node.name},
+            {"size_bytes", node.size_bytes},
+            {"is_directory", node.is_directory},
+            {"is_bundle", node.is_bundle},
+            {"deleted_at", ss.str()}
+        });
+    }
+
+    return items;
+}
+
+Result<DocumentRecord> DocumentService::restore_trash_item(
+    const std::string& trash_id,
+    const std::string& target_path,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    std::string restore_dest = target_path;
+    if (restore_dest.empty()) {
+        auto trash_res = storage_->list_trash();
+        if (trash_res.has_value()) {
+            for (const auto& item : trash_res.value()) {
+                if (item.name == trash_id) {
+                    restore_dest = item.relative_path;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (restore_dest.empty()) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto rest_res = storage_->restore_from_trash(trash_id, restore_dest);
+    if (!rest_res.has_value()) {
+        return std::unexpected(rest_res.error());
+    }
+
+    std::string content;
+    bool is_bundle = storage_->is_bundle(restore_dest).value_or(false);
+    if (is_bundle) {
+        auto b_res = storage_->read_file(restore_dest + "/index.md");
+        content = b_res.value_or("");
+    } else {
+        auto f_res = storage_->read_file(restore_dest);
+        content = f_res.value_or("");
+    }
+
+    std::string title = derive_title(content, restore_dest);
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "INSERT INTO documents (fs_path, title, owner_user_id) "
+            "VALUES ($1, $2, $3::uuid) "
+            "ON CONFLICT (fs_path) DO UPDATE SET updated_at = NOW(), title = EXCLUDED.title "
+            "RETURNING id, TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+            restore_dest,
+            title,
+            user.user_id
+        );
+
+        std::string doc_id = rows[0][0].as<std::string>();
+        std::string created_at = rows[0][1].as<std::string>();
+        std::string updated_at = rows[0][2].as<std::string>();
+
+        tx.commit();
+
+        return DocumentRecord{
+            .id = doc_id,
+            .path = restore_dest,
+            .title = title,
+            .content = content,
+            .is_bundle = is_bundle,
+            .owner_user_id = user.user_id,
+            .created_at = created_at,
+            .updated_at = updated_at
+        };
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] restore_trash_item DB re-indexing failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<void> DocumentService::purge_trash_item(
+    const std::string& trash_id,
+    const auth::UserIdentity& user
+) {
+    (void)user;
+    if (!storage_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    return storage_->purge_from_trash(trash_id);
 }
 
 } // namespace cme::document

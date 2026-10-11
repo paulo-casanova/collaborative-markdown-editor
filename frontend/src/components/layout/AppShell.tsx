@@ -4,6 +4,7 @@ import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { LoginModal } from '../auth/LoginModal';
 import { TokensModal } from '../auth/TokensModal';
+import { SearchModal } from '../search/SearchModal';
 import { useThemeStore } from '../../stores/themeStore';
 
 export const AppShell: React.FC = () => {
@@ -27,6 +28,7 @@ export const AppShell: React.FC = () => {
       {/* Global Modals */}
       <LoginModal />
       <TokensModal />
+      <SearchModal />
     </div>
   );
 };

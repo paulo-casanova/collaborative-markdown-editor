@@ -1131,6 +1131,154 @@ Result<void> Server::start() {
         send_json(res, "200 OK", {{"status", "deleted"}, {"trash_id", del_res.value()}});
     });
 
+    // GET /api/v1/users/me/recents
+    app.get("/api/v1/users/me/recents", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string limit_param = std::string(req->getQuery("limit"));
+        size_t limit = limit_param.empty() ? 20 : std::stoul(limit_param);
+
+        auto recents_res = document_service_->get_recent_documents(*auth_res.value(), limit);
+        if (!recents_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to retrieve recents"}});
+            return;
+        }
+
+        send_json(res, "200 OK", {{"recents", recents_res.value()}});
+    });
+
+    // GET /api/v1/search
+    app.get("/api/v1/search", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string query = url_decode(req->getQuery("q"));
+        std::string path_prefix = url_decode(req->getQuery("path"));
+        std::string limit_str = std::string(req->getQuery("limit"));
+        size_t limit = limit_str.empty() ? 20 : std::stoul(limit_str);
+
+        auto search_res = document_service_->search_documents(query, path_prefix, limit, *auth_res.value());
+        if (!search_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Search operation failed"}});
+            return;
+        }
+
+        send_json(res, "200 OK", {{"query", query}, {"results", search_res.value()}});
+    });
+
+    // GET /api/v1/trash
+    app.get("/api/v1/trash", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto trash_res = document_service_->list_trash(*auth_res.value());
+        if (!trash_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list trash"}});
+            return;
+        }
+
+        send_json(res, "200 OK", {{"trash", trash_res.value()}});
+    });
+
+    // POST /api/v1/trash/:id/restore
+    app.post("/api/v1/trash/:id/restore", [this](auto *res, auto *req) {
+        std::string trash_id = url_decode(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto rest_res = document_service_->restore_trash_item(trash_id, "", *auth_res.value());
+        if (!rest_res.has_value()) {
+            if (rest_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Trash entry not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to restore trash item"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", rest_res.value().to_json());
+    });
+
+    // DELETE /api/v1/trash/:id
+    app.del("/api/v1/trash/:id", [this](auto *res, auto *req) {
+        std::string trash_id = url_decode(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto purge_res = document_service_->purge_trash_item(trash_id, *auth_res.value());
+        if (!purge_res.has_value()) {
+            if (purge_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Trash entry not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to purge trash item"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", {{"status", "purged"}, {"id", trash_id}});
+    });
+
     // ==========================================================================
     // Admin REST API Endpoints (Step 2.5)
     // ==========================================================================

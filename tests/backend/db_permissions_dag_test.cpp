@@ -1,6 +1,7 @@
 #include "cme/db/connection_pool.hpp"
 #include "cme/db/migration_runner.hpp"
 #include "cme/db/permission_engine.hpp"
+#include "cme/auth/crypto_utils.hpp"
 #include <cassert>
 #include <iostream>
 #include <algorithm>
@@ -55,15 +56,18 @@ int main() {
             tx.exec("DELETE FROM documents WHERE fs_path LIKE 'test/%';");
 
             // Create Users
-            auto r_charlie = tx.exec(
+            std::string pw_hash = cme::auth::hash_password_bcrypt("password123", 10);
+            auto r_charlie = tx.exec_params(
                 "INSERT INTO users (username, password_hash, display_name, is_system_admin) "
-                "VALUES ('test_charlie', 'hash', 'Charlie Developer', FALSE) RETURNING id::text;"
+                "VALUES ('test_charlie', $1, 'Charlie Developer', FALSE) RETURNING id::text;",
+                pw_hash
             );
             charlie_id = r_charlie[0][0].as<std::string>();
 
-            auto r_admin = tx.exec(
+            auto r_admin = tx.exec_params(
                 "INSERT INTO users (username, password_hash, display_name, is_system_admin) "
-                "VALUES ('test_admin', 'hash', 'Super Admin', TRUE) RETURNING id::text;"
+                "VALUES ('test_admin', $1, 'Super Admin', TRUE) RETURNING id::text;",
+                pw_hash
             );
             admin_id = r_admin[0][0].as<std::string>();
 

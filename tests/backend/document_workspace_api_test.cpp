@@ -362,6 +362,75 @@ int main() {
         std::cout << "  - DELETE /api/v1/documents/{id} soft-deleted document to trash (404 on subsequent get).\n";
     }
 
+    // 2.10 GET /api/v1/trash
+    std::string trash_entry_id;
+    {
+        auto resp = http_curl("GET", base_url + "/api/v1/trash", auth_header);
+        assert(resp.status_code == 200);
+        auto json = nlohmann::json::parse(resp.body);
+        assert(json.contains("trash"));
+        assert(json["trash"].is_array());
+        assert(!json["trash"].empty());
+        trash_entry_id = json["trash"][0]["id"].get<std::string>();
+        assert(!trash_entry_id.empty());
+        std::cout << "  - GET /api/v1/trash returned soft-deleted items (" << trash_entry_id << ").\n";
+    }
+
+    // 2.11 POST /api/v1/trash/{id}/restore
+    std::string restored_doc_id;
+    {
+        auto resp = http_curl("POST", base_url + "/api/v1/trash/" + trash_entry_id + "/restore", auth_header);
+        assert(resp.status_code == 200);
+        auto json = nlohmann::json::parse(resp.body);
+        assert(json.contains("id"));
+        assert(json["path"] == "guides/manual.md");
+        restored_doc_id = json["id"].get<std::string>();
+        std::cout << "  - POST /api/v1/trash/{id}/restore successfully restored document.\n";
+
+        // Check document can now be fetched again
+        auto check_restored = http_curl("GET", base_url + "/api/v1/documents/by-path?path=guides/manual.md", auth_header);
+        assert(check_restored.status_code == 200);
+    }
+
+    // 2.12 GET /api/v1/users/me/recents
+    {
+        auto resp = http_curl("GET", base_url + "/api/v1/users/me/recents?limit=10", auth_header);
+        assert(resp.status_code == 200);
+        auto json = nlohmann::json::parse(resp.body);
+        assert(json.contains("recents"));
+        assert(json["recents"].is_array());
+        assert(!json["recents"].empty());
+        std::cout << "  - GET /api/v1/users/me/recents retrieved recent documents.\n";
+    }
+
+    // 2.13 GET /api/v1/search?q=
+    {
+        auto resp = http_curl("GET", base_url + "/api/v1/search?q=Architecture", auth_header);
+        assert(resp.status_code == 200);
+        auto json = nlohmann::json::parse(resp.body);
+        assert(json.contains("results"));
+        assert(json["results"].is_array());
+        assert(!json["results"].empty());
+        assert(json["results"][0].contains("snippet"));
+        std::cout << "  - GET /api/v1/search returned query matches with snippets.\n";
+    }
+
+    // 2.14 DELETE /api/v1/trash/{id} (Purge)
+    {
+        // First delete it back to trash
+        auto del_resp = http_curl("DELETE", base_url + "/api/v1/documents/" + restored_doc_id, auth_header);
+        assert(del_resp.status_code == 200);
+        auto del_json = nlohmann::json::parse(del_resp.body);
+        std::string new_trash_id = del_json["trash_id"].get<std::string>();
+
+        // Now purge
+        auto purge_resp = http_curl("DELETE", base_url + "/api/v1/trash/" + new_trash_id, auth_header);
+        assert(purge_resp.status_code == 200);
+        auto purge_json = nlohmann::json::parse(purge_resp.body);
+        assert(purge_json["status"] == "purged");
+        std::cout << "  - DELETE /api/v1/trash/{id} permanently purged item.\n";
+    }
+
     // Stop server
     std::cout << "\n[TEST] Stopping server...\n";
     server->stop();

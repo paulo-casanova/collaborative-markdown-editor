@@ -164,6 +164,46 @@ public:
         const auth::UserIdentity& user
     );
 
+    /**
+     * @brief Fetches recently accessed or modified documents accessible to user.
+     */
+    Result<nlohmann::json> get_recent_documents(
+        const auth::UserIdentity& user,
+        size_t limit = 20
+    );
+
+    /**
+     * @brief Full-text search querying title, path, and content snippets.
+     */
+    Result<nlohmann::json> search_documents(
+        const std::string& query,
+        const std::string& path_prefix,
+        size_t limit,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Lists soft-deleted items stored in POSIX trash.
+     */
+    Result<nlohmann::json> list_trash(const auth::UserIdentity& user);
+
+    /**
+     * @brief Restores a soft-deleted item from trash back to active workspace.
+     */
+    Result<DocumentRecord> restore_trash_item(
+        const std::string& trash_id,
+        const std::string& target_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Permanently purges a soft-deleted item from trash disk.
+     */
+    Result<void> purge_trash_item(
+        const std::string& trash_id,
+        const auth::UserIdentity& user
+    );
+
 private:
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::PosixStorageBackend> storage_;

@@ -10,6 +10,7 @@ interface UIState {
   syncStatus: SyncStatus;
   loginModalOpen: boolean;
   tokensModalOpen: boolean;
+  searchModalOpen: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   toggleReviewSidebar: () => void;
@@ -18,6 +19,8 @@ interface UIState {
   setSyncStatus: (status: SyncStatus) => void;
   setLoginModalOpen: (open: boolean) => void;
   setTokensModalOpen: (open: boolean) => void;
+  setSearchModalOpen: (open: boolean) => void;
+  toggleSearchModal: () => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -27,6 +30,7 @@ export const useUIStore = create<UIState>((set) => ({
   syncStatus: 'saved',
   loginModalOpen: false,
   tokensModalOpen: false,
+  searchModalOpen: false,
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   toggleReviewSidebar: () => set((state) => ({ reviewSidebarOpen: !state.reviewSidebarOpen })),
@@ -35,4 +39,6 @@ export const useUIStore = create<UIState>((set) => ({
   setSyncStatus: (syncStatus) => set({ syncStatus }),
   setLoginModalOpen: (loginModalOpen) => set({ loginModalOpen }),
   setTokensModalOpen: (tokensModalOpen) => set({ tokensModalOpen }),
+  setSearchModalOpen: (searchModalOpen) => set({ searchModalOpen }),
+  toggleSearchModal: () => set((state) => ({ searchModalOpen: !state.searchModalOpen })),
 }));
