@@ -389,7 +389,7 @@ This document tracks the incremental implementation of the Collaborative Markdow
 ---
 
 ### Step 2.5: User & Team Administration Engine (REST API & `cme-admin` CLI)
-* **Status:** Complete (Commit: Pending)
+* **Status:** Complete (Commit: `2dd49bf`)
 * **Date Completed:** 2026-10-11
 * **Deliverables:**
   * Native C++23 administration service classes in `backend/include/cme/admin/admin_service.hpp` and `backend/src/admin/admin_service.cpp`:
