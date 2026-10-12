@@ -1,7 +1,7 @@
 import { apiRequest, TOKEN_STORAGE_KEY } from './client';
 import { UserIdentity, PatToken } from '../types/auth';
 
-function normalizeUser(data: any): UserIdentity {
+export function normalizeUser(data: any): UserIdentity {
   const u = (data && data.user) ? data.user : data;
   return {
     user_id: u?.user_id || u?.id || '',

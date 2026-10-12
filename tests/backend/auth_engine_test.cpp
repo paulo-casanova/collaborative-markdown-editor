@@ -309,8 +309,16 @@ int main() {
         assert(resp.status_code == 200);
         auto json = nlohmann::json::parse(resp.body);
         assert(json["user"]["username"] == "bob_auth_test");
+        assert(json["user"]["is_admin"] == false);
+        assert(json["user"]["is_system_admin"] == false);
+        assert(json["user"]["user_id"] == bob_user_id);
+        assert(json["username"] == "bob_auth_test");
+        assert(json["display_name"] == "Bob Tester");
+        assert(json["is_admin"] == false);
+        assert(json["is_system_admin"] == false);
+        assert(json["user_id"] == bob_user_id);
         assert(json.contains("effective_teams"));
-        std::cout << "  - GET /api/v1/auth/me with Bearer token returned HTTP 200.\n";
+        std::cout << "  - GET /api/v1/auth/me with Bearer token returned HTTP 200 with dual-nested identity & role flags.\n";
     }
 
     // 4.3. GET /api/v1/auth/me with Cookie
@@ -319,6 +327,8 @@ int main() {
         assert(resp.status_code == 200);
         auto json = nlohmann::json::parse(resp.body);
         assert(json["user"]["username"] == "bob_auth_test");
+        assert(json["username"] == "bob_auth_test");
+        assert(json["is_system_admin"] == false);
         std::cout << "  - GET /api/v1/auth/me with Cookie returned HTTP 200.\n";
     }
 
@@ -329,7 +339,11 @@ int main() {
         auto json = nlohmann::json::parse(resp.body);
         assert(json["user"]["username"] == "alice_admin");
         assert(json["user"]["is_admin"] == true);
-        std::cout << "  - GET /api/v1/auth/me with X-Remote-User returned HTTP 200 (admin=true).\n";
+        assert(json["user"]["is_system_admin"] == true);
+        assert(json["username"] == "alice_admin");
+        assert(json["is_admin"] == true);
+        assert(json["is_system_admin"] == true);
+        std::cout << "  - GET /api/v1/auth/me with X-Remote-User returned HTTP 200 (admin=true on both user and top-level).\n";
     }
 
     // 4.5. GET /api/v1/auth/me unauthenticated -> HTTP 401
