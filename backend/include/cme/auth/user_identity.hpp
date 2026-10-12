@@ -27,10 +27,12 @@ struct UserIdentity {
     [[nodiscard]] nlohmann::json to_json() const {
         return {
             {"id", user_id},
+            {"user_id", user_id},
             {"username", username},
             {"display_name", display_name},
             {"avatar_color", avatar_color},
-            {"is_admin", is_system_admin}
+            {"is_admin", is_system_admin},
+            {"is_system_admin", is_system_admin}
         };
     }
 };

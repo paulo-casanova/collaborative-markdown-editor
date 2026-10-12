@@ -31,10 +31,12 @@ struct UserRecord {
     [[nodiscard]] nlohmann::json to_json() const {
         return {
             {"id", id},
+            {"user_id", id},
             {"username", username},
             {"display_name", display_name},
             {"avatar_color", avatar_color},
             {"is_admin", is_system_admin},
+            {"is_system_admin", is_system_admin},
             {"created_at", created_at},
             {"updated_at", updated_at}
         };

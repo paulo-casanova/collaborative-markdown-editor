@@ -4,6 +4,8 @@ export interface UserIdentity {
   display_name: string;
   avatar_color: string;
   is_system_admin: boolean;
+  is_admin?: boolean;
+  id?: string;
   effective_teams?: string[];
   created_at?: string;
 }

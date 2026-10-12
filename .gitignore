@@ -79,3 +79,4 @@ TEST*.xml
 *.log
 tmp/
 *.tmp
+storage_data/

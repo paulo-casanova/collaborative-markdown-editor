@@ -475,7 +475,7 @@ Result<void> Server::start() {
             }
         }
 
-        nlohmann::json resp;
+        nlohmann::json resp = user.to_json();
         resp["user"] = user.to_json();
         resp["effective_teams"] = effective_teams;
 
