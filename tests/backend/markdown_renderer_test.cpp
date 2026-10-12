@@ -297,7 +297,7 @@ int main() {
         tx.exec_params(
             "INSERT INTO sessions (token_hash, user_id, expires_at) "
             "VALUES ($1, $2::uuid, NOW() + INTERVAL '24 hours') "
-            "ON CONFLICT (token_hash) DO NOTHING;",
+            "ON CONFLICT (token_hash) DO UPDATE SET user_id = EXCLUDED.user_id, expires_at = NOW() + INTERVAL '24 hours';",
             token_hash, tester_user_id
         );
 

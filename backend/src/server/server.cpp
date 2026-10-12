@@ -151,10 +151,26 @@ nlohmann::json Server::get_health_status() {
         persistence_status["status"] = "unconfigured";
     }
     health["persistence"] = persistence_status;
+    health["backup_barrier_active"] = is_backup_barrier_active();
 
     health["status"] = overall_healthy ? "healthy" : "degraded";
 
     return health;
+}
+
+size_t Server::prepare_backup() {
+    backup_barrier_active_.store(true);
+    size_t flushed = 0;
+    if (persistence_worker_) {
+        flushed = persistence_worker_->flush_all_dirty();
+    }
+    std::cout << "[INFO] Backup coordination barrier activated. Flushed " << flushed << " dirty rooms to disk.\n";
+    return flushed;
+}
+
+void Server::release_backup() {
+    backup_barrier_active_.store(false);
+    std::cout << "[INFO] Backup coordination barrier released. Normal write mutations resumed.\n";
 }
 
 Result<std::optional<auth::UserIdentity>> Server::authenticate_request(
@@ -293,6 +309,17 @@ Result<void> Server::start() {
         write_cors_headers(res);
         res->end();
     });
+
+    auto check_barrier = [this](auto* res) -> bool {
+        if (is_backup_barrier_active()) {
+            send_json(res, "503 Service Unavailable", {
+                {"error", "Backup in progress"},
+                {"retry_after", 2}
+            }, {{"Retry-After", "2"}});
+            return true;
+        }
+        return false;
+    };
 
     // GET /api/v1/health
     app.get("/api/v1/health", [this](auto *res, auto *req) {
@@ -680,7 +707,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/documents
-    app.post("/api/v1/documents", [this](auto *res, auto *req) {
+    app.post("/api/v1/documents", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -837,7 +865,8 @@ Result<void> Server::start() {
     });
 
     // PATCH /api/v1/documents/:id/move
-    app.patch("/api/v1/documents/:id/move", [this](auto *res, auto *req) {
+    app.patch("/api/v1/documents/:id/move", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         std::string doc_id = std::string(req->getParameter(0));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
@@ -897,7 +926,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/documents/:id/assets
-    app.post("/api/v1/documents/:id/assets", [this](auto *res, auto *req) {
+    app.post("/api/v1/documents/:id/assets", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         std::string doc_id = std::string(req->getParameter(0));
         std::string fn_query = url_decode(req->getQuery("filename"));
         std::string fn_header = std::string(req->getHeader("x-asset-filename"));
@@ -1042,7 +1072,8 @@ Result<void> Server::start() {
     });
 
     // PUT /api/v1/documents/:id
-    app.put("/api/v1/documents/:id", [this](auto *res, auto *req) {
+    app.put("/api/v1/documents/:id", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         std::string doc_id = std::string(req->getParameter(0));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
@@ -1099,7 +1130,8 @@ Result<void> Server::start() {
     });
 
     // DELETE /api/v1/documents/:id
-    app.del("/api/v1/documents/:id", [this](auto *res, auto *req) {
+    app.del("/api/v1/documents/:id", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         std::string doc_id = std::string(req->getParameter(0));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
@@ -1218,7 +1250,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/trash/:id/restore
-    app.post("/api/v1/trash/:id/restore", [this](auto *res, auto *req) {
+    app.post("/api/v1/trash/:id/restore", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         std::string trash_id = url_decode(req->getParameter(0));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
@@ -1249,7 +1282,8 @@ Result<void> Server::start() {
     });
 
     // DELETE /api/v1/trash/:id
-    app.del("/api/v1/trash/:id", [this](auto *res, auto *req) {
+    app.del("/api/v1/trash/:id", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         std::string trash_id = url_decode(req->getParameter(0));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
@@ -1787,6 +1821,48 @@ Result<void> Server::start() {
     });
 
     // =========================================================================
+    // Admin Backup Coordination Barrier Endpoints (Step 7.2)
+    // =========================================================================
+
+    // POST /api/v1/admin/backup/prepare
+    app.post("/api/v1/admin/backup/prepare", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        size_t flushed = prepare_backup();
+        send_json(res, "200 OK", {
+            {"status", "barrier_active"},
+            {"rooms_flushed", flushed},
+            {"barrier_active", true}
+        });
+    });
+
+    // POST /api/v1/admin/backup/release
+    app.post("/api/v1/admin/backup/release", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        release_backup();
+        send_json(res, "200 OK", {
+            {"status", "barrier_released"},
+            {"barrier_active", false}
+        });
+    });
+
+    // GET /api/v1/admin/backup/status
+    app.get("/api/v1/admin/backup/status", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        send_json(res, "200 OK", {
+            {"barrier_active", is_backup_barrier_active()}
+        });
+    });
+
+    // =========================================================================
     // Review Engine REST Endpoints & Opcode 0x02 Event Fanout (Step 3.4)
     // =========================================================================
 
@@ -1826,7 +1902,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/documents/:id/comments
-    app.post("/api/v1/documents/:id/comments", [this, get_auth_context](auto *res, auto *req) {
+    app.post("/api/v1/documents/:id/comments", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto ctx = get_auth_context(req);
         std::string doc_id = url_decode(req->getParameter(0));
         auto body = std::make_shared<std::string>();
@@ -1872,7 +1949,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/comments/:id/replies
-    app.post("/api/v1/comments/:id/replies", [this, get_auth_context](auto *res, auto *req) {
+    app.post("/api/v1/comments/:id/replies", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto ctx = get_auth_context(req);
         std::string comment_id = url_decode(req->getParameter(0));
         auto body = std::make_shared<std::string>();
@@ -1916,7 +1994,8 @@ Result<void> Server::start() {
     });
 
     // PATCH /api/v1/comments/:id/status
-    app.patch("/api/v1/comments/:id/status", [this, get_auth_context](auto *res, auto *req) {
+    app.patch("/api/v1/comments/:id/status", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto ctx = get_auth_context(req);
         std::string comment_id = url_decode(req->getParameter(0));
         auto body = std::make_shared<std::string>();
@@ -1957,7 +2036,8 @@ Result<void> Server::start() {
     });
 
     // DELETE /api/v1/comments/:id
-    app.del("/api/v1/comments/:id", [this, authenticate_user](auto *res, auto *req) {
+    app.del("/api/v1/comments/:id", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto user = authenticate_user(req, res);
         if (!user) return;
         std::string comment_id = url_decode(req->getParameter(0));
@@ -2014,7 +2094,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/documents/:id/suggestions
-    app.post("/api/v1/documents/:id/suggestions", [this, get_auth_context](auto *res, auto *req) {
+    app.post("/api/v1/documents/:id/suggestions", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto ctx = get_auth_context(req);
         std::string doc_id = url_decode(req->getParameter(0));
         auto body = std::make_shared<std::string>();
@@ -2061,7 +2142,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/suggestions/:id/accept
-    app.post("/api/v1/suggestions/:id/accept", [this, authenticate_user](auto *res, auto *req) {
+    app.post("/api/v1/suggestions/:id/accept", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto user = authenticate_user(req, res);
         if (!user) return;
         std::string suggestion_id = url_decode(req->getParameter(0));
@@ -2097,7 +2179,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/suggestions/:id/reject
-    app.post("/api/v1/suggestions/:id/reject", [this, authenticate_user](auto *res, auto *req) {
+    app.post("/api/v1/suggestions/:id/reject", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto user = authenticate_user(req, res);
         if (!user) return;
         std::string suggestion_id = url_decode(req->getParameter(0));
@@ -2146,7 +2229,8 @@ Result<void> Server::start() {
     });
 
     // POST /api/v1/documents/:id/tasks
-    app.post("/api/v1/documents/:id/tasks", [this, get_auth_context](auto *res, auto *req) {
+    app.post("/api/v1/documents/:id/tasks", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto ctx = get_auth_context(req);
         std::string doc_id = url_decode(req->getParameter(0));
         auto body = std::make_shared<std::string>();
@@ -2198,7 +2282,8 @@ Result<void> Server::start() {
     });
 
     // PATCH /api/v1/tasks/:id
-    app.patch("/api/v1/tasks/:id", [this, get_auth_context](auto *res, auto *req) {
+    app.patch("/api/v1/tasks/:id", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto ctx = get_auth_context(req);
         std::string task_id = url_decode(req->getParameter(0));
         auto body = std::make_shared<std::string>();
@@ -2264,7 +2349,8 @@ Result<void> Server::start() {
     });
 
     // DELETE /api/v1/tasks/:id
-    app.del("/api/v1/tasks/:id", [this, authenticate_user](auto *res, auto *req) {
+    app.del("/api/v1/tasks/:id", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
         auto user = authenticate_user(req, res);
         if (!user) return;
         std::string task_id = url_decode(req->getParameter(0));
@@ -2482,6 +2568,7 @@ Result<void> Server::start() {
                             break;
                         }
                         case 0x02: { // Subtype 0x02: SyncStep2 (Client returns missing document updates)
+                            if (is_backup_barrier_active()) break;
                             if (data->access_level >= db::AccessLevel::Edit || data->is_admin) {
                                 std::span<const uint8_t> update_data(
                                     reinterpret_cast<const uint8_t*>(sub_payload.data()),
@@ -2500,6 +2587,7 @@ Result<void> Server::start() {
                             break;
                         }
                         case 0x03: { // Subtype 0x03: SyncUpdate (Incremental document edit delta)
+                            if (is_backup_barrier_active()) break;
                             if (data->access_level >= db::AccessLevel::Edit || data->is_admin) {
                                 std::span<const uint8_t> update_data(
                                     reinterpret_cast<const uint8_t*>(sub_payload.data()),

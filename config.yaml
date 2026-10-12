@@ -1,0 +1,48 @@
+# ==============================================================================
+# Collaborative Markdown Editor (CME) - Master Production Configuration
+# ==============================================================================
+
+server:
+  bind: "0.0.0.0"
+  port: 8080
+  reactor_threads: 2
+  worker_threads: 8
+  max_payload_bytes: 33554432 # 32 MB
+
+storage:
+  backend: "posix"
+  root_path: "/var/lib/cme/storage"
+  trash_retention_days: 30
+  snapshot_interval_seconds: 300
+
+database:
+  url: "postgresql://cme:secret@localhost:5432/cme_test"
+  pool_size: 8
+  connect_timeout_seconds: 5
+
+authn:
+  provider: "delegated"
+  delegated_header: "X-Remote-User"
+  delegated_email_header: "X-Remote-Email"
+  session_ttl_hours: 72
+
+authz:
+  admin_provider: "file"
+  admin_file_path: "/etc/cme/admins.txt"
+  admin_command: "/usr/local/bin/check_admin.sh %USER%"
+
+ui:
+  embedded: false
+  dist_dir: ""
+
+backup:
+  enabled: true
+  cron_schedule: "0 2 * * *"
+  script_path: "/usr/local/bin/cme-backup.sh"
+  target_dir: "/var/lib/cme/storage/backups"
+  retention_daily: 7
+  retention_weekly: 4
+
+logging:
+  level: "info"
+  format: "json"

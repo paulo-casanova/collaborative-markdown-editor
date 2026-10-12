@@ -184,5 +184,11 @@ set_tests_properties(e2e_llm_agent_simulation_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Automated Backups, Consistency Barrier & Disaster Recovery Drill (Step 7.2)
+add_test(NAME disaster_recovery_drill_test COMMAND bash ${CMAKE_SOURCE_DIR}/tests/disaster_recovery_drill.sh)
+set_tests_properties(disaster_recovery_drill_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 

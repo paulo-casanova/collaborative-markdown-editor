@@ -1,4 +1,5 @@
 #include "cme/server/server.hpp"
+#include "cme/document/integrity_verifier.hpp"
 #include "cme/version.hpp"
 #include <iostream>
 #include <csignal>
@@ -27,11 +28,7 @@ int main(int argc, char* argv[]) {
     const auto& cfg = *cfg_res;
 
     if (cfg.verify_integrity_only) {
-        std::cout << "[INFO] Running offline integrity verification mode...\n";
-        std::cout << "[INFO] Verifying storage root: " << cfg.storage.root_path << "\n";
-        std::cout << "[INFO] Verifying database: " << cfg.database.url << "\n";
-        std::cout << "[SUCCESS] Offline integrity check passed with 0 discrepancies.\n";
-        return 0;
+        return cme::document::IntegrityVerifier::run(cfg);
     }
 
     g_server = std::make_shared<cme::server::Server>(cfg);

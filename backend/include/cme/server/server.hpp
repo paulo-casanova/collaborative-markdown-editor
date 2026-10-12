@@ -111,8 +111,22 @@ public:
     void set_persistence_config(collab::PersistenceConfig config) noexcept { persistence_config_ = config; }
     [[nodiscard]] const collab::PersistenceConfig& persistence_config() const noexcept { return persistence_config_; }
 
+    /**
+     * @brief Prepares for atomic backup: flushes dirty collaborative rooms to disk and activates write barrier.
+     * @return Number of rooms flushed.
+     */
+    size_t prepare_backup();
+
+    /**
+     * @brief Releases the backup coordination barrier and resumes normal write mutations.
+     */
+    void release_backup();
+
+    [[nodiscard]] bool is_backup_barrier_active() const noexcept { return backup_barrier_active_.load(); }
+
 private:
     config::AppConfig config_;
+    std::atomic<bool> backup_barrier_active_{false};
     collab::PersistenceConfig persistence_config_{};
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::PosixStorageBackend> storage_;

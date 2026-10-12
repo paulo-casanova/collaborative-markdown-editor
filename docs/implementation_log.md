@@ -1415,4 +1415,118 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
   *Status criteria:* Script executes all 5 actions successfully; assertions confirm database records and WebSocket notifications emit as expected.
 
+---
+
+### Step 7.2: Automated Backups, Consistency Barrier & Cold-Restore Verification
+* **Status:** Complete (Commit: `master`)
+* **Deliverables:**
+  * Master Production Configuration (`config.yaml`):
+    * Added configuration for scheduled backups with `backup.cron_schedule: "0 2 * * *"`, `backup.target_dir: "/var/lib/cme/storage/backups"`, `backup.retention_daily: 7`, and `backup.retention_weekly: 4`.
+  * Backup Coordination Barrier & Write-Locking Protocol:
+    * Implemented atomic `backup_barrier_active_` flag, `prepare_backup()`, and `release_backup()` in `Server` (`backend/include/cme/server/server.hpp`, `backend/src/server/server.cpp`).
+    * `prepare_backup()` synchronously flushes all active, dirty in-memory Yjs rooms to POSIX disk via `persistence_worker_->flush_all_dirty()` and locks write operations.
+    * Registered Admin REST API endpoints:
+      * `POST /api/v1/admin/backup/prepare`: Flushes rooms, engages write barrier, and returns JSON status.
+      * `POST /api/v1/admin/backup/release`: Clears write barrier and resumes normal mutation operations.
+      * `GET /api/v1/admin/backup/status`: Returns current barrier state (`barrier_active`).
+    * REST API write mutation endpoints (`POST/PUT/PATCH/DELETE` for documents, comments, suggestions, tasks, and trash) enforce write barrier: requests during an active barrier return `503 Service Unavailable` with `Retry-After: 2` header and `{"error": "Backup in progress", "retry_after": 2}`.
+    * WebSocket sync engine (`/ws/collab/:document_id`) drops client mutation update packets (`0x02` and `0x03`) while barrier is engaged to prevent state divergence.
+    * Operational health metrics (`GET /api/v1/health`) report `backup_barrier_active`.
+  * Offline Storage & Database Integrity Verification & Reconciliation Tool (`cme-server --verify-integrity`):
+    * Implemented `cme::document::IntegrityVerifier` (`backend/include/cme/document/integrity_verifier.hpp`, `backend/src/document/integrity_verifier.cpp`).
+    * Step 1: Audits all PostgreSQL `documents` rows against the storage directory tree and marks missing filesystem files.
+    * Step 2: Audits all Markdown documents and bundles on disk against PostgreSQL; automatically reconciles unindexed files by creating metadata stubs with headings parsed as document titles.
+    * Step 3: Audits referential integrity of review annotations (`comments`, `suggestions`, and `tasks`) against `documents`.
+    * Returns exit code 0 when 0 unresolved discrepancies exist, non-zero otherwise.
+    * Integrated into `cme-server --verify-integrity` CLI flag.
+  * Automated Coordinated Backup Script (`scripts/cme-backup.sh` & `~/.local/bin/cme-backup.sh`):
+    * Two-phase snapshot workflow: engages coordination barrier via `POST /api/v1/admin/backup/prepare`, runs PostgreSQL dump (`pg_dump` or container fallback) and POSIX storage tarball archive, releases barrier via `POST /api/v1/admin/backup/release`.
+    * Computes SHA-256 cryptographic checksums for both database dump and storage tarball.
+    * Generates `manifest.json` recording backup ID, timestamp, and SHA-256 hashes.
+    * Packages monolithic bundle `cme_backup_<timestamp>.tar` alongside `cme_backup_<timestamp>.tar.sha256`.
+    * Enforces automated retention rotation (prunes archives older than daily/weekly thresholds).
+  * Disaster Recovery Drill Runbook Test Suite (`tests/disaster_recovery_drill.sh`):
+    * Automated test suite executing a 10-phase cold restore drill:
+      1. Starts isolated CME server daemon.
+      2. Seeds documents, threaded comments, tasks, and suggestions.
+      3. Verifies backup barrier write-locking (503 Service Unavailable).
+      4. Executes coordinated backup via `cme-backup.sh`.
+      5. Simulates catastrophic cold disaster by completely destroying primary storage.
+      6. Verifies cryptographic hashes against `manifest.json`.
+      7. Restores storage content tree and PostgreSQL database via `pg_restore`.
+      8. Runs offline reconciliation tool (`cme-server --verify-integrity`), confirming 0 discrepancies.
+      9. Launches restored CME server daemon and asserts `/api/v1/health` reports status `healthy`.
+      10. Validates 100% data fidelity across restored documents, comments, suggestions, and tasks.
+    * Integrated into CMake/CTest test suite as `disaster_recovery_drill_test`.
+* **Verification:**
+  ```bash
+  $ ./tests/disaster_recovery_drill.sh
+  ======================================================================
+  === CME Disaster Recovery Drill & Cold-Restore Verification (Step 7.2) ===
+  ======================================================================
+  [DRILL] Initializing pristine database 'cme_drill'...
+  --- [PHASE 1] Starting CME Server daemon on port 8089 ---
+  [DRILL] Health check passed: CME Server is live and healthy.
+  --- [PHASE 2] Populating Authoritative Documents and Review Subsystems ---
+  [DRILL] Created Document 1, Document 2, Comment, Task, Edit Suggestion.
+  --- [PHASE 3] Verifying Backup Barrier Write-Locking Protocol ---
+  [DRILL] Backup barrier engaged (HTTP 200).
+  [DRILL] Verified: Document writes strictly blocked during barrier with HTTP 503 Service Unavailable.
+  [DRILL] Backup barrier successfully released (HTTP 200).
+  --- [PHASE 4] Executing Automated Coordinated Backup via cme-backup.sh ---
+  [INFO] Barrier engaged successfully. Flushed dirty rooms to storage.
+  [INFO] Database dump completed.
+  [INFO] Storage archive completed.
+  [INFO] Barrier released. Normal server writes resumed.
+  [INFO] Archive generated: cme_backup_....tar
+  [DRILL] Archive cryptographic SHA-256 checksum verified.
+  --- [PHASE 5] Simulating Catastrophic Cold Disaster ---
+  [DRILL] Stopping live server daemon...
+  [DRILL] Primary storage completely annihilated.
+  --- [PHASE 6] Unpacking Bundle & Auditing SHA-256 Manifest ---
+  [DRILL] Database payload SHA-256 matches manifest.
+  [DRILL] Storage payload SHA-256 matches manifest.
+  --- [PHASE 7] Restoring Storage and Relational Database ---
+  [DRILL] Storage content tree unpacked.
+  [DRILL] Database state restored successfully.
+  --- [PHASE 8] Running cme-server --verify-integrity ---
+  ======================================================================
+  === Verification & Reconciliation Audit Summary                    ===
+  ======================================================================
+    Total Documents in DB         : 2
+    Total Files Audited on Disk   : 2
+    Missing Files on Storage      : 0
+    Unindexed Files Found on Disk : 0
+    Files Successfully Reconciled : 0
+    Orphaned Comments             : 0
+    Orphaned Suggestions          : 0
+    Orphaned Tasks                : 0
+  ----------------------------------------------------------------------
+    [SUCCESS] Offline integrity check passed with 0 discrepancies.
+  ======================================================================
+  --- [PHASE 9] Launching CME Server Daemon on Restored Environment ---
+  [DRILL] Status Criteria Verified: /api/v1/health reports status 'healthy'.
+  --- [PHASE 10] Validating Restored Document and Review Consistency ---
+  [DRILL] Verified: Document 1 intact ('Disaster Recovery Runbook').
+  [DRILL] Verified: Document 2 intact ('Database Architecture').
+  [DRILL] Verified: Review comments restored successfully (1 threads).
+  [DRILL] Verified: Review tasks restored successfully (1 tasks).
+  [DRILL] Verified: Review suggestions restored successfully (1 suggestions).
+  ======================================================================
+  === [PASSED] ALL DISASTER RECOVERY DRILL CRITERIA SATISFIED        ===
+  ======================================================================
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 15
+
+  $ npm run test:unit
+  ✓ tests/unit/text_anchoring.spec.ts (10)
+    10 passed (627ms)
+
+  $ npm run test:e2e
+  26 passed (7.8s)
+  ```
+  *Status criteria:* Storage and PostgreSQL database restore onto a clean system; `--verify-integrity` reports zero discrepancies; `/api/v1/health` reports status `healthy`.
+
+
 
