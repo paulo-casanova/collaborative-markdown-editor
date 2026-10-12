@@ -59,12 +59,9 @@ export const HealthPopover: React.FC = () => {
         className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded-full border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover transition-colors"
         title="Backend Health & Version Status"
       >
-        <span className="relative flex h-2 w-2">
-          {isHealthy && (
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-          )}
+        <span className="flex h-2 w-2 items-center justify-center">
           <span
-            className={`relative inline-flex rounded-full h-2 w-2 ${
+            className={`inline-flex rounded-full h-2 w-2 ${
               isHealthy ? 'bg-emerald-500' : isError ? 'bg-rose-500' : 'bg-amber-500'
             }`}
           ></span>
