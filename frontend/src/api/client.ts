@@ -43,7 +43,7 @@ export async function apiRequest<T>(
     throw new ApiError(
       response.status,
       errorJson.error || 'RequestFailed',
-      errorJson.message || `HTTP ${response.status}: ${response.statusText}`,
+      errorJson.message || errorJson.error || `HTTP ${response.status}: ${response.statusText}`,
       errorJson.timestamp
     );
   }
