@@ -1608,6 +1608,47 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
   *Status criteria:* Entire stack launches unattended, responds with HTTP 200 over HTTPS, and serves the collaborative frontend to client browsers.
 
+---
 
+### Dependency Architecture Update: In-Tree Fetch for `yaml-cpp` & `libpqxx`
+* **Status:** Complete (Commit: `master`)
+* **Context & Motivation:**
+  * Clean development workstations should not require preinstalling specialized C++ packages (`libpqxx-dev`, `libyaml-cpp-dev`) across varying distro package formats or suffering from C++ standard ABI mismatches.
+  * System-level dependencies are now restricted strictly to standard system libraries:
+    * `OpenSSL` (crypto and TLS support)
+    * `ZLIB` (deflate / gzip compression)
+    * `libpq` (PostgreSQL C client library, standard database client runtime)
+    * `libcrypt` (POSIX standard password hashing)
+  * C++ libraries are fetched and built directly in-tree via CMake `FetchContent`:
+    * `yaml-cpp` (v0.8.0, static target `yaml-cpp` with `SYSTEM` include isolation and `CMAKE_POLICY_VERSION_MINIMUM 3.5` compatibility).
+    * `libpqxx` (v7.10.7, static target `pqxx` with `SKIP_BUILD_TEST ON`, `SYSTEM` include isolation, linked against `PostgreSQL::PostgreSQL`).
+* **Deliverables:**
+  * Root `CMakeLists.txt`:
+    * Configured `set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)` to support CMake 4.x/3.30+ builds.
+    * Added `find_package(PostgreSQL REQUIRED)` alongside OpenSSL and ZLIB.
+    * Declared and invoked `FetchContent_MakeAvailable(yaml-cpp libpqxx)` before project compile warnings, ensuring warning isolation for fetched code.
+  * `backend/CMakeLists.txt`:
+    * Removed `pkg_check_modules` for `libpqxx`, `libpq`, and `yaml-cpp`.
+    * Linked `cme_core` directly against `pqxx`, `PostgreSQL::PostgreSQL`, and `yaml-cpp`.
+    * Cleaned include directories to rely entirely on CMake target interfaces and internal third-party vendored paths.
+  * `Dockerfile`:
+    * Removed `libpqxx-dev` and `libyaml-cpp-dev` from `backend-builder` stage; added `git` for `FetchContent`.
+    * Removed Ubuntu 24.04 source_location ABI workaround hack.
+    * Removed runtime package dependencies `libpqxx-7.8t64` and `libyaml-cpp0.8` since fetched libraries are linked statically into CME binaries.
+* **Verification:**
+  ```bash
+  $ cmake -B build && cmake --build build -j4
+  [100%] Built target test_app / cme-server / cme-migrate / cme-admin / tests
 
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 15 (11.57 sec)
 
+  $ npm run test:unit --prefix frontend
+  10 passed (614ms)
+
+  $ npm run test:e2e --prefix frontend
+  26 passed (7.5s)
+
+  $ docker compose build cme-server
+  ✔ Image cme-cme-server Built (48.9s)
+  ```

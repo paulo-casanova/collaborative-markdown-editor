@@ -6,6 +6,9 @@ project(CollaborativeMarkdownEditor
     LANGUAGES CXX C
 )
 
+# Allow subprojects (like yaml-cpp) with older cmake_minimum_required versions
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING "" FORCE)
+
 # Enforce strict C++23 standard
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -20,7 +23,37 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose build type" FORCE)
 endif()
 
-# Compiler warning flags
+# External Dependencies (System libraries)
+list(PREPEND CMAKE_PREFIX_PATH "$ENV{HOME}/.local/usr")
+find_package(OpenSSL REQUIRED)
+find_package(ZLIB REQUIRED)
+find_package(PostgreSQL REQUIRED)
+find_package(PkgConfig REQUIRED)
+
+# Fetched Dependencies (yaml-cpp, libpqxx)
+include(FetchContent)
+
+set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    yaml-cpp
+    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+    GIT_TAG 0.8.0
+    SYSTEM
+)
+
+set(SKIP_BUILD_TEST ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    libpqxx
+    GIT_REPOSITORY https://github.com/jtv/libpqxx.git
+    GIT_TAG 7.10.7
+    SYSTEM
+)
+
+FetchContent_MakeAvailable(yaml-cpp libpqxx)
+
+# Compiler warning flags for CME targets
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(
         -Wall
@@ -38,12 +71,6 @@ endif()
 # Enable Testing & CTest
 include(CTest)
 enable_testing()
-
-# External Dependencies
-list(PREPEND CMAKE_PREFIX_PATH "$ENV{HOME}/.local/usr")
-find_package(OpenSSL REQUIRED)
-find_package(ZLIB REQUIRED)
-find_package(PkgConfig REQUIRED)
 
 # Module subdirectories
 add_subdirectory(backend)

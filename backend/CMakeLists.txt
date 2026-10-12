@@ -2,11 +2,6 @@
 # CME Core Backend Library & Executables
 # ==============================================================================
 
-set(ENV{PKG_CONFIG_PATH} "$ENV{HOME}/.local/usr/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
-pkg_check_modules(PQXX REQUIRED IMPORTED_TARGET libpqxx)
-pkg_check_modules(PQ REQUIRED IMPORTED_TARGET libpq)
-pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
-
 find_library(CRYPT_LIB crypt REQUIRED)
 find_library(YRS_LIB yrs PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/yrs/lib" "$ENV{HOME}/.local/usr/lib" /usr/local/lib /usr/lib REQUIRED)
 
@@ -74,8 +69,6 @@ target_include_directories(cme_core
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/usockets/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann/include>
         $<INSTALL_INTERFACE:include>
-        /usr/local/include
-        "$ENV{HOME}/.local/usr/include"
 )
 
 target_compile_features(cme_core PUBLIC cxx_std_23)
@@ -90,9 +83,9 @@ target_compile_definitions(cme_core
 
 target_link_libraries(cme_core
     PUBLIC
-        PkgConfig::PQXX
-        PkgConfig::PQ
-        PkgConfig::YAML_CPP
+        pqxx
+        PostgreSQL::PostgreSQL
+        yaml-cpp
         uSockets
         OpenSSL::SSL
         OpenSSL::Crypto

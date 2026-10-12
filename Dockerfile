@@ -23,18 +23,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
+    git \
     pkg-config \
-    libpqxx-dev \
     libpq-dev \
-    libyaml-cpp-dev \
     libssl-dev \
     libcrypt-dev \
     zlib1g-dev \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-
-# Fix Ubuntu 24.04 libpqxx-dev C++23 source_location ABI mismatch with packaged libpqxx.so
-RUN sed -i 's/#  define pqxx_have_source_location 1/#  define pqxx_have_source_location 0/' /usr/include/pqxx/internal/cxx-features.hxx
 
 WORKDIR /app
 
@@ -56,8 +52,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libpq5 \
-    libpqxx-7.8t64 \
-    libyaml-cpp0.8 \
     libssl3 \
     libcrypt1 \
     curl \
