@@ -7,9 +7,29 @@ pkg_check_modules(PQXX REQUIRED IMPORTED_TARGET libpqxx)
 pkg_check_modules(PQ REQUIRED IMPORTED_TARGET libpq)
 pkg_check_modules(YAML_CPP REQUIRED IMPORTED_TARGET yaml-cpp)
 
-find_library(USOCKETS_LIB uSockets PATHS "$ENV{HOME}/.local/usr/lib" REQUIRED)
 find_library(CRYPT_LIB crypt REQUIRED)
-find_library(YRS_LIB yrs PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/yrs/lib" "$ENV{HOME}/.local/usr/lib" REQUIRED)
+find_library(YRS_LIB yrs PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/yrs/lib" "$ENV{HOME}/.local/usr/lib" /usr/local/lib /usr/lib REQUIRED)
+
+# uSockets Network Library (vendored C/C++ library)
+add_library(uSockets STATIC
+    third_party/usockets/src/bsd.c
+    third_party/usockets/src/context.c
+    third_party/usockets/src/loop.c
+    third_party/usockets/src/socket.c
+    third_party/usockets/src/udp.c
+    third_party/usockets/src/eventing/epoll_kqueue.c
+    third_party/usockets/src/crypto/openssl.c
+    third_party/usockets/src/crypto/sni_tree.cpp
+)
+target_include_directories(uSockets
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/usockets/src>
+)
+target_compile_definitions(uSockets PUBLIC LIBUS_USE_OPENSSL)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(uSockets PRIVATE -w)
+endif()
+target_link_libraries(uSockets PUBLIC OpenSSL::SSL OpenSSL::Crypto)
 
 # md4c Markdown Parser (vendored C library)
 add_library(md4c STATIC
@@ -51,7 +71,10 @@ target_include_directories(cme_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/yrs/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/usockets/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann/include>
         $<INSTALL_INTERFACE:include>
+        /usr/local/include
         "$ENV{HOME}/.local/usr/include"
 )
 
@@ -70,7 +93,7 @@ target_link_libraries(cme_core
         PkgConfig::PQXX
         PkgConfig::PQ
         PkgConfig::YAML_CPP
-        ${USOCKETS_LIB}
+        uSockets
         OpenSSL::SSL
         OpenSSL::Crypto
         ZLIB::ZLIB

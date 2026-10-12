@@ -1528,5 +1528,86 @@ This document tracks the incremental implementation of the Collaborative Markdow
   ```
   *Status criteria:* Storage and PostgreSQL database restore onto a clean system; `--verify-integrity` reports zero discrepancies; `/api/v1/health` reports status `healthy`.
 
+---
+
+### Step 7.3: Deployment Packaging & Production Topologies
+* **Status:** Complete
+* **Deliverables:**
+  * **Embedded UI Static & SPA Fallback Serving (`backend/src/server/server.cpp`):**
+    * Implemented static asset handler for `config_.ui.embedded && !config_.ui.dist_dir.empty()` on wildcard `/*` route.
+    * Added canonical path validation preventing path traversal attacks.
+    * Comprehensive MIME type mapping for `.html`, `.js`, `.css`, `.json`, `.svg`, `.png`, `.jpg`, `.woff2`, `.ttf`, etc.
+    * Client-side SPA routing fallback serving `${dist_dir}/index.html` with `no-cache` headers for dynamic routes (`/tasks`, `/trash`, etc.), while strictly returning 404 JSON for unmatched `/api/*` and `/ws/*` routes.
+    * Long-term caching headers (`public, max-age=31536000, immutable`) for content-hashed static assets.
+  * **Vendored uSockets & Header Self-Containment (`backend/CMakeLists.txt`, `backend/third_party/`):**
+    * Vendored `uSockets` C/C++ sources into `backend/third_party/usockets/src/` and defined `uSockets` static CMake target.
+    * Vendored `nlohmann/json` headers into `backend/third_party/nlohmann/`.
+    * Resolved cross-compiler LTO bytecode version mismatches and Debian/Ubuntu C++23 `libpqxx` ABI compatibility.
+  * **Multi-Stage Production `Dockerfile`:**
+    * Stage 1 (`frontend-builder`): `node:22-bookworm-slim` building React/Vite assets (`npm run build`).
+    * Stage 2 (`backend-builder`): `ubuntu:24.04` compiling `cme-server`, `cme-migrate`, and `cme-admin` with strict `-std=c++23`.
+    * Stage 3 (`runtime`): Minimal 54 MB base image with runtime libraries (`libpq5`, `libpqxx-7.8t64`, `libyaml-cpp0.8`, `libssl3`, `postgresql-client`), copied binaries, migrations, backup scripts, and automated entrypoint.
+  * **Container Startup Entrypoint (`deploy/entrypoint.sh`):**
+    * Automatically waits for PostgreSQL availability and applies database migrations (`cme-migrate`) on container startup before launching the server daemon.
+  * **Nginx Reverse-Proxy & TLS Configuration (`deploy/nginx/`):**
+    * Nginx configuration (`deploy/nginx/nginx.conf`) with HTTP-to-HTTPS redirect on port 80, TLS termination on port 443 with self-signed SSL certificate (`deploy/nginx/ssl/`).
+    * Full WebSocket connection upgrade mapping (`Upgrade: $http_upgrade`, `Connection: $connection_upgrade`) and 24-hour read/send timeouts on `/ws/`.
+  * **Production Docker Compose Stack (`docker-compose.yml`):**
+    * Multi-container topology orchestrating `postgres:16-alpine`, `cme-server` (built image), and `nginx:alpine`.
+    * Container healthchecks with dependencies (`depends_on: condition: service_healthy`) ensuring unattended startup.
+* **Verification:**
+  ```bash
+  $ docker compose up -d
+  [+] up 4/4
+   ✔ Network cme_cme-network     Created
+   ✔ Container cme-postgres-prod Healthy
+   ✔ Container cme-server-prod   Healthy
+   ✔ Container cme-nginx-prod    Started
+
+  $ sleep 5
+  $ curl -k -f https://localhost/api/v1/health
+  {
+    "active_collab_rooms": 0,
+    "backup_barrier_active": false,
+    "database": {
+      "latency_ms": 0.487586,
+      "status": "connected"
+    },
+    "persistence": {
+      "status": "running",
+      "total_evictions": 0,
+      "total_flushes": 0,
+      "total_snapshots": 0
+    },
+    "status": "healthy",
+    "storage": {
+      "free_bytes": 463104610304,
+      "status": "writable"
+    },
+    "uptime_seconds": 8,
+    "version": "0.1.0"
+  }
+
+  $ curl -k -s https://localhost/ | head -n 10
+  <!doctype html>
+  <html lang="en">
+    <head>
+      <meta charset="UTF-8" />
+      <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <title>Collaborative Markdown Editor (CME)</title>
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 15
+
+  $ npm run test:unit
+  10 passed (638ms)
+
+  $ npm run test:e2e
+  26 passed (7.9s)
+  ```
+  *Status criteria:* Entire stack launches unattended, responds with HTTP 200 over HTTPS, and serves the collaborative frontend to client browsers.
+
+
 
 

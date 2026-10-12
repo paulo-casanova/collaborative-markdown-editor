@@ -7,6 +7,7 @@
 #include <uWebSockets/App.h>
 #include <libusockets.h>
 #include <iostream>
+#include <fstream>
 #include <filesystem>
 #include <chrono>
 #include <cctype>
@@ -72,6 +73,29 @@ std::string url_decode(std::string_view in) {
         out.push_back(in[i]);
     }
     return out;
+}
+
+std::string_view get_mime_type(const std::filesystem::path& path) {
+    auto ext = path.extension().string();
+    if (ext == ".html" || ext == ".htm") return "text/html; charset=utf-8";
+    if (ext == ".js" || ext == ".mjs") return "application/javascript; charset=utf-8";
+    if (ext == ".css") return "text/css; charset=utf-8";
+    if (ext == ".json") return "application/json";
+    if (ext == ".png") return "image/png";
+    if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+    if (ext == ".gif") return "image/gif";
+    if (ext == ".webp") return "image/webp";
+    if (ext == ".svg") return "image/svg+xml";
+    if (ext == ".ico") return "image/x-icon";
+    if (ext == ".woff") return "font/woff";
+    if (ext == ".woff2") return "font/woff2";
+    if (ext == ".ttf") return "font/ttf";
+    if (ext == ".otf") return "font/otf";
+    if (ext == ".eot") return "application/vnd.ms-fontobject";
+    if (ext == ".wasm") return "application/wasm";
+    if (ext == ".map") return "application/json";
+    if (ext == ".txt") return "text/plain; charset=utf-8";
+    return "application/octet-stream";
 }
 
 } // namespace
@@ -2650,6 +2674,96 @@ Result<void> Server::start() {
             app.publish(data->topic, dep_msg, uWS::OpCode::BINARY);
         }
     });
+
+    // Embedded UI Static Asset & SPA Fallback Serving
+    if (config_.ui.embedded && !config_.ui.dist_dir.empty()) {
+        std::filesystem::path dist_root;
+        std::error_code ec;
+        if (std::filesystem::exists(config_.ui.dist_dir, ec)) {
+            dist_root = std::filesystem::canonical(config_.ui.dist_dir, ec);
+        } else {
+            dist_root = std::filesystem::absolute(config_.ui.dist_dir);
+        }
+
+        app.get("/*", [this, dist_root](auto *res, auto *req) {
+            std::string url(req->getUrl());
+
+            // Never serve frontend HTML for unmatched API or WebSocket routes
+            if (url.starts_with("/api/") || url.starts_with("/ws/")) {
+                send_json(res, "404 Not Found", {{"error", "Not found"}, {"code", "NOT_FOUND"}});
+                return;
+            }
+
+            std::string decoded = url_decode(url);
+            std::filesystem::path rel_path = decoded;
+            if (rel_path.is_absolute()) {
+                rel_path = rel_path.relative_path();
+            }
+
+            std::filesystem::path target_file;
+            std::error_code ec;
+
+            if (decoded.empty() || decoded == "/") {
+                target_file = dist_root / "index.html";
+            } else {
+                std::filesystem::path candidate = dist_root / rel_path;
+                if (std::filesystem::exists(candidate, ec) && !std::filesystem::is_directory(candidate, ec)) {
+                    target_file = candidate;
+                } else if (candidate.has_extension() && candidate.extension() != ".html") {
+                    // Explicit static asset requested but not found -> 404
+                    res->writeStatus("404 Not Found");
+                    write_cors_headers(res);
+                    res->end("Not Found");
+                    return;
+                } else {
+                    // SPA route fallback (e.g. /tasks, /trash, /doc/:id) -> serve index.html
+                    target_file = dist_root / "index.html";
+                }
+            }
+
+            // Path traversal prevention: verify canonical target resides within dist_root
+            auto canonical_target = std::filesystem::weakly_canonical(target_file, ec);
+            auto root_str = dist_root.lexically_normal().string();
+            auto target_str = canonical_target.lexically_normal().string();
+
+            if (target_str.rfind(root_str, 0) != 0 || !std::filesystem::exists(canonical_target, ec)) {
+                res->writeStatus("404 Not Found");
+                write_cors_headers(res);
+                res->end("Not Found");
+                return;
+            }
+
+            std::ifstream file(canonical_target, std::ios::binary);
+            if (!file) {
+                res->writeStatus("404 Not Found");
+                write_cors_headers(res);
+                res->end("Not Found");
+                return;
+            }
+
+            std::string body((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            std::string_view content_type = get_mime_type(canonical_target);
+
+            res->writeStatus("200 OK");
+            write_cors_headers(res);
+            res->writeHeader("Content-Type", content_type);
+            if (canonical_target.filename() == "index.html") {
+                res->writeHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+            } else {
+                res->writeHeader("Cache-Control", "public, max-age=31536000, immutable");
+            }
+            res->end(body);
+        });
+    } else {
+        app.get("/", [](auto *res, auto *req) {
+            (void)req;
+            send_json(res, "200 OK", {
+                {"name", "Collaborative Markdown Editor"},
+                {"version", CME_VERSION_STRING},
+                {"status", "running"}
+            });
+        });
+    }
 
     // Bind listener
     app.listen(config_.server.bind, config_.server.port, [this](auto *token) {
