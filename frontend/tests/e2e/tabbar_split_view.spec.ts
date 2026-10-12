@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND_URL } from './test_config';
 
 test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
   let adminToken = '';
@@ -13,7 +14,7 @@ test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
     docBTitle = `Doc Beta ${timestamp}`;
 
     // 1. Authenticate test_admin
-    const adminRes = await request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+    const adminRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'test_admin', password: 'password123' },
     });
     expect(adminRes.ok()).toBeTruthy();
@@ -21,7 +22,7 @@ test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
     adminToken = adminJson.token;
 
     // 2. Pre-seed Document A
-    const resA = await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    const resA = await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: `workspace/doc_a_${timestamp}.md`,
@@ -34,7 +35,7 @@ test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
     docAId = jsonA.id;
 
     // 3. Pre-seed Document B
-    const resB = await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    const resB = await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: `workspace/doc_b_${timestamp}.md`,

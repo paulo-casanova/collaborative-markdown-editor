@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND_URL } from './test_config';
 
 test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fanout', () => {
   let adminToken = '';
@@ -8,7 +9,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
 
   test.beforeAll(async ({ request }) => {
     // 1. Authenticate test_admin
-    const adminRes = await request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+    const adminRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'test_admin', password: 'password123' },
     });
     expect(adminRes.ok()).toBeTruthy();
@@ -16,7 +17,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
     adminToken = adminJson.token;
 
     // 2. Authenticate ws_tester
-    const testerRes = await request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+    const testerRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'ws_tester', password: 'password123' },
     });
     expect(testerRes.ok()).toBeTruthy();
@@ -25,7 +26,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
 
     // 3. Create a fresh test document
     const docPath = `tasks_e2e_${Date.now()}.md`;
-    const docRes = await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    const docRes = await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: docPath,
@@ -76,7 +77,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
 
     // Send external REST POST request to create a task (simulating external LLM / background webhook)
     const taskDesc = `Verify WebSocket 0x02 real-time fanout ${Date.now()}`;
-    const postTaskRes = await request.post(`http://127.0.0.1:8080/api/v1/documents/${testDocId}/tasks`, {
+    const postTaskRes = await request.post(`${BACKEND_URL}/api/v1/documents/${testDocId}/tasks`, {
       headers: {
         Authorization: `Bearer ${testerToken}`,
         'Content-Type': 'application/json',
@@ -98,7 +99,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
     await expect(taskCheckbox).not.toBeChecked();
 
     // Verify real-time fanout of TASK_TOGGLED via REST PATCH
-    const patchRes = await request.patch(`http://127.0.0.1:8080/api/v1/tasks/${createdTask.id}`, {
+    const patchRes = await request.patch(`${BACKEND_URL}/api/v1/tasks/${createdTask.id}`, {
       headers: {
         Authorization: `Bearer ${testerToken}`,
         'Content-Type': 'application/json',
@@ -123,13 +124,13 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
     const openDesc = `Dashboard Open Task ${Date.now()}`;
     const completedDesc = `Dashboard Completed Task ${Date.now()}`;
 
-    const r1 = await request.post(`http://127.0.0.1:8080/api/v1/documents/${testDocId}/tasks`, {
+    const r1 = await request.post(`${BACKEND_URL}/api/v1/documents/${testDocId}/tasks`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: { description: openDesc },
     });
     expect(r1.ok()).toBeTruthy();
 
-    const r2 = await request.post(`http://127.0.0.1:8080/api/v1/documents/${testDocId}/tasks`, {
+    const r2 = await request.post(`${BACKEND_URL}/api/v1/documents/${testDocId}/tasks`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: { description: completedDesc },
     });
@@ -137,7 +138,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
     const task2 = await r2.json();
 
     // Mark task2 complete
-    const r2Patch = await request.patch(`http://127.0.0.1:8080/api/v1/tasks/${task2.id}`, {
+    const r2Patch = await request.patch(`${BACKEND_URL}/api/v1/tasks/${task2.id}`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: { is_completed: true },
     });
@@ -210,7 +211,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
   }) => {
     // Create a comment with inline markdown checklist
     const commentContent = "Please review the following checklist:\n- [ ] Add auth unit tests\n- [x] Configure DB connection pool";
-    const commentRes = await request.post(`http://127.0.0.1:8080/api/v1/documents/${testDocId}/comments`, {
+    const commentRes = await request.post(`${BACKEND_URL}/api/v1/documents/${testDocId}/comments`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         content: commentContent,
@@ -228,7 +229,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
 
     // Attach a linked task to this comment
     const linkedTaskDesc = `Resolve blocking PR for comment ${Date.now()}`;
-    const linkedTaskRes = await request.post(`http://127.0.0.1:8080/api/v1/documents/${testDocId}/tasks`, {
+    const linkedTaskRes = await request.post(`${BACKEND_URL}/api/v1/documents/${testDocId}/tasks`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         description: linkedTaskDesc,

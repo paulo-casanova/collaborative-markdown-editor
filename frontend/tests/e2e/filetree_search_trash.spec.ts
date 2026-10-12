@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND_URL } from './test_config';
 
 test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
   let adminToken = '';
@@ -9,7 +10,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     uniqueId = `${Date.now()}`;
 
     // 1. Authenticate test_admin
-    const adminRes = await request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+    const adminRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'test_admin', password: 'password123' },
     });
     expect(adminRes.ok()).toBeTruthy();
@@ -17,7 +18,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     adminToken = adminJson.token;
 
     // 2. Pre-seed documents: a normal markdown file and a bundle
-    const createRes = await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    const createRes = await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: `guides/tutorial_${uniqueId}.md`,
@@ -29,7 +30,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     const createJson = await createRes.json();
     seededDocId = createJson.id;
 
-    await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: `specs/architecture_${uniqueId}.bundle`,
@@ -120,7 +121,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
 
   test('lists recently modified documents in RecentDocuments drawer', async ({ page, request }) => {
     // Touch seeded document right before navigation to ensure freshest updated_at
-    await request.put(`http://127.0.0.1:8080/api/v1/documents/${seededDocId}`, {
+    await request.put(`${BACKEND_URL}/api/v1/documents/${seededDocId}`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: { title: `Tutorial Guide ${uniqueId}` },
     });
@@ -140,7 +141,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
   test('soft-deletes document to Trash, displays in /trash, and restores it', async ({ page, request }) => {
     // 1. Create a document specifically for trash testing
     const trashTestDocPath = `trash_candidate_${uniqueId}.md`;
-    const docRes = await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    const docRes = await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: trashTestDocPath,
@@ -153,7 +154,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     const trashDocId = docJson.id;
 
     // 2. Soft-delete the document via API
-    const delRes = await request.delete(`http://127.0.0.1:8080/api/v1/documents/${trashDocId}`, {
+    const delRes = await request.delete(`${BACKEND_URL}/api/v1/documents/${trashDocId}`, {
       headers: { Authorization: `Bearer ${adminToken}` },
     });
     expect(delRes.ok()).toBeTruthy();

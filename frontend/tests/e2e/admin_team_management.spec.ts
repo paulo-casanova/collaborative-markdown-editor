@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND_URL } from './test_config';
 
 test.describe('Admin Console: Team Management, Member Assignment & DAG Hierarchies', () => {
   let adminToken = '';
 
   test.beforeAll(async ({ request }) => {
-    const adminRes = await request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+    const adminRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'test_admin', password: 'password123' },
     });
     expect(adminRes.ok()).toBeTruthy();

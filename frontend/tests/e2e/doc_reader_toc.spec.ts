@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND_URL } from './test_config';
 
 test.describe('Table of Contents & Documentation Reader View (Step 5.3)', () => {
   let adminToken = '';
@@ -39,7 +40,7 @@ Fine-tuning PostgreSQL and collaborative WebSocket parameters.
 
   test.beforeAll(async ({ request }) => {
     // 1. Authenticate test_admin
-    const adminRes = await request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+    const adminRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'test_admin', password: 'password123' },
     });
     expect(adminRes.ok()).toBeTruthy();
@@ -47,7 +48,7 @@ Fine-tuning PostgreSQL and collaborative WebSocket parameters.
     adminToken = adminJson.token;
 
     // 2. Pre-seed guide document at guides/intro_<ts>.md
-    const docRes = await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    const docRes = await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: docPath,

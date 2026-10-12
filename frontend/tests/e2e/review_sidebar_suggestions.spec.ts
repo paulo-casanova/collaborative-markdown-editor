@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { BACKEND_URL } from './test_config';
 
 test.describe('Phase 6, Step 6.2: Threaded Comments & Inline Suggestions UI', () => {
   let adminToken = '';
@@ -7,7 +8,7 @@ test.describe('Phase 6, Step 6.2: Threaded Comments & Inline Suggestions UI', ()
 
   test.beforeAll(async ({ request }) => {
     // 1. Authenticate test_admin
-    const adminRes = await request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+    const adminRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'test_admin', password: 'password123' },
     });
     expect(adminRes.ok()).toBeTruthy();
@@ -15,7 +16,7 @@ test.describe('Phase 6, Step 6.2: Threaded Comments & Inline Suggestions UI', ()
     adminToken = adminJson.token;
 
     // 2. Authenticate ws_tester
-    const testerRes = await request.post('http://127.0.0.1:8080/api/v1/auth/login', {
+    const testerRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'ws_tester', password: 'password123' },
     });
     expect(testerRes.ok()).toBeTruthy();
@@ -24,7 +25,7 @@ test.describe('Phase 6, Step 6.2: Threaded Comments & Inline Suggestions UI', ()
 
     // 3. Create a fresh test document for review discussions
     const docPath = `review_e2e_${Date.now()}.md`;
-    const docRes = await request.post('http://127.0.0.1:8080/api/v1/documents', {
+    const docRes = await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {
         path: docPath,
