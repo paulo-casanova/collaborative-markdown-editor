@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   BookOpen,
@@ -30,9 +30,11 @@ type WidthMode = 'focused' | 'standard' | 'fluid';
 
 export const ReaderPage: React.FC = () => {
   const params = useParams();
+  const [searchParams] = useSearchParams();
   const wildcard = params['*'];
   const idParam = params.id;
-  const rawTarget = wildcard || idParam || '';
+  const pathParam = searchParams.get('path');
+  const rawTarget = pathParam || wildcard || (idParam !== 'by-path' ? idParam : '') || '';
 
   const { setBreadcrumbs } = useUIStore();
   const [showReviews, setShowReviews] = useState(false);

@@ -79,7 +79,7 @@ export const TabBar: React.FC = () => {
 
     // If closing active tab, navigate to the newly activated tab if exists
     if (activeTabId === tabId) {
-      const remaining = tabs.filter((t) => t.id !== tabId);
+      const remaining = tabs.filter((t) => t.id && t.id !== tabId && t.id !== 'by-path');
       if (remaining.length > 0) {
         const nextTab = remaining[0];
         navigate(`/documents/${nextTab.id}`);
@@ -128,7 +128,8 @@ export const TabBar: React.FC = () => {
     setDragOverIndex(null);
   };
 
-  if (tabs.length === 0) return null;
+  const displayTabs = tabs.filter((t) => t.id && t.id !== 'by-path');
+  if (displayTabs.length === 0) return null;
 
   return (
     <div
@@ -137,7 +138,7 @@ export const TabBar: React.FC = () => {
     >
       {/* Scrollable Tab Strip */}
       <div className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1 h-full py-1 pr-2">
-        {tabs.map((tab, idx) => {
+        {displayTabs.map((tab, idx) => {
           const isActive = tab.id === activeTabId;
           const isSecondary = splitMode !== 'none' && tab.id === secondaryTabId;
           const isDraggingOver = dragOverIndex === idx;

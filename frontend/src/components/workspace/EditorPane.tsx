@@ -47,7 +47,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   }, []);
 
   const provider = useMemo(() => {
-    if (!documentId) return null;
+    if (!documentId || documentId === 'by-path') return null;
     return new CmeCollabProvider(documentId);
   }, [documentId]);
 
@@ -62,7 +62,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   } = useReviewStore();
 
   useEffect(() => {
-    if (documentId) {
+    if (documentId && documentId !== 'by-path') {
       initDocument(documentId);
     }
   }, [documentId, initDocument]);
@@ -80,8 +80,13 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     error,
   } = useQuery({
     queryKey: ['document', documentId],
-    queryFn: () => (documentId ? fetchDocument(documentId) : Promise.reject('No ID')),
-    enabled: !!documentId,
+    queryFn: () => {
+      if (!documentId || documentId === 'by-path') {
+        return Promise.reject(new Error('Invalid document identifier'));
+      }
+      return fetchDocument(documentId);
+    },
+    enabled: Boolean(documentId && documentId !== 'by-path'),
   });
 
   // Keep workspace tabs updated with document metadata

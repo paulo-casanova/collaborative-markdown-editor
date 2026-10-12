@@ -728,6 +728,52 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
         return std::unexpected(list_res.error());
     }
 
+    // Auto-reconcile unindexed documents found on disk
+    std::vector<std::string> unindexed_paths;
+    for (const auto& node : list_res.value()) {
+        if (!node.is_directory || node.is_bundle) {
+            if (node.relative_path.find("/images/") == std::string::npos &&
+                node.name != "images" &&
+                !indexed_docs.contains(node.relative_path)) {
+                unindexed_paths.push_back(node.relative_path);
+            }
+        }
+    }
+
+    if (!unindexed_paths.empty()) {
+        try {
+            pqxx::work wtx(conn_res->get());
+            for (const auto& path : unindexed_paths) {
+                bool is_bundle = storage_->is_bundle(path).value_or(false);
+                std::string content_file = is_bundle ? (path + "/index.md") : path;
+                auto content_res = storage_->read_file(content_file);
+                std::string disk_content = content_res.has_value() ? content_res.value() : "";
+                std::string title = derive_title(disk_content, path);
+
+                auto ins_rows = wtx.exec_params(
+                    "INSERT INTO documents (fs_path, title, owner_user_id) "
+                    "VALUES ($1, $2, NULLIF($3, '')::uuid) "
+                    "ON CONFLICT (fs_path) DO UPDATE SET updated_at = NOW() "
+                    "RETURNING id, TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+                    path,
+                    title,
+                    user.user_id
+                );
+                if (!ins_rows.empty()) {
+                    indexed_docs[path] = DocMeta{
+                        .id = ins_rows[0][0].as<std::string>(),
+                        .title = title,
+                        .owner_id = user.user_id,
+                        .updated_at = ins_rows[0][1].as<std::string>()
+                    };
+                }
+            }
+            wtx.commit();
+        } catch (const std::exception& e) {
+            std::cerr << "[WARN] Auto-reconciliation in get_workspace_tree failed: " << e.what() << "\n";
+        }
+    }
+
     nlohmann::json items = nlohmann::json::array();
     for (const auto& node : list_res.value()) {
         // Skip internal bundle assets and images subfolders in tree listing

@@ -181,4 +181,30 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     // 6. Verify restored: either redirected to editor or row disappears from trash table
     await expect(row).not.toBeVisible({ timeout: 10000 });
   });
+
+  test('resolves /documents/by-path route cleanly, updates tab and URL to UUID', async ({ page }) => {
+    // Navigate via /documents/by-path?path=...
+    await page.goto(`/documents/by-path?path=guides/tutorial_${uniqueId}.md`);
+
+    // Verify it automatically redirects to /documents/:id (URL contains UUID)
+    await page.waitForURL(new RegExp(`/documents/${seededDocId}`));
+
+    // Verify editor pane is visible and displays document title
+    const primaryPane = page.locator('[data-testid="primary-editor-pane"]');
+    await expect(primaryPane).toBeVisible();
+    await expect(primaryPane.getByText(`Tutorial Guide ${uniqueId}`)).toBeVisible();
+
+    // Verify tab is registered
+    const tab = page.locator(`[data-testid="workspace-tab-${seededDocId}"]`);
+    await expect(tab).toBeVisible();
+  });
+
+  test('handles missing path parameter on /documents/by-path gracefully', async ({ page }) => {
+    await page.goto('/documents/by-path');
+
+    // Verify error card displays required path message cleanly
+    await expect(page.getByText('Document Not Found')).toBeVisible();
+    await expect(page.getByText("Query parameter 'path' is required")).toBeVisible();
+  });
 });
+
