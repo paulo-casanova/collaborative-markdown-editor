@@ -186,6 +186,11 @@ Result<DocumentRecord> DocumentService::get_document_by_id(
         return std::unexpected(ErrorCode::DatabaseError);
     }
 
+    if (!is_valid_uuid(doc_id)) {
+        // If not a canonical UUID, fallback to resolution by filesystem path
+        return get_document_by_path(doc_id, user);
+    }
+
     auto conn_res = db_pool_->acquire();
     if (!conn_res.has_value()) {
         return std::unexpected(conn_res.error());

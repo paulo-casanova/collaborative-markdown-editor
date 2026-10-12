@@ -37,16 +37,29 @@ Result<db::AccessLevel> ReviewService::check_doc_access(
     }
 
     std::string fs_path;
+    std::string real_doc_id = document_id;
     try {
         pqxx::work tx(conn_res->get());
-        auto rows = tx.exec_params(
-            "SELECT fs_path FROM documents WHERE id = $1::uuid;",
-            document_id
-        );
-        if (rows.empty()) {
-            return std::unexpected(ErrorCode::NotFound);
+        if (is_valid_uuid(document_id)) {
+            auto rows = tx.exec_params(
+                "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+                document_id
+            );
+            if (rows.empty()) {
+                return std::unexpected(ErrorCode::NotFound);
+            }
+            fs_path = rows[0][0].as<std::string>();
+        } else {
+            auto rows = tx.exec_params(
+                "SELECT id, fs_path FROM documents WHERE fs_path = $1;",
+                document_id
+            );
+            if (rows.empty()) {
+                return std::unexpected(ErrorCode::NotFound);
+            }
+            real_doc_id = rows[0][0].as<std::string>();
+            fs_path = rows[0][1].as<std::string>();
         }
-        fs_path = rows[0][0].as<std::string>();
         if (out_fs_path) {
             *out_fs_path = fs_path;
         }
@@ -62,7 +75,7 @@ Result<db::AccessLevel> ReviewService::check_doc_access(
     return db::PermissionEngine::check_permission(
         conn_res->get(),
         user.user_id,
-        document_id,
+        real_doc_id,
         fs_path
     );
 }

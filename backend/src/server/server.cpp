@@ -2406,6 +2406,15 @@ Result<void> Server::start() {
         .maxLifetime = 0,
         .upgrade = [this](auto *res, auto *req, auto *context) {
             std::string doc_id = url_decode(req->getParameter(0));
+            if (doc_id.empty() || doc_id == "by-path") {
+                res->writeStatus("404 Not Found");
+                res->writeHeader("Content-Type", "application/json");
+                res->end(nlohmann::json{
+                    {"error", "NotFound"},
+                    {"message", "Invalid document ID"}
+                }.dump());
+                return;
+            }
             std::string sec_key = std::string(req->getHeader("sec-websocket-key"));
             std::string sec_proto = std::string(req->getHeader("sec-websocket-protocol"));
             std::string sec_ext = std::string(req->getHeader("sec-websocket-extensions"));

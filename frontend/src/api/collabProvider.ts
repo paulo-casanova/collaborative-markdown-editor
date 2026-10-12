@@ -25,6 +25,7 @@ export class CmeCollabProvider {
   public ydoc: Y.Doc;
   public awareness: Awareness;
   public status: CollabConnectionStatus = 'disconnected';
+  public documentId: string;
 
   private ws: WebSocket | null = null;
   private url: string;
@@ -37,6 +38,7 @@ export class CmeCollabProvider {
   private reviewEventListeners = new Set<ReviewEventListener>();
 
   constructor(documentId: string, ydoc?: Y.Doc, token?: string | null, customUrl?: string) {
+    this.documentId = documentId;
     this.ydoc = ydoc || new Y.Doc();
     this.awareness = new Awareness(this.ydoc);
     this.token = token || (typeof localStorage !== 'undefined' ? localStorage.getItem('cme_auth_token') : null);
@@ -111,6 +113,10 @@ export class CmeCollabProvider {
 
   private establishConnection() {
     if (!this.shouldConnect) return;
+    if (!this.documentId || this.documentId === 'by-path') {
+      this.setStatus('disconnected');
+      return;
+    }
     this.setStatus('connecting');
 
     // Build URL with token

@@ -52,4 +52,24 @@ enum class ErrorCode : uint32_t {
 template <typename T>
 using Result = std::expected<T, ErrorCode>;
 
+/**
+ * @brief Validates whether a given string is a valid standard 36-character UUIDv4 (8-4-4-4-12 hex).
+ * @param str The string view to validate.
+ * @return True if strictly formatted as a valid canonical UUID, false otherwise.
+ */
+[[nodiscard]] constexpr bool is_valid_uuid(std::string_view str) noexcept {
+    if (str.size() != 36) return false;
+    for (size_t i = 0; i < 36; ++i) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (str[i] != '-') return false;
+        } else {
+            char c = str[i];
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 } // namespace cme

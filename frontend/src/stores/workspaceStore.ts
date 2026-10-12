@@ -47,6 +47,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       splitRatio: 0.5,
 
       openTab: (newTab, activate = true) => {
+        if (!newTab.id || newTab.id === 'by-path') return;
         const { tabs, activeTabId, splitMode, secondaryTabId } = get();
         const existingIndex = tabs.findIndex((t) => t.id === newTab.id);
 
@@ -156,6 +157,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       },
 
       setActiveTabId: (tabId) => {
+        if (!tabId || tabId === 'by-path') return;
         set({ activeTabId: tabId });
       },
 
@@ -233,12 +235,23 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     {
       name: 'cme_workspace_state',
       partialize: (state) => ({
-        tabs: state.tabs,
-        activeTabId: state.activeTabId,
+        tabs: (state.tabs || []).filter((t) => t.id && t.id !== 'by-path'),
+        activeTabId: state.activeTabId === 'by-path' ? null : state.activeTabId,
         splitMode: state.splitMode,
-        secondaryTabId: state.secondaryTabId,
+        secondaryTabId: state.secondaryTabId === 'by-path' ? null : state.secondaryTabId,
         splitRatio: state.splitRatio,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (state) {
+          state.tabs = (state.tabs || []).filter((t) => t.id && t.id !== 'by-path');
+          if (state.activeTabId === 'by-path') {
+            state.activeTabId = state.tabs.length > 0 ? state.tabs[0].id : null;
+          }
+          if (state.secondaryTabId === 'by-path') {
+            state.secondaryTabId = null;
+          }
+        }
+      },
     }
   )
 );

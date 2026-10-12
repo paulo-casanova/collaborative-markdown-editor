@@ -73,6 +73,10 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   pendingSuggestionSelection: null,
 
   initDocument: async (documentId: string) => {
+    if (!documentId || documentId === 'by-path') {
+      set({ documentId: null, comments: [], suggestions: [], tasks: [], isLoading: false });
+      return;
+    }
     set({ documentId, isLoading: true });
     try {
       const [comments, suggestions, tasks] = await Promise.all([
