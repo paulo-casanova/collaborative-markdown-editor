@@ -26,15 +26,33 @@ std::optional<std::string> resolve_team_id(pqxx::transaction_base& tx, const std
 }
 
 UserRecord map_user_row(const pqxx::row& row) {
-    return UserRecord{
+    UserRecord u{
         .id = row[0].as<std::string>(),
         .username = row[1].as<std::string>(),
         .display_name = row[2].as<std::string>(),
         .avatar_color = row[3].as<std::string>(),
         .is_system_admin = row[4].as<bool>(),
         .created_at = row[5].as<std::string>(),
-        .updated_at = row[6].as<std::string>()
+        .updated_at = row[6].as<std::string>(),
+        .teams = {}
     };
+    if (row.size() >= 8 && !row[7].is_null()) {
+        try {
+            auto j = nlohmann::json::parse(row[7].as<std::string>());
+            if (j.is_array()) {
+                for (const auto& item : j) {
+                    u.teams.push_back(UserTeamMembership{
+                        .id = item.value("id", ""),
+                        .name = item.value("name", ""),
+                        .role = item.value("role", "member")
+                    });
+                }
+            }
+        } catch (...) {
+            // Ignore parse errors
+        }
+    }
+    return u;
 }
 
 TeamRecord map_team_row(const pqxx::row& row) {
@@ -63,8 +81,19 @@ Result<std::vector<UserRecord>> UserService::list_users() {
     try {
         pqxx::read_transaction tx(conn_res->get());
         auto rows = tx.exec(
-            "SELECT id::text, username, display_name, avatar_color, is_system_admin, "
-            "created_at::text, updated_at::text FROM users ORDER BY username ASC;"
+            "SELECT u.id::text, u.username, u.display_name, u.avatar_color, u.is_system_admin, "
+            "u.created_at::text, u.updated_at::text, "
+            "COALESCE("
+            "    json_agg("
+            "        json_build_object('id', t.id::text, 'name', t.name, 'role', tm.role)"
+            "    ) FILTER (WHERE t.id IS NOT NULL),"
+            "    '[]'::json"
+            ")::text AS teams "
+            "FROM users u "
+            "LEFT JOIN team_members tm ON u.id = tm.user_id "
+            "LEFT JOIN teams t ON tm.team_id = t.id "
+            "GROUP BY u.id, u.username, u.display_name, u.avatar_color, u.is_system_admin, u.created_at, u.updated_at "
+            "ORDER BY u.username ASC;"
         );
 
         std::vector<UserRecord> users;
@@ -87,8 +116,20 @@ Result<UserRecord> UserService::get_user_by_id(const std::string& user_id_or_use
     try {
         pqxx::read_transaction tx(conn_res->get());
         auto rows = tx.exec_params(
-            "SELECT id::text, username, display_name, avatar_color, is_system_admin, "
-            "created_at::text, updated_at::text FROM users WHERE id::text = $1 OR username = $1 LIMIT 1;",
+            "SELECT u.id::text, u.username, u.display_name, u.avatar_color, u.is_system_admin, "
+            "u.created_at::text, u.updated_at::text, "
+            "COALESCE("
+            "    json_agg("
+            "        json_build_object('id', t.id::text, 'name', t.name, 'role', tm.role)"
+            "    ) FILTER (WHERE t.id IS NOT NULL),"
+            "    '[]'::json"
+            ")::text AS teams "
+            "FROM users u "
+            "LEFT JOIN team_members tm ON u.id = tm.user_id "
+            "LEFT JOIN teams t ON tm.team_id = t.id "
+            "WHERE u.id::text = $1 OR u.username = $1 "
+            "GROUP BY u.id, u.username, u.display_name, u.avatar_color, u.is_system_admin, u.created_at, u.updated_at "
+            "LIMIT 1;",
             user_id_or_username
         );
         if (rows.empty()) {

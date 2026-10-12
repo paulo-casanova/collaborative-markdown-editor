@@ -16,6 +16,24 @@
 namespace cme::admin {
 
 /**
+ * @struct UserTeamMembership
+ * @brief Association of a user to a team with their assigned role.
+ */
+struct UserTeamMembership {
+    std::string id;
+    std::string name;
+    std::string role{"member"}; // "member" or "lead"
+
+    [[nodiscard]] nlohmann::json to_json() const {
+        return {
+            {"id", id},
+            {"name", name},
+            {"role", role}
+        };
+    }
+};
+
+/**
  * @struct UserRecord
  * @brief Persistent user entity representation.
  */
@@ -27,8 +45,13 @@ struct UserRecord {
     bool is_system_admin{false};
     std::string created_at;
     std::string updated_at;
+    std::vector<UserTeamMembership> teams{};
 
     [[nodiscard]] nlohmann::json to_json() const {
+        nlohmann::json teams_arr = nlohmann::json::array();
+        for (const auto& t : teams) {
+            teams_arr.push_back(t.to_json());
+        }
         return {
             {"id", id},
             {"user_id", id},
@@ -38,7 +61,8 @@ struct UserRecord {
             {"is_admin", is_system_admin},
             {"is_system_admin", is_system_admin},
             {"created_at", created_at},
-            {"updated_at", updated_at}
+            {"updated_at", updated_at},
+            {"teams", teams_arr}
         };
     }
 };

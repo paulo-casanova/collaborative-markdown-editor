@@ -128,18 +128,39 @@ test.describe('Admin Console: Team Management, Member Assignment & DAG Hierarchi
     await modal.getByRole('button', { name: 'Save Changes' }).click();
     await expect(modal.getByText('Team details updated successfully!')).toBeVisible();
 
-    // 9. Remove Bob from Alpha Core Devs
+    // Close team manager modal to inspect User Directory
+    await modal.locator('button:has(svg.lucide-x)').first().click();
+
+    // 9. Inspect User Directory tab to verify teams are displayed for users
+    await page.getByRole('button', { name: 'User Directory' }).click();
+    const bobRow = page.locator('div.divide-y > div').filter({ hasText: '@bob_auth_test' });
+    await expect(bobRow).toBeVisible();
+    // Verify Bob displays the assigned team badge
+    await expect(bobRow.getByText(alphaTeamName)).toBeVisible();
+
+    // Verify search filter in User Directory by team name
+    const userSearchInput = page.getByPlaceholder('Filter users by username or display name...');
+    await userSearchInput.fill(alphaTeamName);
+    await expect(bobRow).toBeVisible();
+
+    // Clear search and click team pill from Bob's row to navigate back to team manager
+    await userSearchInput.fill('');
+    await bobRow.getByText(alphaTeamName).click();
+    await expect(modal).toBeVisible();
+    await expect(modal.getByText(alphaTeamName)).toBeVisible();
+
+    // 10. Remove Bob from Alpha Core Devs
     await modal.getByRole('button', { name: 'Members' }).click();
     const removeMemberBtn = modal.locator('button[title="Remove member"]');
     await removeMemberBtn.click();
     await expect(modal.getByText('@bob_auth_test')).not.toBeVisible();
 
-    // 10. Delete Alpha Core Devs team
+    // 11. Delete Alpha Core Devs team
     await modal.getByRole('button', { name: 'Details & Settings' }).click();
     await modal.getByRole('button', { name: 'Delete Team' }).click();
     await expect(page.locator('div.divide-y > div').filter({ hasText: alphaTeamName })).not.toBeVisible();
 
-    // 11. Delete Architecture Council team
+    // 12. Delete Architecture Council team
     await archRow.getByRole('button', { name: 'Manage Team' }).click();
     await modal.getByRole('button', { name: 'Details & Settings' }).click();
     await modal.getByRole('button', { name: 'Delete Team' }).click();

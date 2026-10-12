@@ -1,3 +1,9 @@
+export interface AdminUserTeam {
+  id: string;
+  name: string;
+  role: 'member' | 'lead';
+}
+
 export interface AdminUser {
   id: string;
   user_id?: string;
@@ -8,6 +14,7 @@ export interface AdminUser {
   is_system_admin: boolean;
   created_at?: string;
   updated_at?: string;
+  teams?: AdminUserTeam[];
 }
 
 export interface AdminTeam {

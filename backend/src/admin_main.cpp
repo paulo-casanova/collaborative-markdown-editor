@@ -117,13 +117,24 @@ int main(int argc, char* argv[]) {
                       << std::setw(20) << "USERNAME"
                       << std::setw(25) << "DISPLAY NAME"
                       << std::setw(8) << "ADMIN"
+                      << std::setw(30) << "TEAMS"
                       << "\n";
-            std::cout << std::string(91, '-') << "\n";
+            std::cout << std::string(121, '-') << "\n";
             for (const auto& u : *res) {
+                std::string teams_str;
+                for (size_t i = 0; i < u.teams.size(); ++i) {
+                    if (i > 0) teams_str += ", ";
+                    teams_str += u.teams[i].name;
+                    if (u.teams[i].role == "lead") {
+                        teams_str += " (lead)";
+                    }
+                }
+                if (teams_str.empty()) teams_str = "-";
                 std::cout << std::left << std::setw(38) << u.id
                           << std::setw(20) << u.username
                           << std::setw(25) << u.display_name
                           << std::setw(8) << (u.is_system_admin ? "YES" : "NO")
+                          << std::setw(30) << teams_str
                           << "\n";
             }
             return 0;

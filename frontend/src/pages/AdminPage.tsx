@@ -156,6 +156,7 @@ export const AdminPage: React.FC = () => {
     mutationFn: (teamId: string) => deleteAdminTeam(teamId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-teams'] });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       setSelectedTeam(null);
     },
   });
@@ -168,6 +169,7 @@ export const AdminPage: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-team-members', selectedTeam?.id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       setSelectedUserId('');
       setMemberError(null);
     },
@@ -184,6 +186,7 @@ export const AdminPage: React.FC = () => {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-team-members', selectedTeam?.id] });
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] });
       setMemberError(null);
     },
     onError: (err: any) => {
@@ -232,7 +235,8 @@ export const AdminPage: React.FC = () => {
   const filteredUsers = users.filter(
     (u) =>
       u.username.toLowerCase().includes(userSearch.toLowerCase()) ||
-      u.display_name.toLowerCase().includes(userSearch.toLowerCase())
+      u.display_name.toLowerCase().includes(userSearch.toLowerCase()) ||
+      (u.teams && u.teams.some((t) => t.name.toLowerCase().includes(userSearch.toLowerCase())))
   );
 
   // Available users to add to selected team (not already members)
@@ -452,10 +456,13 @@ export const AdminPage: React.FC = () => {
             ) : (
               <div className="divide-y divide-cme-border-base">
                 {filteredUsers.map((u) => (
-                  <div key={u.id} className="p-3.5 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                  <div
+                    key={u.id}
+                    className="p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3 hover:bg-cme-bg-hover/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 min-w-[200px]">
                       <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs shadow-sm"
+                        className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs shadow-sm shrink-0"
                         style={{ backgroundColor: u.avatar_color || '#3b82f6' }}
                       >
                         {(u.display_name || u.username)[0].toUpperCase()}
@@ -467,7 +474,46 @@ export const AdminPage: React.FC = () => {
                         <div className="text-[11px] text-cme-text-muted font-mono">@{u.username}</div>
                       </div>
                     </div>
-                    <div>
+
+                    {/* Assigned Teams */}
+                    <div className="flex-1 md:px-4">
+                      {u.teams && u.teams.length > 0 ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {u.teams.map((t) => (
+                            <button
+                              key={t.id}
+                              type="button"
+                              onClick={() => {
+                                const teamObj = teams.find((tm) => tm.id === t.id);
+                                if (teamObj) {
+                                  setSelectedTeam(teamObj);
+                                  setActiveTab('teams');
+                                  setTeamManagerTab('members');
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-cme-bg-subtle hover:bg-cme-bg-surface text-cme-text-base border border-cme-border-base hover:border-cme-primary/50 transition-colors text-[11px] group cursor-pointer"
+                              title={`Click to view team "${t.name}"`}
+                            >
+                              <GitFork className="w-3 h-3 text-cme-primary shrink-0" />
+                              <span className="font-medium group-hover:text-cme-primary">{t.name}</span>
+                              {t.role === 'lead' ? (
+                                <span className="text-[9px] px-1 py-0.2 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 font-semibold border border-purple-500/20">
+                                  Lead
+                                </span>
+                              ) : (
+                                <span className="text-[9px] text-cme-text-muted">Member</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-cme-text-subtle italic">
+                          No teams assigned
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="self-start md:self-auto shrink-0">
                       {u.is_system_admin ? (
                         <Badge variant="primary" size="sm">
                           Admin
