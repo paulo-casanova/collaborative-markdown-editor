@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { Editor } from '@tiptap/react';
 import {
   Bold,
   Italic,
@@ -28,7 +27,7 @@ import { createDualAnchor } from '../../review/textAnchoring';
 import { CmeCollabProvider } from '../../api/collabProvider';
 
 interface EditorToolbarProps {
-  editor: Editor | null;
+  editor: any;
   provider?: CmeCollabProvider | null;
 }
 

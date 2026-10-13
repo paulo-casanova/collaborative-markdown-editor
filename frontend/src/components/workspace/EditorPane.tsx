@@ -22,7 +22,6 @@ import { CmeCollabProvider, CollabConnectionStatus, ReviewEventPayload } from '.
 import { DocumentOutline } from '../navigation/DocumentOutline';
 import { ReviewSidebar } from '../review/ReviewSidebar';
 import { reconcileAnchor } from '../../review/textAnchoring';
-import { parseMarkdownToHtml } from '../../utils/markdownToHtml';
 
 interface EditorPaneProps {
   documentId: string;
@@ -290,9 +289,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
                 : undefined
             }
             initialContent={
-              document.content
-                ? parseMarkdownToHtml(document.content)
-                : `<h1>${document.title || 'Document'}</h1><p>Start writing markdown here...</p>`
+              document.content || `# ${document.title || 'Document'}\n\nStart writing markdown here...`
             }
             onEditorReady={handleEditorReady}
             autoFocus={isPrimary ? 'end' : false}
