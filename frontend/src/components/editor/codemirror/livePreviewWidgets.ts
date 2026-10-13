@@ -19,8 +19,11 @@ export class MathBlockWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement('div');
-    container.className =
-      'math-block-node my-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm select-none';
+    container.className = 'math-block-node py-2 my-0 select-none';
+
+    const card = document.createElement('div');
+    card.className =
+      'rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm';
 
     // Header
     const header = document.createElement('div');
@@ -34,7 +37,7 @@ export class MathBlockWidget extends WidgetType {
         <button type="button" class="edit-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors">Edit LaTeX</button>
       </div>
     `;
-    container.appendChild(header);
+    card.appendChild(header);
 
     // Formula display container
     const body = document.createElement('div');
@@ -65,8 +68,9 @@ export class MathBlockWidget extends WidgetType {
 
     editContainer.appendChild(textarea);
     editContainer.appendChild(applyBtn);
-    container.appendChild(body);
-    container.appendChild(editContainer);
+    card.appendChild(body);
+    card.appendChild(editContainer);
+    container.appendChild(card);
 
     const editBtn = header.querySelector('.edit-btn') as HTMLButtonElement;
     editBtn.addEventListener('click', (e) => {
@@ -117,8 +121,11 @@ export class MermaidBlockWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement('div');
-    container.className =
-      'mermaid-block-node my-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm select-none';
+    container.className = 'mermaid-block-node py-2 my-0 select-none';
+
+    const card = document.createElement('div');
+    card.className =
+      'rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm';
 
     let zoom = 1;
 
@@ -137,13 +144,13 @@ export class MermaidBlockWidget extends WidgetType {
         <button type="button" class="edit-source-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base">Edit Source</button>
       </div>
     `;
-    container.appendChild(header);
+    card.appendChild(header);
 
     // SVG container
     const svgWrapper = document.createElement('div');
     svgWrapper.className =
       'mermaid-svg-container p-4 flex items-center justify-center overflow-x-auto min-h-[100px] cursor-pointer';
-    container.appendChild(svgWrapper);
+    card.appendChild(svgWrapper);
 
     // Source editor drawer (for interactive toggles and e2e tests)
     const drawer = document.createElement('div');
@@ -160,7 +167,8 @@ export class MermaidBlockWidget extends WidgetType {
     previewBtn.textContent = 'Preview';
     drawer.appendChild(textarea);
     drawer.appendChild(previewBtn);
-    container.appendChild(drawer);
+    card.appendChild(drawer);
+    container.appendChild(card);
 
     const zoomText = header.querySelector('.zoom-text') as HTMLSpanElement;
     const zoomInBtn = header.querySelector('.zoom-in-btn') as HTMLButtonElement;
@@ -237,7 +245,7 @@ export class WikiLinkWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const span = document.createElement('span');
     span.className =
-      'wiki-link-node inline-block align-middle select-none relative my-0.5 mx-0.5';
+      'wiki-link-node inline-block align-middle select-none relative my-0 mx-0.5';
 
     const cleanTarget = this.target.trim();
     const hashIndex = cleanTarget.indexOf('#');
@@ -386,10 +394,25 @@ export class TaskCheckboxWidget extends WidgetType {
 }
 
 export class DividerWidget extends WidgetType {
-  toDOM(): HTMLElement {
+  constructor(public from: number = 0) {
+    super();
+  }
+
+  eq(other: DividerWidget): boolean {
+    return this.from === other.from;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'cme-divider-node py-3 my-0 flex items-center cursor-pointer';
     const hr = document.createElement('hr');
-    hr.className = 'my-4 border-cme-border-base';
-    return hr;
+    hr.className = 'w-full border-t border-cme-border-base m-0 p-0 pointer-events-none';
+    wrap.appendChild(hr);
+    wrap.addEventListener('click', () => {
+      view.dispatch({ selection: { anchor: this.from } });
+      view.focus();
+    });
+    return wrap;
   }
 }
 
@@ -414,8 +437,11 @@ export class CodeBlockWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement('div');
-    container.className =
-      'code-block-wrapper my-4 rounded-xl border border-cme-border-base bg-cme-bg-subtle overflow-hidden shadow-sm select-none';
+    container.className = 'code-block-wrapper py-2 my-0 select-none';
+
+    const card = document.createElement('div');
+    card.className =
+      'rounded-xl border border-cme-border-base bg-cme-bg-subtle overflow-hidden shadow-sm';
 
     const header = document.createElement('div');
     header.className =
@@ -530,8 +556,9 @@ export class CodeBlockWidget extends WidgetType {
       view.focus();
     });
 
-    container.appendChild(header);
-    container.appendChild(body);
+    card.appendChild(header);
+    card.appendChild(body);
+    container.appendChild(card);
     return container;
   }
 }
@@ -589,15 +616,18 @@ export class TableBlockWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement('div');
-    container.className =
-      'cme-table-block-node my-4 overflow-x-auto rounded-xl border border-cme-border-base bg-cme-bg-surface shadow-sm cursor-pointer select-none';
-    container.title = 'Click table to edit markdown source';
+    container.className = 'cme-table-block-node py-2 my-0 select-none';
 
     const lines = this.rawText.split('\n').map((l) => l.trim()).filter(Boolean);
     if (lines.length < 2) {
       container.textContent = this.rawText;
       return container;
     }
+
+    const card = document.createElement('div');
+    card.className =
+      'overflow-x-auto rounded-xl border border-cme-border-base bg-cme-bg-surface shadow-sm cursor-pointer';
+    card.title = 'Click table to edit markdown source';
 
     const splitRow = (line: string): string[] => {
       let trimmed = line;
@@ -650,7 +680,8 @@ export class TableBlockWidget extends WidgetType {
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
-    container.appendChild(table);
+    card.appendChild(table);
+    container.appendChild(card);
 
     container.addEventListener('click', (e) => {
       e.stopPropagation();

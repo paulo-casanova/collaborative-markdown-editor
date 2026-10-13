@@ -24,8 +24,14 @@ export const cmeEditorTheme = EditorView.theme({
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
   },
+  '.cm-content > *': {
+    marginTop: '0 !important',
+    marginBottom: '0 !important',
+  },
   '.cm-line': {
     padding: '0.125rem 0',
+    marginTop: '0 !important',
+    marginBottom: '0 !important',
   },
 
   // Live Preview Typography
@@ -34,31 +40,24 @@ export const cmeEditorTheme = EditorView.theme({
     lineHeight: '2.25rem',
     fontWeight: '800',
     color: 'var(--cme-text-base, #111827)',
-    marginTop: '0.75rem',
-    marginBottom: '0.5rem',
   },
   '.cme-live-h2': {
     fontSize: '1.5rem',
     lineHeight: '2rem',
     fontWeight: '700',
     color: 'var(--cme-text-base, #111827)',
-    marginTop: '0.75rem',
-    marginBottom: '0.5rem',
   },
   '.cme-live-h3': {
     fontSize: '1.25rem',
     lineHeight: '1.75rem',
     fontWeight: '600',
     color: 'var(--cme-text-base, #111827)',
-    marginTop: '0.5rem',
-    marginBottom: '0.25rem',
   },
   '.cme-live-h4': {
     fontSize: '1.125rem',
     lineHeight: '1.5rem',
     fontWeight: '600',
     color: 'var(--cme-text-base, #111827)',
-    marginTop: '0.5rem',
   },
   '.cme-live-bold': {
     fontWeight: '700',

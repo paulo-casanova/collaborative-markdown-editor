@@ -194,7 +194,7 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
           lineFrom,
           lineTo,
           Decoration.replace({
-            widget: new DividerWidget(),
+            widget: new DividerWidget(lineFrom),
             block: true,
           })
         );
