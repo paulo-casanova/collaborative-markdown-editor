@@ -74,7 +74,7 @@ export const NewSuggestionModal: React.FC = () => {
               value={replacementText}
               onChange={(e) => setReplacementText(e.target.value)}
               placeholder="Enter your proposed replacement text..."
-              className="w-full text-xs font-mono p-3 rounded-xl border border-cme-border-base bg-cme-bg-elevated text-cme-text-base focus:outline-none focus:ring-2 focus:ring-emerald-500 leading-relaxed resize-none"
+              className="w-full text-xs font-mono p-3 rounded-xl border border-cme-border-base bg-cme-bg-elevated text-cme-text-base placeholder:text-cme-text-muted focus:outline-none focus:ring-2 focus:ring-emerald-500 leading-relaxed resize-none"
             />
           </div>
 

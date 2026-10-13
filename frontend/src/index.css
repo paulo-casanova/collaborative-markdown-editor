@@ -9,6 +9,7 @@
   --cme-bg-surface: #ffffff;
   --cme-bg-hover: #f1f5f9;
   --cme-bg-active: #e2e8f0;
+  --cme-bg-elevated: #f1f5f9;
 
   --cme-text-base: #0f172a;
   --cme-text-muted: #475569;
@@ -33,6 +34,7 @@
   --cme-bg-surface: #1e293b;
   --cme-bg-hover: #334155;
   --cme-bg-active: #475569;
+  --cme-bg-elevated: #0f172a;
 
   --cme-text-base: #f8fafc;
   --cme-text-muted: #94a3b8;
@@ -57,6 +59,7 @@
   --cme-bg-surface: #fff8e8;
   --cme-bg-hover: #ebd9ad;
   --cme-bg-active: #dfcb9f;
+  --cme-bg-elevated: #f4e5c0;
 
   --cme-text-base: #3d2b1f;
   --cme-text-muted: #694f3b;

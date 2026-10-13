@@ -65,7 +65,7 @@ export const NewCommentModal: React.FC = () => {
               value={content}
               onChange={(e) => setContent(e.target.value)}
               placeholder="What would you like to discuss? Type @ to mention collaborators..."
-              className="w-full text-xs p-3 rounded-xl border border-cme-border-base bg-cme-bg-elevated text-cme-text-base focus:outline-none focus:ring-2 focus:ring-cme-primary leading-relaxed resize-none"
+              className="w-full text-xs p-3 rounded-xl border border-cme-border-base bg-cme-bg-elevated text-cme-text-base placeholder:text-cme-text-muted focus:outline-none focus:ring-2 focus:ring-cme-primary leading-relaxed resize-none"
             />
           </div>
 

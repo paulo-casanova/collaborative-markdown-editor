@@ -316,4 +316,59 @@ test.describe('Phase 6, Step 6.2: Threaded Comments & Inline Suggestions UI', ()
       await context2.close();
     }
   });
+
+  test('verifies suggestion modal has dark background and readable light text in dark theme', async ({
+    page,
+    context,
+  }) => {
+    await context.addInitScript((tok) => {
+      localStorage.setItem('cme_auth_token', tok);
+      localStorage.setItem('cme-theme', 'dark');
+    }, adminToken);
+
+    await page.goto(`/documents/${testDocId}`);
+    const editor = page.locator('.collaborative-editor-root .ProseMirror');
+    await expect(editor).toBeVisible({ timeout: 15000 });
+
+    // Select target text
+    await page.evaluate(() => {
+      const editorEl = document.querySelector('.collaborative-editor-root .ProseMirror');
+      const ed = (editorEl as any)?.__tiptapEditor;
+      if (ed) {
+        ed.commands.setTextSelection({ from: 1, to: 10 });
+      }
+    });
+
+    // Click Suggest Edit
+    const suggestBtn = page
+      .locator('[data-testid="suggest-edit-btn"], [data-testid="toolbar-suggest-edit-btn"]')
+      .first();
+    await expect(suggestBtn).toBeVisible({ timeout: 5000 });
+    await suggestBtn.click();
+
+    // Verify modal is visible
+    const modal = page.locator('[data-testid="suggestion-modal"]');
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    // Inspect textarea colors
+    const input = page.locator('[data-testid="suggestion-replacement-input"]');
+    await expect(input).toBeVisible();
+
+    const styles = await input.evaluate((el) => {
+      const comp = window.getComputedStyle(el);
+      return {
+        backgroundColor: comp.backgroundColor,
+        color: comp.color,
+      };
+    });
+
+    console.log('Suggestion input computed styles in dark theme:', styles);
+
+    // Verify background is dark (#0f172a -> rgb(15, 23, 42)), NOT white
+    expect(styles.backgroundColor).not.toBe('rgb(255, 255, 255)');
+    expect(styles.backgroundColor).toBe('rgb(15, 23, 42)');
+
+    // Verify text color is light (#f8fafc -> rgb(248, 250, 252))
+    expect(styles.color).toBe('rgb(248, 250, 252)');
+  });
 });

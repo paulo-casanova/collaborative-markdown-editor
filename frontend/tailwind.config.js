@@ -15,6 +15,7 @@ export default {
             surface: 'var(--cme-bg-surface)',
             hover: 'var(--cme-bg-hover)',
             active: 'var(--cme-bg-active)',
+            elevated: 'var(--cme-bg-elevated)',
           },
           text: {
             base: 'var(--cme-text-base)',
