@@ -36,6 +36,24 @@ Detailed discussion on disk operations and atomic file synchronization.
 ## Advanced Configuration
 
 Fine-tuning PostgreSQL and collaborative WebSocket parameters.
+
+## Code and Tables Specification
+
+Sample code block:
+
+\`\`\`typescript
+const serverPort = 8080;
+console.log(serverPort);
+\`\`\`
+
+Sample table:
+
+| Language | Paradigm | Performance |
+| :--- | :---: | ---: |
+| Rust | Systems | High |
+| TypeScript | Multi | Fast |
+
+Formatted text with ~~deprecated syntax~~ and **bold text** and *italic notes*.
 `;
 
   test.beforeAll(async ({ request }) => {
@@ -164,5 +182,35 @@ Fine-tuning PostgreSQL and collaborative WebSocket parameters.
     // Verify TOC outline opens inside editor
     await expect(page.locator('[data-testid="table-of-contents"]')).toBeVisible();
     await expect(page.locator('[data-testid="toc-item-getting-started"]')).toBeVisible();
+  });
+
+  test('renders syntax-highlighted code blocks with line numbers, markdown tables, and strikethrough in reader view', async ({
+    page,
+  }) => {
+    await page.goto(`/docs/${docPath}`);
+
+    const article = page.locator('[data-testid="reader-article"]');
+    await expect(article).toBeVisible();
+
+    // 1. Verify code block highlighting and line numbers gutter
+    const codeBlock = article.locator('.hljs-keyword').first();
+    await expect(codeBlock).toBeVisible();
+    await expect(codeBlock).toContainText('const');
+
+    const gutter = article.locator('.line-numbers-gutter').first();
+    await expect(gutter).toBeVisible();
+    await expect(gutter).toContainText('1');
+    await expect(gutter).toContainText('2');
+
+    // 2. Verify GFM table
+    const table = article.locator('.cme-table-block-node table');
+    await expect(table).toBeVisible();
+    await expect(table.locator('th').first()).toContainText('Language');
+    await expect(table.locator('td').first()).toContainText('Rust');
+
+    // 3. Verify strikethrough <del>
+    const strike = article.locator('del');
+    await expect(strike).toBeVisible();
+    await expect(strike).toContainText('deprecated syntax');
   });
 });

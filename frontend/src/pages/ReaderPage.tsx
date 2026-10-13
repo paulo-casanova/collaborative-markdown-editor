@@ -14,6 +14,7 @@ import {
   Check,
 } from 'lucide-react';
 import katex from 'katex';
+import hljs from 'highlight.js';
 import {
   fetchDocument,
   fetchDocumentByPath,
@@ -446,11 +447,11 @@ function renderMarkdown(
     const line = lines[i];
 
     // Fenced Code Block or Mermaid block
-    if (line.startsWith('```')) {
-      const lang = line.replace(/^```/, '').trim();
+    if (line.trim().startsWith('```')) {
+      const lang = line.trim().replace(/^```/, '').trim();
       const codeLines: string[] = [];
       i++;
-      while (i < lines.length && !lines[i].startsWith('```')) {
+      while (i < lines.length && !lines[i].trim().startsWith('```')) {
         codeLines.push(lines[i]);
         i++;
       }
@@ -463,13 +464,33 @@ function renderMarkdown(
           <MermaidBlock key={`mermaid-${i}`} source={code} />
         );
       } else {
+        const langLower = (lang || '').toLowerCase().trim();
+        const effectiveLang = (langLower === 'none' || langLower === 'text') ? '' : langLower;
+
+        let highlighted = '';
+        try {
+          if (effectiveLang && hljs.getLanguage(effectiveLang)) {
+            highlighted = hljs.highlight(code, { language: effectiveLang, ignoreIllegals: true }).value;
+          } else if (effectiveLang) {
+            highlighted = hljs.highlightAuto(code).value;
+          } else {
+            const autoRes = hljs.highlightAuto(code);
+            highlighted = autoRes.value || escapeHtml(code);
+          }
+        } catch {
+          highlighted = escapeHtml(code);
+        }
+
+        const linesInBlock = code.split('\n');
+        const lineCount = linesInBlock.length;
+
         elements.push(
           <div
             key={`code-${i}`}
-            className="my-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden group"
+            className="my-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden group shadow-sm"
           >
-            <div className="flex items-center justify-between px-3 py-1.5 bg-cme-bg-subtle text-xs font-mono text-cme-text-muted border-b border-cme-border-base">
-              <span>{lang || 'text'}</span>
+            <div className="flex items-center justify-between px-3.5 py-1.5 bg-cme-bg-subtle text-xs font-mono text-cme-text-muted border-b border-cme-border-base">
+              <span>{effectiveLang || 'none'}</span>
               <button
                 onClick={() => onCopyCode(code, codeBlockId)}
                 className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
@@ -488,9 +509,22 @@ function renderMarkdown(
                 )}
               </button>
             </div>
-            <pre className="p-4 font-mono text-xs overflow-x-auto leading-relaxed bg-cme-bg-base/50">
-              <code>{code}</code>
-            </pre>
+            <div className="flex p-4 overflow-x-auto font-mono text-xs leading-6 bg-cme-bg-base/50">
+              <div
+                className="line-numbers-gutter select-none text-right pr-3 pl-1 text-cme-text-subtle/50 font-mono text-xs leading-6 border-r border-cme-border-base/40 mr-3 flex-shrink-0"
+                aria-hidden="true"
+              >
+                {Array.from({ length: lineCount }, (_, idx) => (
+                  <div key={idx}>{idx + 1}</div>
+                ))}
+              </div>
+              <pre className="font-mono text-xs text-cme-text-base leading-6 flex-1 overflow-x-auto whitespace-pre">
+                <code
+                  className={effectiveLang ? `hljs language-${effectiveLang}` : 'hljs'}
+                  dangerouslySetInnerHTML={{ __html: highlighted }}
+                />
+              </pre>
+            </div>
           </div>
         );
       }
@@ -603,6 +637,106 @@ function renderMarkdown(
       continue;
     }
 
+    // GFM Table: | Header 1 | Header 2 | followed by delimiter row | --- | --- |
+    const curTrimmed = line.trim();
+    if (curTrimmed.includes('|') && i + 1 < lines.length) {
+      const nextTrimmed = lines[i + 1].trim();
+      const isDelimiter = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(nextTrimmed);
+      if (isDelimiter) {
+        const tableLines: string[] = [curTrimmed, nextTrimmed];
+        let curIdx = i + 2;
+        while (curIdx < lines.length) {
+          const rowTrimmed = lines[curIdx].trim();
+          if (!rowTrimmed.includes('|') || rowTrimmed.length === 0) {
+            break;
+          }
+          tableLines.push(rowTrimmed);
+          curIdx++;
+        }
+
+        const splitRow = (rowStr: string): string[] => {
+          let trimmed = rowStr.trim();
+          if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+          if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+          const cells: string[] = [];
+          let currentCell = '';
+          for (let c = 0; c < trimmed.length; c++) {
+            const char = trimmed[c];
+            if (char === '\\' && c + 1 < trimmed.length && trimmed[c + 1] === '|') {
+              currentCell += '|';
+              c++;
+            } else if (char === '|') {
+              cells.push(currentCell.trim());
+              currentCell = '';
+            } else {
+              currentCell += char;
+            }
+          }
+          cells.push(currentCell.trim());
+          return cells;
+        };
+
+        const headerCells = splitRow(tableLines[0]);
+        const delimiterCells = splitRow(tableLines[1]);
+
+        const alignments: ('left' | 'center' | 'right')[] = delimiterCells.map((delim) => {
+          if (delim.startsWith(':') && delim.endsWith(':')) return 'center';
+          if (delim.endsWith(':')) return 'right';
+          return 'left';
+        });
+
+        const dataRows = tableLines.slice(2).map((row) => splitRow(row));
+
+        elements.push(
+          <div
+            key={`table-${i}`}
+            className="cme-table-block-node my-4 overflow-x-auto rounded-xl border border-cme-border-base bg-cme-bg-surface shadow-sm"
+          >
+            <table className="w-full text-left text-sm border-collapse">
+              <thead className="bg-cme-bg-subtle/80 text-cme-text-base border-b border-cme-border-base font-semibold">
+                <tr>
+                  {headerCells.map((header, colIdx) => (
+                    <th
+                      key={colIdx}
+                      className="px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0"
+                      style={{ textAlign: alignments[colIdx] || 'left' }}
+                    >
+                      {renderInlineFormatted(header)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-cme-border-base/40 text-cme-text-base">
+                {dataRows.map((rowCells, rIdx) => (
+                  <tr
+                    key={rIdx}
+                    className={
+                      rIdx % 2 === 1
+                        ? 'bg-cme-bg-subtle/20 hover:bg-cme-bg-hover/40'
+                        : 'hover:bg-cme-bg-hover/40'
+                    }
+                  >
+                    {headerCells.map((_, colIdx) => (
+                      <td
+                        key={colIdx}
+                        className="px-4 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0"
+                        style={{ textAlign: alignments[colIdx] || 'left' }}
+                      >
+                        {renderInlineFormatted(rowCells[colIdx] || '')}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+
+        i = curIdx;
+        continue;
+      }
+    }
+
     // Task list / Checkbox
     if (line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/)) {
       const match = line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
@@ -658,10 +792,12 @@ function renderMarkdown(
   return elements;
 }
 
-// Inline formatting helper: Bold, Italic, Inline Code, Inline Math ($...$), and WikiLinks ([[target]])
+// Inline formatting helper: Bold, Italic, Strikethrough, Inline Code, Inline Math ($...$), and WikiLinks ([[target]])
 function renderInlineFormatted(text: string): React.ReactNode {
-  // Replace [[target|alias]]
-  const parts = text.split(/(\[\[[^\]]+\]\]|\$[^$]+\$|`[^`]+`|\*\*[^*]+\*\*)/g);
+  if (!text) return null;
+
+  // Split on [[target|alias]], inline math $...$, inline code `...`, strikethrough ~~...~~, bold **...**, italic *...*
+  const parts = text.split(/(\[\[[^\]]+\]\]|\$(?!\s)[^$\n]+(?<!\s)\$|`[^`]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
 
   return parts.map((part, idx) => {
     // WikiLinks [[page]] or [[page|alias]]
@@ -723,9 +859,23 @@ function renderInlineFormatted(text: string): React.ReactNode {
       );
     }
 
+    // Strikethrough ~~...~~
+    if (part.startsWith('~~') && part.endsWith('~~') && part.length > 4) {
+      return (
+        <del key={idx} className="line-through text-cme-text-muted">
+          {renderInlineFormatted(part.slice(2, -2))}
+        </del>
+      );
+    }
+
     // Bold **...**
-    if (part.startsWith('**') && part.endsWith('**') && part.length > 3) {
-      return <strong key={idx}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={idx}>{renderInlineFormatted(part.slice(2, -2))}</strong>;
+    }
+
+    // Italic *...*
+    if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+      return <em key={idx}>{renderInlineFormatted(part.slice(1, -1))}</em>;
     }
 
     return part;
@@ -764,3 +914,13 @@ const MermaidBlock: React.FC<{ source: string }> = ({ source }) => {
     />
   );
 };
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
