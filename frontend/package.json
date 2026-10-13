@@ -8,6 +8,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test:e2e": "node scripts/run-e2e.js",
+    "test:simulator": "node scripts/run-e2e.js --spec=user_journey_simulator.spec.ts",
+    "simulate": "node scripts/run-e2e.js --spec=user_journey_simulator.spec.ts",
+    "simulate:headed": "node scripts/run-e2e.js --spec=user_journey_simulator.spec.ts --headed",
     "test:unit": "node scripts/run-unit.js"
   },
   "dependencies": {
