@@ -99,7 +99,6 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   useEffect(() => {
     if (!editorContainerRef.current) return;
 
-    let initialDoc = rawInitialText;
     const extensions: Extension[] = [
       markdown(),
       createLivePreviewPlugin(isDark),
@@ -138,11 +137,11 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       extensions.push(EditorView.editable.of(false));
     }
 
-    if (provider) {
+    let initialDoc = '';
+    if (!provider) {
+      initialDoc = rawInitialText;
+    } else {
       const ytext = provider.ydoc.getText('content');
-      if (ytext.length === 0 && rawInitialText) {
-        ytext.insert(0, rawInitialText);
-      }
       initialDoc = ytext.toString();
       extensions.push(yCollab(ytext, provider.awareness));
     }
@@ -179,7 +178,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       setEditor(null);
       adapterRef.current = null;
     };
-  }, [provider, rawInitialText, editable, isDark]);
+  }, [provider, editable, isDark]);
 
   return (
     <div className="collaborative-editor-root rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm flex flex-col flex-1 h-full min-h-0 relative">
