@@ -253,5 +253,54 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     // 9. Verify path badge updates
     await expect(primaryPane.getByText(`guides/${renamedFileName}`)).toBeVisible();
   });
+
+  test('deletes an open document in FileTree, automatically closes its tab, and switches editor away', async ({ page, request }) => {
+    const testDocName = `delete_open_candidate_${uniqueId}.md`;
+    const testDocTitle = `Delete Open Candidate ${uniqueId}`;
+
+    // 1. Create candidate document via API
+    const res = await request.post(`${BACKEND_URL}/api/v1/documents`, {
+      headers: { Authorization: `Bearer ${adminToken}` },
+      data: {
+        path: testDocName,
+        title: testDocTitle,
+        content: '# Delete Me While Open\n\nThis document is currently open.',
+      },
+    });
+    expect(res.ok()).toBeTruthy();
+    const docData = await res.json();
+    const docId = docData.id;
+
+    // 2. Open candidate document in workspace
+    await page.goto(`/documents/${docId}`);
+    const tab = page.locator(`[data-testid="workspace-tab-${docId}"]`);
+    await expect(tab).toBeVisible();
+    await expect(page.locator('[data-testid="primary-editor-pane"]')).toBeVisible();
+
+    // Accept delete confirmation dialog automatically
+    page.once('dialog', async (dialog) => {
+      await dialog.accept();
+    });
+
+    // 3. Locate node in FileTree and right-click to open context menu
+    const fileTree = page.locator('[data-testid="file-tree-container"]');
+    const treeItem = fileTree.getByText(testDocTitle);
+    await expect(treeItem).toBeVisible();
+    await treeItem.click({ button: 'right' });
+
+    // 4. Click "Delete to Trash" in context menu
+    const deleteBtn = page.locator('[data-testid="filetree-delete-btn"]');
+    await expect(deleteBtn).toBeVisible();
+    await deleteBtn.click();
+
+    // 5. Verify tab is closed and no longer visible in TabBar
+    await expect(tab).not.toBeVisible({ timeout: 5000 });
+
+    // 6. Verify tree removes the document
+    await expect(fileTree.getByText(testDocTitle)).not.toBeVisible();
+
+    // 7. Verify page navigated away from the deleted document
+    expect(page.url()).not.toContain(`/documents/${docId}`);
+  });
 });
 

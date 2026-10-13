@@ -79,10 +79,9 @@ export const TabBar: React.FC = () => {
 
     // If closing active tab, navigate to the newly activated tab if exists
     if (activeTabId === tabId) {
-      const remaining = tabs.filter((t) => t.id && t.id !== tabId && t.id !== 'by-path');
-      if (remaining.length > 0) {
-        const nextTab = remaining[0];
-        navigate(`/documents/${nextTab.id}`);
+      const nextActive = useWorkspaceStore.getState().activeTabId;
+      if (nextActive) {
+        navigate(`/documents/${nextActive}`);
       } else {
         navigate('/');
       }

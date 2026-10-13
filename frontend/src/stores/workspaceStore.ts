@@ -98,14 +98,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       closeTab: (tabId) => {
         const { tabs, activeTabId, secondaryTabId, splitMode } = get();
         const targetIndex = tabs.findIndex((t) => t.id === tabId);
-        if (targetIndex < 0) return;
-
         const newTabs = tabs.filter((t) => t.id !== tabId);
 
         let nextActive = activeTabId;
         if (activeTabId === tabId) {
           if (newTabs.length > 0) {
-            const nextIndex = Math.min(targetIndex, newTabs.length - 1);
+            const nextIndex = targetIndex >= 0 ? Math.min(targetIndex, newTabs.length - 1) : 0;
             nextActive = newTabs[nextIndex].id;
           } else {
             nextActive = null;

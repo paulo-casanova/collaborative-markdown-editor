@@ -400,4 +400,71 @@ test.describe('End-to-End User Journey Simulator', () => {
     await outlineToggle.click();
     await expect(outlineSidebar).not.toBeVisible();
   });
+
+  test('Journey 5: Deleting Open Documents in FileTree Closes Tabs and Switches Active Workspace Pane Cleanly', async ({ page }) => {
+    const timestamp = Date.now();
+    const docAName = `del_doc_a_${timestamp}.md`;
+    const docATitle = `del_doc_a_${timestamp}`;
+    const docBName = `del_doc_b_${timestamp}.md`;
+    const docBTitle = `del_doc_b_${timestamp}`;
+
+    await page.goto('/');
+    const fileTree = page.locator('[data-testid="file-tree-container"]');
+    await expect(fileTree).toBeVisible();
+
+    // 1. Create Doc A
+    await page.locator('[data-testid="filetree-new-doc-btn"]').click();
+    await page.locator('[data-testid="filetree-modal-input"]').fill(docAName);
+    await page.locator('[data-testid="filetree-modal-submit"]').click();
+    await page.waitForURL(/\/documents\/.+/);
+    const docAId = page.url().split('/documents/')[1].split('?')[0];
+
+    // 2. Create Doc B
+    await page.locator('[data-testid="filetree-new-doc-btn"]').click();
+    await page.locator('[data-testid="filetree-modal-input"]').fill(docBName);
+    await page.locator('[data-testid="filetree-modal-submit"]').click();
+    await page.waitForURL((url) => url.pathname.includes('/documents/') && !url.pathname.includes(docAId));
+    const docBId = page.url().split('/documents/')[1].split('?')[0];
+
+    // Both tabs are open; Doc B is active
+    const tabA = page.locator(`[data-testid="workspace-tab-${docAId}"]`);
+    const tabB = page.locator(`[data-testid="workspace-tab-${docBId}"]`);
+    await expect(tabA).toBeVisible();
+    await expect(tabB).toBeVisible();
+    const primaryPane = page.locator('[data-testid="primary-editor-pane"]');
+    await expect(primaryPane.getByRole('heading', { name: docBTitle })).toBeVisible();
+
+    // Accept confirmation dialogs automatically
+    page.on('dialog', async (dialog) => {
+      await dialog.accept();
+    });
+
+    // 3. Delete active Document B from the FileTree
+    const treeItemB = fileTree.getByText(docBTitle);
+    await expect(treeItemB).toBeVisible();
+    await treeItemB.click({ button: 'right' });
+
+    const deleteBtn = page.locator('[data-testid="filetree-delete-btn"]');
+    await expect(deleteBtn).toBeVisible();
+    await deleteBtn.click();
+
+    // 4. Verify Document B tab is closed and workspace switches to Document A
+    await expect(tabB).not.toBeVisible({ timeout: 5000 });
+    await expect(tabA).toBeVisible();
+    await expect(page).toHaveURL(new RegExp(`/documents/${docAId}`));
+    await expect(primaryPane.getByRole('heading', { name: docATitle })).toBeVisible();
+    await expect(fileTree.getByText(docBTitle)).not.toBeVisible();
+
+    // 5. Now delete Document A (the only remaining open document)
+    const treeItemA = fileTree.getByText(docATitle);
+    await expect(treeItemA).toBeVisible();
+    await treeItemA.click({ button: 'right' });
+    await deleteBtn.click();
+
+    // 6. Verify Document A tab is closed and workspace navigates to home
+    await expect(tabA).not.toBeVisible({ timeout: 5000 });
+    await expect(page).toHaveURL('/');
+    await expect(page.locator('[data-testid="workspace-tabbar"]')).not.toBeVisible();
+    await expect(fileTree.getByText(docATitle)).not.toBeVisible();
+  });
 });

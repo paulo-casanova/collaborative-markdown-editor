@@ -155,7 +155,7 @@ export const FileTree: React.FC = () => {
     },
   });
 
-  const { updateTabMetadata } = useWorkspaceStore();
+  const { updateTabMetadata, closeTab } = useWorkspaceStore();
 
   const moveDocMutation = useMutation({
     mutationFn: ({ id, newPath, title }: { id: string; newPath: string; title?: string }) =>
@@ -179,12 +179,45 @@ export const FileTree: React.FC = () => {
   });
 
   const deleteDocMutation = useMutation({
-    mutationFn: (id: string) => deleteDocument(id),
-    onSuccess: () => {
+    mutationFn: ({ id }: { id: string; path?: string }) => deleteDocument(id),
+    onSuccess: (_data, { id: deletedId, path: deletedPath }) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       queryClient.invalidateQueries({ queryKey: ['trash-items'] });
+      queryClient.removeQueries({ queryKey: ['document', deletedId] });
+      queryClient.removeQueries({ queryKey: ['doc-reader', deletedId] });
       setContextMenu(null);
+
+      // Close open tab(s) associated with the deleted document or its path
+      const currentTabs = useWorkspaceStore.getState().tabs;
+      const matchingTabs = currentTabs.filter(
+        (t) =>
+          t.id === deletedId ||
+          (deletedPath && (t.path === deletedPath || t.path.startsWith(deletedPath + '/')))
+      );
+
+      for (const t of matchingTabs) {
+        closeTab(t.id);
+      }
+
+      // If the current route is viewing the deleted document, navigate away
+      const isViewingDeleted =
+        location.pathname === `/documents/${deletedId}` ||
+        location.pathname === `/docs/${deletedId}` ||
+        matchingTabs.some(
+          (t) =>
+            location.pathname === `/documents/${t.id}` ||
+            location.pathname === `/docs/${t.id}`
+        );
+
+      if (isViewingDeleted) {
+        const nextActive = useWorkspaceStore.getState().activeTabId;
+        if (nextActive) {
+          navigate(`/documents/${nextActive}`);
+        } else {
+          navigate('/');
+        }
+      }
     },
     onError: (err: any) => {
       alert(`Failed to delete document: ${err.message || 'Unknown error'}`);
@@ -524,13 +557,17 @@ export const FileTree: React.FC = () => {
                 <span>Rename</span>
               </button>
               <button
+                data-testid="filetree-delete-btn"
                 onClick={() => {
                   if (
                     confirm(
                       `Move "${contextMenu.node.name}" to Trash? You can restore it later.`
                     )
                   ) {
-                    deleteDocMutation.mutate(contextMenu.node.id!);
+                    deleteDocMutation.mutate({
+                      id: contextMenu.node.id!,
+                      path: contextMenu.node.path,
+                    });
                   }
                 }}
                 className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-rose-500/10 text-rose-500 text-left"

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   FileText,
@@ -38,7 +38,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   isPrimary = true,
 }) => {
   const { setBreadcrumbs, setSyncStatus } = useUIStore();
-  const { updateTabMetadata } = useWorkspaceStore();
+  const { updateTabMetadata, closeTab } = useWorkspaceStore();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showOutline, setShowOutline] = useState<boolean>(false);
   const [editorInstance, setEditorInstance] = useState<any>(null);
@@ -203,6 +204,23 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         <p className="text-xs text-cme-text-muted">
           {(error as any)?.message || 'The requested document does not exist or you lack read access.'}
         </p>
+        <div className="pt-2">
+          <button
+            onClick={() => {
+              closeTab(documentId);
+              const nextActive = useWorkspaceStore.getState().activeTabId;
+              if (nextActive) {
+                navigate(`/documents/${nextActive}`);
+              } else {
+                navigate('/');
+              }
+            }}
+            className="px-3.5 py-1.5 bg-cme-bg-surface hover:bg-cme-bg-hover border border-cme-border-base rounded-lg text-xs font-medium text-cme-text-base transition-colors shadow-sm"
+            data-testid="close-not-found-tab-btn"
+          >
+            Close Tab & Return
+          </button>
+        </div>
       </div>
     );
   }
