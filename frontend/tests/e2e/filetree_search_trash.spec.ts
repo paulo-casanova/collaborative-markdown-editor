@@ -207,5 +207,51 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     await expect(page.getByText('Document Not Found')).toBeVisible();
     await expect(page.getByText("Query parameter 'path' is required")).toBeVisible();
   });
+
+  test('renames a document via FileTree context menu and updates tree, active tab, editor header, and path', async ({ page }) => {
+    // 1. Open seeded document
+    await page.goto(`/documents/${seededDocId}`);
+    const primaryPane = page.locator('[data-testid="primary-editor-pane"]');
+    await expect(primaryPane).toBeVisible();
+    await expect(primaryPane.getByText(`Tutorial Guide ${uniqueId}`)).toBeVisible();
+
+    // Verify initial tab has old title
+    const tab = page.locator(`[data-testid="workspace-tab-${seededDocId}"]`);
+    await expect(tab).toBeVisible();
+    await expect(tab).toContainText(`Tutorial Guide ${uniqueId}`);
+
+    // 2. Locate node in FileTree and right-click to open context menu
+    const fileTree = page.locator('[data-testid="file-tree-container"]');
+    const treeItem = fileTree.getByText(`Tutorial Guide ${uniqueId}`);
+    await expect(treeItem).toBeVisible();
+    await treeItem.click({ button: 'right' });
+
+    // 3. Click Rename in context menu
+    const renameOption = page.locator('[data-testid="filetree-rename-btn"]');
+    await expect(renameOption).toBeVisible();
+    await renameOption.click();
+
+    // 4. Fill modal input with new name
+    const modalInput = page.locator('[data-testid="filetree-modal-input"]');
+    await expect(modalInput).toBeVisible();
+    const renamedFileName = `Renamed_Tutorial_${uniqueId}.md`;
+    await modalInput.fill(renamedFileName);
+
+    // 5. Submit modal
+    await page.locator('[data-testid="filetree-modal-submit"]').click();
+
+    // 6. Verify tree updates to show the new name
+    const expectedTitle = `Renamed_Tutorial_${uniqueId}`;
+    await expect(fileTree.getByText(expectedTitle)).toBeVisible({ timeout: 5000 });
+
+    // 7. Verify open tab updates to show the new name
+    await expect(tab).toContainText(expectedTitle);
+
+    // 8. Verify primary editor header updates
+    await expect(primaryPane.getByRole('heading', { name: expectedTitle })).toBeVisible();
+
+    // 9. Verify path badge updates
+    await expect(primaryPane.getByText(`guides/${renamedFileName}`)).toBeVisible();
+  });
 });
 

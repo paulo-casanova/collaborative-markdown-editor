@@ -440,7 +440,8 @@ Result<DocumentRecord> DocumentService::update_document(
 Result<DocumentRecord> DocumentService::move_document(
     const std::string& doc_id,
     const std::string& new_path,
-    const auth::UserIdentity& user
+    const auth::UserIdentity& user,
+    std::optional<std::string> new_title
 ) {
     if (!storage_ || !db_pool_) {
         return std::unexpected(ErrorCode::DatabaseError);
@@ -495,13 +496,26 @@ Result<DocumentRecord> DocumentService::move_document(
             return std::unexpected(move_res.error());
         }
 
+        // Determine updated title
+        std::string target_title = new_title.value_or("");
+        if (target_title.empty()) {
+            std::filesystem::path old_fp(old_fs_path);
+            std::filesystem::path new_fp(norm_new_path);
+            if (old_fp.filename() != new_fp.filename()) {
+                target_title = derive_title("", norm_new_path);
+            } else {
+                target_title = title;
+            }
+        }
+
         // Update database record
         auto up_rows = tx.exec_params(
-            "UPDATE documents SET fs_path = $2, updated_at = NOW() WHERE id = $1::uuid "
+            "UPDATE documents SET fs_path = $2, title = $3, updated_at = NOW() WHERE id = $1::uuid "
             "RETURNING TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
             "          TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
             doc_id,
-            norm_new_path
+            norm_new_path,
+            target_title
         );
 
         std::string created_at = up_rows[0][0].as<std::string>();
@@ -513,7 +527,7 @@ Result<DocumentRecord> DocumentService::move_document(
         return DocumentRecord{
             .id = doc_id,
             .path = norm_new_path,
-            .title = title,
+            .title = target_title,
             .content = "",
             .is_bundle = is_bundle,
             .owner_user_id = owner_id,

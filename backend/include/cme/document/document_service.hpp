@@ -121,7 +121,8 @@ public:
     Result<DocumentRecord> move_document(
         const std::string& doc_id,
         const std::string& new_path,
-        const auth::UserIdentity& user
+        const auth::UserIdentity& user,
+        std::optional<std::string> new_title = std::nullopt
     );
 
     /**

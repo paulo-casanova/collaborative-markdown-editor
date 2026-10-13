@@ -31,8 +31,8 @@ export function normalizeContentToMarkdown(content: string): string {
 
   // 4. Code blocks
   md = md.replace(
-    /<pre[^>]*data-language=["']([^"']*)["'][^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi,
-    (_, lang, code) => `\n\`\`\`${lang || 'typescript'}\n${code.trim()}\n\`\`\`\n`
+    /<pre(?:[^>]*data-language=["']([^"']*)["'])?[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi,
+    (_, lang, code) => `\n\`\`\`${lang || ''}\n${code.trim()}\n\`\`\`\n`
   );
 
   // 5. Headings

@@ -916,10 +916,14 @@ Result<void> Server::start() {
             }
 
             std::string new_path;
+            std::optional<std::string> req_title;
             try {
                 auto json = nlohmann::json::parse(*body);
                 if (json.contains("new_path") && json["new_path"].is_string()) {
                     new_path = json["new_path"].get<std::string>();
+                }
+                if (json.contains("title") && json["title"].is_string()) {
+                    req_title = json["title"].get<std::string>();
                 }
             } catch (...) {
                 send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
@@ -931,7 +935,7 @@ Result<void> Server::start() {
                 return;
             }
 
-            auto doc_res = document_service_->move_document(doc_id, new_path, *auth_res.value());
+            auto doc_res = document_service_->move_document(doc_id, new_path, *auth_res.value(), req_title);
             if (!doc_res.has_value()) {
                 if (doc_res.error() == ErrorCode::NotFound) {
                     send_json(res, "404 Not Found", {{"error", "Document not found"}});
@@ -943,6 +947,13 @@ Result<void> Server::start() {
                     send_json(res, "500 Internal Server Error", {{"error", "Failed to move document"}});
                 }
                 return;
+            }
+
+            if (room_manager_) {
+                auto active_room = room_manager_->get_room(doc_id);
+                if (active_room) {
+                    active_room->set_fs_path(doc_res.value().path);
+                }
             }
 
             send_json(res, "200 OK", doc_res.value().to_json(false));

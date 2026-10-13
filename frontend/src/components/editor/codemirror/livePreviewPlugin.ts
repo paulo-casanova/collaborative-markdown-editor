@@ -117,7 +117,7 @@ function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false
         from,
         to,
         Decoration.replace({
-          widget: new CodeBlockWidget(lang || 'typescript', code, from, to),
+          widget: new CodeBlockWidget(lang || '', code, from, to),
           block: true,
         })
       );

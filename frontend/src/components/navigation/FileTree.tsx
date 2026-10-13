@@ -22,6 +22,7 @@ import {
   deleteDocument,
 } from '../../api/documents';
 import { WorkspaceNode } from '../../types/document';
+import { useWorkspaceStore } from '../../stores/workspaceStore';
 
 interface TreeNode extends WorkspaceNode {
   children?: TreeNode[];
@@ -154,12 +155,21 @@ export const FileTree: React.FC = () => {
     },
   });
 
+  const { updateTabMetadata } = useWorkspaceStore();
+
   const moveDocMutation = useMutation({
-    mutationFn: ({ id, newPath }: { id: string; newPath: string }) =>
-      moveDocument(id, newPath),
-    onSuccess: () => {
+    mutationFn: ({ id, newPath, title }: { id: string; newPath: string; title?: string }) =>
+      moveDocument(id, newPath, title),
+    onSuccess: (updatedDoc) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
+      queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
+      queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
+      updateTabMetadata(updatedDoc.id, {
+        path: updatedDoc.path,
+        title: updatedDoc.title,
+        is_bundle: updatedDoc.is_bundle,
+      });
       setModalMode(null);
       setInputValue('');
     },
@@ -287,9 +297,12 @@ export const FileTree: React.FC = () => {
         newName += oldPath.endsWith('.bundle') ? '.bundle' : '.md';
       }
       const newPath = dir ? `${dir}/${newName}` : newName;
+      const dotIndex = newName.lastIndexOf('.');
+      const titleCandidate = dotIndex > 0 ? newName.substring(0, dotIndex) : newName;
       moveDocMutation.mutate({
         id: activeNode.id,
         newPath,
+        title: titleCandidate,
       });
     }
   };
@@ -498,6 +511,7 @@ export const FileTree: React.FC = () => {
           {contextMenu.node.id && (
             <>
               <button
+                data-testid="filetree-rename-btn"
                 onClick={() => {
                   setActiveNode(contextMenu.node);
                   setInputValue(contextMenu.node.name);

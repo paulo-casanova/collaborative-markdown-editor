@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   FileText,
   Clock,
@@ -10,8 +10,9 @@ import {
   X,
   AlignLeft,
   MessageSquare,
+  Edit2,
 } from 'lucide-react';
-import { fetchDocument } from '../../api/documents';
+import { fetchDocument, moveDocument } from '../../api/documents';
 import { fetchCurrentUser } from '../../api/auth';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
@@ -88,6 +89,41 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     },
     enabled: Boolean(documentId && documentId !== 'by-path'),
   });
+
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleInput, setTitleInput] = useState('');
+
+  const renameMutation = useMutation({
+    mutationFn: ({ id, newPath, title }: { id: string; newPath: string; title?: string }) =>
+      moveDocument(id, newPath, title),
+    onSuccess: (updatedDoc) => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
+      queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
+      queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
+      updateTabMetadata(updatedDoc.id, {
+        path: updatedDoc.path,
+        title: updatedDoc.title,
+        is_bundle: updatedDoc.is_bundle,
+      });
+      setIsEditingTitle(false);
+    },
+  });
+
+  const handleTitleSubmit = () => {
+    if (!document) return;
+    const trimmed = titleInput.trim();
+    if (!trimmed || trimmed === document.title) {
+      setIsEditingTitle(false);
+      return;
+    }
+    const oldPath = document.path;
+    const dir = oldPath.substring(0, oldPath.lastIndexOf('/'));
+    const ext = oldPath.endsWith('.bundle') ? '.bundle' : '.md';
+    const newName = `${trimmed}${ext}`;
+    const newPath = dir ? `${dir}/${newName}` : newName;
+    renameMutation.mutate({ id: document.id, newPath, title: trimmed });
+  };
 
   // Keep workspace tabs updated with document metadata
   useEffect(() => {
@@ -185,9 +221,41 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
                 {paneLabel}
               </span>
             )}
-            <h1 className="text-xl md:text-2xl font-bold tracking-tight text-cme-text-base truncate">
-              {document.title || 'Untitled Document'}
-            </h1>
+            {isEditingTitle ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="text"
+                  autoFocus
+                  value={titleInput}
+                  onChange={(e) => setTitleInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleTitleSubmit();
+                    if (e.key === 'Escape') setIsEditingTitle(false);
+                  }}
+                  onBlur={handleTitleSubmit}
+                  className="text-xl md:text-2xl font-bold tracking-tight text-cme-text-base bg-cme-bg-subtle border border-cme-primary rounded-lg px-2 py-0.5 focus:outline-none"
+                  data-testid="editor-title-rename-input"
+                />
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 group min-w-0">
+                <h1 className="text-xl md:text-2xl font-bold tracking-tight text-cme-text-base truncate">
+                  {document.title || 'Untitled Document'}
+                </h1>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTitleInput(document.title || '');
+                    setIsEditingTitle(true);
+                  }}
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-opacity flex-shrink-0"
+                  title="Rename document"
+                  data-testid="editor-title-rename-btn"
+                >
+                  <Edit2 className="w-3.5 h-3.5 text-cme-text-subtle hover:text-cme-primary" />
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">

@@ -93,21 +93,44 @@ test.describe('Collaborative TipTap Editor Custom NodeViews (Step 4.2)', () => {
     await expect(wikiLink.getByText('Open File')).toBeVisible();
   });
 
-  test('renders syntax-highlighted code block with language selection and copy button', async ({ page }) => {
-    const codeBlock = page.locator('.code-block-wrapper');
-    await expect(codeBlock).toBeVisible();
+  test('renders syntax-highlighted code block with language selection, line numbers, and copy button', async ({ page }) => {
+    const codeBlocks = page.locator('.code-block-wrapper');
+    await expect(codeBlocks.first()).toBeVisible();
 
-    // Verify language selector displays TypeScript
-    const select = codeBlock.locator('select');
+    // 1. Verify TypeScript code block
+    const tsBlock = codeBlocks.first();
+    const select = tsBlock.locator('select');
     await expect(select).toHaveValue('typescript');
 
+    // Verify syntax highlighting (hljs-keyword exists for "const")
+    const keyword = tsBlock.locator('.hljs-keyword');
+    await expect(keyword).toBeVisible();
+    await expect(keyword).toContainText('const');
+
+    // Verify line numbers gutter
+    const gutter = tsBlock.locator('.line-numbers-gutter');
+    await expect(gutter).toBeVisible();
+    await expect(gutter).toContainText('1');
+
     // Verify code text
-    const code = codeBlock.locator('pre');
+    const code = tsBlock.locator('pre');
     await expect(code).toContainText('Hello Collaborative Editor');
 
     // Verify copy button
-    const copyBtn = codeBlock.getByRole('button', { name: /Copy/i });
+    const copyBtn = tsBlock.getByRole('button', { name: /Copy/i });
     await expect(copyBtn).toBeVisible();
+
+    // 2. Verify untyped code block defaults language to 'none' and renders line numbers
+    const untypedBlock = codeBlocks.nth(1);
+    await expect(untypedBlock).toBeVisible();
+    const untypedSelect = untypedBlock.locator('select');
+    await expect(untypedSelect).toHaveValue(''); // value "" corresponds to "none" label
+    await expect(untypedSelect.locator('option:checked')).toHaveText('none');
+
+    // Verify line numbers for multiline untyped block (lines 1 and 2)
+    const untypedGutter = untypedBlock.locator('.line-numbers-gutter');
+    await expect(untypedGutter).toContainText('1');
+    await expect(untypedGutter).toContainText('2');
   });
 
   test('renders inline KaTeX math ($formula$) formulas with interactive unfolding', async ({ page }) => {

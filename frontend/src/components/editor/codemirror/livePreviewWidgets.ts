@@ -1,6 +1,7 @@
 import { WidgetType, EditorView } from '@codemirror/view';
 import katex from 'katex';
 import { renderMermaidSvg } from '../utils/mermaidRenderer';
+import hljs from 'highlight.js';
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -339,31 +340,60 @@ export class CodeBlockWidget extends WidgetType {
     const header = document.createElement('div');
     header.className =
       'flex items-center justify-between px-3.5 py-1.5 border-b border-cme-border-base bg-cme-bg-surface/80 text-xs';
+
+    const currentLangLower = (this.language || '').toLowerCase().trim();
+    const effectiveLang = currentLangLower === 'none' ? '' : currentLangLower;
+
+    const knownLanguages = [
+      { id: '', label: 'none' },
+      { id: 'typescript', label: 'TypeScript' },
+      { id: 'javascript', label: 'JavaScript' },
+      { id: 'python', label: 'Python' },
+      { id: 'cpp', label: 'C++' },
+      { id: 'c', label: 'C' },
+      { id: 'rust', label: 'Rust' },
+      { id: 'go', label: 'Go' },
+      { id: 'html', label: 'HTML' },
+      { id: 'css', label: 'CSS' },
+      { id: 'json', label: 'JSON' },
+      { id: 'yaml', label: 'YAML' },
+      { id: 'markdown', label: 'Markdown' },
+      { id: 'bash', label: 'Bash' },
+      { id: 'sql', label: 'SQL' },
+    ];
+
+    let optionsHtml = '';
+    let found = false;
+    for (const item of knownLanguages) {
+      const isSelected = item.id === effectiveLang;
+      if (isSelected) found = true;
+      optionsHtml += `<option value="${item.id}" ${isSelected ? 'selected' : ''}>${item.label}</option>`;
+    }
+    if (!found && effectiveLang) {
+      optionsHtml += `<option value="${effectiveLang}" selected>${effectiveLang}</option>`;
+    }
+
     header.innerHTML = `
       <div class="flex items-center gap-2">
-        <select class="bg-transparent font-mono text-[11px] text-cme-text-muted hover:text-cme-text-base border-none focus:outline-none cursor-pointer">
-          <option value="typescript">TypeScript</option>
-          <option value="javascript">JavaScript</option>
-          <option value="python">Python</option>
-          <option value="cpp">C++</option>
+        <select class="bg-transparent font-mono text-[11px] text-cme-text-muted hover:text-cme-text-base border-none focus:outline-none cursor-pointer" data-testid="code-block-lang-select">
+          ${optionsHtml}
         </select>
       </div>
-      <button type="button" class="copy-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base">Copy</button>
+      <button type="button" class="copy-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors">Copy</button>
     `;
 
     const select = header.querySelector('select') as HTMLSelectElement;
-    if (this.language) {
-      select.value = this.language;
-    }
+    select.value = effectiveLang;
 
     select.addEventListener('change', (e) => {
       e.stopPropagation();
       const newLang = select.value;
+      const langHeader = newLang ? newLang : '';
       view.dispatch({
         changes: {
           from: this.from,
           to: this.to,
-          insert: `\`\`\`${newLang}\n${this.code}\n\`\`\``,
+          insert: `\`\`\`${langHeader}\n${this.code}\n\`\`\``,
         },
       });
     });
@@ -376,11 +406,43 @@ export class CodeBlockWidget extends WidgetType {
       setTimeout(() => (copyBtn.textContent = 'Copy'), 2000);
     });
 
+    // Body container: Flex with line numbers gutter and syntax-highlighted pre
     const body = document.createElement('div');
-    body.className = 'p-4 overflow-x-auto cursor-pointer';
+    body.className = 'flex p-4 overflow-x-auto cursor-pointer font-mono text-xs leading-6';
+
+    const lines = this.code.split('\n');
+    const lineCount = lines.length;
+
+    // Line numbers gutter
+    const gutter = document.createElement('div');
+    gutter.className =
+      'line-numbers-gutter select-none text-right pr-3 pl-1 text-cme-text-subtle/50 font-mono text-xs leading-6 border-r border-cme-border-base/40 mr-3 flex-shrink-0';
+    gutter.innerHTML = Array.from({ length: lineCount }, (_, i) => `<div>${i + 1}</div>`).join('');
+
+    // Pre & Code with Syntax Highlighting
     const pre = document.createElement('pre');
-    pre.className = 'font-mono text-xs text-cme-text-base leading-relaxed';
-    pre.textContent = this.code;
+    pre.className = 'font-mono text-xs text-cme-text-base leading-6 flex-1 overflow-x-auto whitespace-pre';
+    const codeElem = document.createElement('code');
+    codeElem.className = effectiveLang ? `hljs language-${effectiveLang}` : 'hljs';
+
+    let highlighted = '';
+    if (effectiveLang) {
+      try {
+        if (hljs.getLanguage(effectiveLang)) {
+          highlighted = hljs.highlight(this.code, { language: effectiveLang, ignoreIllegals: true }).value;
+        } else {
+          highlighted = hljs.highlightAuto(this.code).value;
+        }
+      } catch {
+        highlighted = escapeHtml(this.code);
+      }
+    } else {
+      highlighted = escapeHtml(this.code);
+    }
+    codeElem.innerHTML = highlighted;
+    pre.appendChild(codeElem);
+
+    body.appendChild(gutter);
     body.appendChild(pre);
 
     body.addEventListener('click', () => {
@@ -548,6 +610,12 @@ function renderCellContent(container: HTMLElement, text: string) {
   if (lastIndex < text.length) {
     container.appendChild(renderSimpleText(text.slice(lastIndex)));
   }
+}
+
+function escapeHtml(text: string): string {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 function renderSimpleText(str: string): DocumentFragment {

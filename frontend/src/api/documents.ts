@@ -28,10 +28,10 @@ export async function updateDocument(id: string, payload: { title?: string; cont
   });
 }
 
-export async function moveDocument(id: string, newPath: string): Promise<DocumentRecord> {
+export async function moveDocument(id: string, newPath: string, title?: string): Promise<DocumentRecord> {
   return apiRequest<DocumentRecord>(`/api/v1/documents/${id}/move`, {
     method: 'PATCH',
-    body: JSON.stringify({ new_path: newPath }),
+    body: JSON.stringify({ new_path: newPath, ...(title ? { title } : {}) }),
   });
 }
 

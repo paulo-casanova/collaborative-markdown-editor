@@ -15,6 +15,9 @@ export const TestEditorPage: React.FC = () => {
 
     <pre data-language="typescript"><code>const greeting: string = "Hello Collaborative Editor";</code></pre>
 
+    <pre><code>Plain untyped code line 1
+Plain untyped code line 2</code></pre>
+
     <p>Inline formula: $E = mc^2$ and Euler identity: $e^{i\\pi} + 1 = 0$.</p>
 
     <table>
