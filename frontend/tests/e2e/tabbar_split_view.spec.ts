@@ -81,7 +81,7 @@ test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
     // 3. Click Tab A to switch back
     await tabA.click();
     await expect(page).toHaveURL(`/documents/${docAId}`);
-    await expect(page.locator(`[data-testid="primary-editor-pane"] h1`)).toHaveText(docATitle);
+    await expect(page.locator(`[data-testid="primary-editor-pane"] h1`).first()).toHaveText(docATitle);
   });
 
   test('opens dual-pane Split View, edits concurrently, and restores state on reload', async ({ page }) => {
@@ -107,8 +107,8 @@ test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
     await expect(secondaryPane).toBeVisible();
 
     // Verify primary and secondary panes render their respective documents
-    await expect(primaryPane.locator('h1')).toHaveText(docBTitle);
-    await expect(secondaryPane.locator('h1')).toHaveText(docATitle);
+    await expect(primaryPane.locator('h1').first()).toHaveText(docBTitle);
+    await expect(secondaryPane.locator('h1').first()).toHaveText(docATitle);
 
     // Verify both collaborative editors are mounted side-by-side
     const primaryEditor = primaryPane.locator('.ProseMirror');
@@ -126,8 +126,8 @@ test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
     await expect(splitContainer).toBeVisible();
     await expect(primaryPane).toBeVisible();
     await expect(secondaryPane).toBeVisible();
-    await expect(primaryPane.locator('h1')).toHaveText(docBTitle);
-    await expect(secondaryPane.locator('h1')).toHaveText(docATitle);
+    await expect(primaryPane.locator('h1').first()).toHaveText(docBTitle);
+    await expect(secondaryPane.locator('h1').first()).toHaveText(docATitle);
   });
 
   test('toggles horizontal split mode and closes split pane', async ({ page }) => {

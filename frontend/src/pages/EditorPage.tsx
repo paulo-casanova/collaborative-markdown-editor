@@ -166,7 +166,7 @@ export const EditorPage: React.FC = () => {
           </div>
         ) : !isSplitActive ? (
           // Single-Pane View
-          <div className="h-full overflow-y-auto">
+          <div className="h-full overflow-hidden">
             <EditorPane documentId={primaryDocId} isPrimary={true} />
           </div>
         ) : splitMode === 'vertical' ? (
@@ -178,7 +178,7 @@ export const EditorPage: React.FC = () => {
             {/* Primary Left Pane */}
             <div
               style={{ width: `${splitRatio * 100}%` }}
-              className="h-full overflow-y-auto border-r border-cme-border-base"
+              className="h-full overflow-hidden border-r border-cme-border-base"
               data-testid="primary-pane-wrapper"
             >
               <EditorPane
@@ -198,7 +198,7 @@ export const EditorPage: React.FC = () => {
 
             {/* Secondary Right Pane */}
             <div
-              className="flex-1 h-full overflow-y-auto"
+              className="flex-1 h-full overflow-hidden"
               data-testid="secondary-pane-wrapper"
             >
               <EditorPane

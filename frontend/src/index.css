@@ -115,3 +115,23 @@
   user-select: none;
   white-space: nowrap;
 }
+
+/* TipTap ProseMirror Editor Styling & Caret Visibility */
+.ProseMirror {
+  outline: none !important;
+  min-height: 100%;
+  cursor: text;
+  caret-color: var(--cme-primary, #3b82f6) !important;
+}
+
+.ProseMirror:focus {
+  outline: none !important;
+}
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  color: var(--cme-text-subtle);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}

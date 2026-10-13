@@ -130,7 +130,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }
   const divider = <div className="h-4 w-[1px] bg-cme-border-base mx-1" />;
 
   return (
-    <div className="flex flex-wrap items-center gap-0.5 p-1.5 border-b border-cme-border-base bg-cme-bg-surface select-none sticky top-14 z-30">
+    <div className="flex flex-wrap items-center gap-0.5 p-1.5 border-b border-cme-border-base bg-cme-bg-surface select-none sticky top-0 z-10">
       {/* Undo / Redo */}
       <button
         type="button"

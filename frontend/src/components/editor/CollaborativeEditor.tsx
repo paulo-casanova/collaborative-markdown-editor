@@ -32,6 +32,7 @@ interface CollaborativeEditorProps {
   onChange?: (htmlOrJson: string) => void;
   editable?: boolean;
   onEditorReady?: (editor: any) => void;
+  autoFocus?: boolean | 'start' | 'end' | 'all';
 }
 
 export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
@@ -41,6 +42,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   onChange,
   editable = true,
   onEditorReady,
+  autoFocus = false,
 }) => {
   const extensions = useMemo(() => {
     const baseExtensions: any[] = [
@@ -91,6 +93,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       extensions,
       content: provider ? undefined : initialContent,
       editable,
+      autofocus: autoFocus,
       onCreate: ({ editor }) => {
         try {
           if (editor.view?.dom) {
@@ -106,17 +109,27 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       editorProps: {
         attributes: {
           class:
-            'prose prose-sm dark:prose-invert max-w-none focus:outline-none min-h-[450px] p-6 text-cme-text-base leading-relaxed',
+            'prose prose-sm md:prose-base dark:prose-invert max-w-none focus:outline-none min-h-[450px] p-6 text-cme-text-base leading-relaxed cursor-text',
         },
       },
     },
     [extensions]
   );
 
-  // Synchronize initial content if in standalone mode
+  // Synchronize initial content if editor / Yjs doc is empty
   useEffect(() => {
-    if (!provider && editor && initialContent && editor.isEmpty) {
-      editor.commands.setContent(initialContent);
+    if (!editor || !initialContent) return;
+
+    if (!provider) {
+      if (editor.isEmpty) {
+        editor.commands.setContent(initialContent);
+      }
+    } else {
+      // In collaborative mode, verify if Yjs XmlFragment is empty before initializing
+      const fragment = provider.ydoc.getXmlFragment('default');
+      if (fragment.length === 0 && editor.isEmpty) {
+        editor.commands.setContent(initialContent);
+      }
     }
   }, [editor, initialContent, provider]);
 
@@ -145,7 +158,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   }, [editor, onEditorReady]);
 
   return (
-    <div className="collaborative-editor-root rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm flex flex-col relative">
+    <div className="collaborative-editor-root rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm flex flex-col flex-1 h-full min-h-0 relative">
       {editable && <EditorToolbar editor={editor} provider={provider} />}
       <div className="editor-content-viewport flex-1 overflow-y-auto">
         <EditorContent editor={editor} />

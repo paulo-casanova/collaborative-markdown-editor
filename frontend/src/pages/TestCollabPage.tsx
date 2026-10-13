@@ -37,7 +37,6 @@ export const TestCollabPage: React.FC = () => {
     }
     return () => {
       unsubAlice();
-      aliceProvider.destroy();
     };
   }, [aliceProvider, aliceConnected]);
 
@@ -50,9 +49,15 @@ export const TestCollabPage: React.FC = () => {
     }
     return () => {
       unsubBob();
-      bobProvider.destroy();
     };
   }, [bobProvider, bobConnected]);
+
+  useEffect(() => {
+    return () => {
+      aliceProvider.destroy();
+      bobProvider.destroy();
+    };
+  }, [aliceProvider, bobProvider]);
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">

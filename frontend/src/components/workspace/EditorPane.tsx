@@ -22,6 +22,7 @@ import { CmeCollabProvider, CollabConnectionStatus, ReviewEventPayload } from '.
 import { DocumentOutline } from '../navigation/DocumentOutline';
 import { ReviewSidebar } from '../review/ReviewSidebar';
 import { reconcileAnchor } from '../../review/textAnchoring';
+import { parseMarkdownToHtml } from '../../utils/markdownToHtml';
 
 interface EditorPaneProps {
   documentId: string;
@@ -173,7 +174,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
   return (
     <div
-      className="p-4 md:p-6 space-y-4 max-w-4xl mx-auto h-full flex flex-col"
+      className="p-3 md:p-4 space-y-3 w-full h-full flex flex-col min-w-0"
       data-testid={isPrimary ? 'primary-editor-pane' : 'secondary-editor-pane'}
     >
       {/* Pane Header & Metadata Bar */}
@@ -274,16 +275,9 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         </div>
       </div>
 
-      {/* Optional Document Outline Accordion */}
-      {showOutline && (
-        <div className="border border-cme-border-base rounded-xl bg-cme-bg-surface p-1 shadow-sm flex-shrink-0">
-          <DocumentOutline markdown={document.content} />
-        </div>
-      )}
-
-      {/* Main Workspace Body: Collaborative Editor & Review Sidebar */}
-      <div className="flex-1 flex overflow-hidden min-h-0">
-        <div className="flex-1 overflow-y-auto min-w-0 flex flex-col">
+      {/* Main Workspace Body: Full-Width Collaborative Editor & Right Docked Sidebars */}
+      <div className="flex-1 flex overflow-hidden min-h-0 gap-3">
+        <div className="flex-1 overflow-y-auto min-w-0 flex flex-col h-full">
           <CollaborativeEditor
             key={provider?.ydoc.guid || 'editor'}
             provider={provider}
@@ -297,14 +291,38 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             }
             initialContent={
               document.content
-                ? `<h1>${document.title || 'Document'}</h1><p>${document.content
-                    .replace(/\n\n/g, '</p><p>')
-                    .replace(/\n/g, '<br/>')}</p>`
+                ? parseMarkdownToHtml(document.content)
                 : `<h1>${document.title || 'Document'}</h1><p>Start writing markdown here...</p>`
             }
             onEditorReady={handleEditorReady}
+            autoFocus={isPrimary ? 'end' : false}
           />
         </div>
+
+        {/* Right Docked Table of Contents (TOC) Sidebar */}
+        {showOutline && (
+          <aside
+            className="w-64 border border-cme-border-base rounded-xl bg-cme-bg-surface flex-shrink-0 overflow-hidden flex flex-col shadow-sm"
+            data-testid="editor-outline-sidebar"
+          >
+            <div className="flex items-center justify-between px-3 py-2.5 border-b border-cme-border-base text-xs font-semibold text-cme-text-base bg-cme-bg-subtle/50 flex-shrink-0">
+              <span className="flex items-center gap-1.5">
+                <AlignLeft className="w-3.5 h-3.5 text-cme-primary" />
+                Table of Contents
+              </span>
+              <button
+                onClick={() => setShowOutline(false)}
+                className="p-1 rounded-md hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+                title="Close Table of Contents"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-1">
+              <DocumentOutline markdown={document.content} />
+            </div>
+          </aside>
+        )}
 
         {/* Review Sidebar */}
         {isSidebarOpen && (
