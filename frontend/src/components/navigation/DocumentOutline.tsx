@@ -39,6 +39,43 @@ export function extractHeadingsFromMarkdown(markdown: string): OutlineItem[] {
   return headings;
 }
 
+export function findHeadingPosition(
+  doc: { lines: number; line: (n: number) => { from: number; to: number; text: string } },
+  targetHeading: string
+): { from: number; to: number } | null {
+  if (!doc || !targetHeading) return null;
+  const rawTarget = targetHeading.replace(/^#+\s*/, '').trim();
+  const cleanTarget = rawTarget.replace(/[*_`]/g, '').trim().toLowerCase();
+  const targetSlug = slugify(cleanTarget);
+  const slugCounts: Record<string, number> = {};
+
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    const match = line.text.match(/^(#{1,6})\s+(.*)$/);
+    if (match) {
+      const rawText = match[2].trim();
+      const strippedText = rawText.replace(/[*_`]/g, '').trim().toLowerCase();
+      const baseSlug = slugify(strippedText);
+      const count = slugCounts[baseSlug] || 0;
+      slugCounts[baseSlug] = count + 1;
+      const fullSlug = count === 0 ? baseSlug : `${baseSlug}-${count}`;
+
+      if (
+        strippedText === cleanTarget ||
+        rawText.toLowerCase() === cleanTarget ||
+        baseSlug === targetSlug ||
+        fullSlug === targetSlug ||
+        fullSlug === cleanTarget ||
+        baseSlug === cleanTarget ||
+        slugify(rawText) === targetSlug
+      ) {
+        return { from: line.from, to: line.to };
+      }
+    }
+  }
+  return null;
+}
+
 interface DocumentOutlineProps {
   headings?: OutlineItem[];
   markdown?: string;

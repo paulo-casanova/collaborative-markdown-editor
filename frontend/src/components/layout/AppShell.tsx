@@ -19,11 +19,21 @@ export const AppShell: React.FC = () => {
   // Global wikilink navigation listener
   useEffect(() => {
     const handleOpenWikiLink = (e: Event) => {
-      const customEvent = e as CustomEvent<{ target: string }>;
+      const customEvent = e as CustomEvent<{ target: string; anchor?: string }>;
       const target = customEvent.detail?.target;
+      const anchor = customEvent.detail?.anchor;
       if (target) {
         window.dispatchEvent(new Event('cme-wikilink-handled'));
-        navigate(`/documents/by-path?path=${encodeURIComponent(target)}`);
+        const hash = anchor ? `#${anchor}` : '';
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target);
+        if (isUuid) {
+          navigate(`/documents/${target}${hash}`);
+        } else {
+          navigate(`/documents/by-path?path=${encodeURIComponent(target)}${hash}`);
+        }
+      } else if (anchor) {
+        window.dispatchEvent(new Event('cme-wikilink-handled'));
+        window.location.hash = anchor;
       }
     };
     window.addEventListener('cme-open-wikilink', handleOpenWikiLink as EventListener);

@@ -12,6 +12,7 @@ export const TestEditorPage: React.FC = () => {
     A[Start Node] --> B[Finish Node]"></div>
 
     <p>Check out the documentation at <a class="wiki-link" data-target="guides/intro.md">Introduction Guide</a>.</p>
+    <p>Jump to top: <a class="wiki-link" data-target="#e2e-test-document">E2E Test Document</a>.</p>
 
     <pre data-language="typescript"><code>const greeting: string = "Hello Collaborative Editor";</code></pre>
 

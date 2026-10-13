@@ -657,6 +657,11 @@ Result<void> Server::start() {
             return;
         }
 
+        size_t hash_pos = path_param.find('#');
+        if (hash_pos != std::string::npos) {
+            path_param = path_param.substr(0, hash_pos);
+        }
+
         std::string standalone_param = std::string(req->getQuery("standalone"));
         std::string reviews_param = std::string(req->getQuery("include_reviews"));
         bool standalone = (standalone_param == "true" || standalone_param == "1");
@@ -713,6 +718,11 @@ Result<void> Server::start() {
         if (path_param.empty()) {
             send_json(res, "400 Bad Request", {{"error", "Query parameter 'path' is required"}});
             return;
+        }
+
+        size_t hash_pos = path_param.find('#');
+        if (hash_pos != std::string::npos) {
+            path_param = path_param.substr(0, hash_pos);
         }
 
         auto doc_res = document_service_->get_document_by_path(path_param, *auth_res.value());

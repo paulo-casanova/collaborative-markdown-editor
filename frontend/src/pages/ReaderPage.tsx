@@ -111,6 +111,36 @@ export const ReaderPage: React.FC = () => {
     }
   }, [document, setBreadcrumbs]);
 
+  // Auto-scroll to heading anchor if present in URL on load
+  // Auto-scroll to heading anchor if present in URL on load
+  useEffect(() => {
+    if (!document?.content || isLoading) return;
+    const hash = window.location.hash.replace(/^#/, '');
+    if (hash) {
+      const timer = setTimeout(() => {
+        const el = typeof window !== 'undefined' ? window.document.getElementById(hash) : null;
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [document?.id, document?.content, isLoading]);
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash) {
+        const el = typeof window !== 'undefined' ? window.document.getElementById(hash) : null;
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
   // Headings extracted for Table of Contents
   const headings = useMemo(() => {
     if (!document?.content) return [];
@@ -120,12 +150,17 @@ export const ReaderPage: React.FC = () => {
   // Render markdown content into rich blocks with IDs on headings
   const renderedContent = useMemo(() => {
     if (!document?.content) return null;
-    return renderMarkdown(document.content, (code, id) => {
-      navigator.clipboard.writeText(code);
-      setCopiedCodeId(id);
-      setTimeout(() => setCopiedCodeId(null), 2000);
-    }, copiedCodeId);
-  }, [document?.content, copiedCodeId]);
+    return renderMarkdown(
+      document.content,
+      (code, id) => {
+        navigator.clipboard.writeText(code);
+        setCopiedCodeId(id);
+        setTimeout(() => setCopiedCodeId(null), 2000);
+      },
+      copiedCodeId,
+      document.id || document.path || ''
+    );
+  }, [document?.id, document?.path, document?.content, copiedCodeId]);
 
   if (isLoading) {
     return (
@@ -436,7 +471,8 @@ export const ReaderPage: React.FC = () => {
 function renderMarkdown(
   content: string,
   onCopyCode: (code: string, id: string) => void,
-  copiedCodeId: string | null
+  copiedCodeId: string | null,
+  currentDocTarget: string = ''
 ): React.ReactNode[] {
   const lines = content.split('\n');
   const elements: React.ReactNode[] = [];
@@ -572,7 +608,7 @@ function renderMarkdown(
       slugCounts[baseSlug] = count + 1;
       const id = count === 0 ? baseSlug : `${baseSlug}-${count}`;
 
-      const headingContent = renderInlineFormatted(rawText);
+      const headingContent = renderInlineFormatted(rawText, currentDocTarget);
 
       if (level === 1) {
         elements.push(
@@ -701,7 +737,7 @@ function renderMarkdown(
                       className="px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0"
                       style={{ textAlign: alignments[colIdx] || 'left' }}
                     >
-                      {renderInlineFormatted(header)}
+                      {renderInlineFormatted(header, currentDocTarget)}
                     </th>
                   ))}
                 </tr>
@@ -722,7 +758,7 @@ function renderMarkdown(
                         className="px-4 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0"
                         style={{ textAlign: alignments[colIdx] || 'left' }}
                       >
-                        {renderInlineFormatted(rowCells[colIdx] || '')}
+                        {renderInlineFormatted(rowCells[colIdx] || '', currentDocTarget)}
                       </td>
                     ))}
                   </tr>
@@ -751,7 +787,7 @@ function renderMarkdown(
               className="rounded text-cme-primary border-cme-border-base focus:ring-0"
             />
             <span className={checked ? 'line-through text-cme-text-muted' : ''}>
-              {renderInlineFormatted(match[2])}
+              {renderInlineFormatted(match[2], currentDocTarget)}
             </span>
           </div>
         );
@@ -766,7 +802,7 @@ function renderMarkdown(
       if (match) {
         elements.push(
           <li key={`li-${i}`} className="ml-4 list-disc text-sm my-0.5">
-            {renderInlineFormatted(match[1])}
+            {renderInlineFormatted(match[1], currentDocTarget)}
           </li>
         );
         i++;
@@ -783,7 +819,7 @@ function renderMarkdown(
     // Normal Paragraph
     elements.push(
       <p key={`p-${i}`} className="my-2 text-sm leading-relaxed">
-        {renderInlineFormatted(line)}
+        {renderInlineFormatted(line, currentDocTarget)}
       </p>
     );
     i++;
@@ -793,7 +829,7 @@ function renderMarkdown(
 }
 
 // Inline formatting helper: Bold, Italic, Strikethrough, Inline Code, Inline Math ($...$), and WikiLinks ([[target]])
-function renderInlineFormatted(text: string): React.ReactNode {
+function renderInlineFormatted(text: string, currentDocTarget: string = ''): React.ReactNode {
   if (!text) return null;
 
   // Split on [[target|alias]], inline math $...$, inline code `...`, strikethrough ~~...~~, bold **...**, italic *...*
@@ -804,10 +840,46 @@ function renderInlineFormatted(text: string): React.ReactNode {
     if (part.startsWith('[[') && part.endsWith(']]')) {
       const inner = part.slice(2, -2);
       const [target, alias] = inner.split('|');
-      const label = (alias || target).trim();
       const cleanTarget = target.trim();
-      const [targetDoc, anchor] = cleanTarget.split('#');
-      const docLink = `/docs/${encodeURIComponent(targetDoc.trim())}${anchor ? `#${slugify(anchor)}` : ''}`;
+      const hashIndex = cleanTarget.indexOf('#');
+      const targetDoc = hashIndex >= 0 ? cleanTarget.slice(0, hashIndex).trim() : cleanTarget;
+      const rawAnchor = hashIndex >= 0 ? cleanTarget.slice(hashIndex + 1).trim() : '';
+      const isSameDoc = cleanTarget.startsWith('#') || targetDoc === '';
+      const anchorSlug = rawAnchor ? slugify(rawAnchor) : '';
+      const label = (alias || (isSameDoc ? (rawAnchor ? `#${rawAnchor}` : cleanTarget) : cleanTarget)).trim();
+
+      if (isSameDoc) {
+        const hashHref = `#${anchorSlug}`;
+        return (
+          <a
+            key={idx}
+            href={hashHref}
+            className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
+            title={`Heading link: [[${cleanTarget}]] (Click to jump to heading, Ctrl+Click to edit)`}
+            onClick={(e) => {
+              if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                window.dispatchEvent(
+                  new CustomEvent('cme-open-wikilink', {
+                    detail: { target: currentDocTarget, anchor: anchorSlug },
+                  })
+                );
+                return;
+              }
+              e.preventDefault();
+              const el = typeof window !== 'undefined' ? window.document.getElementById(anchorSlug) : null;
+              if (el) {
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                window.history.pushState(null, '', hashHref);
+              }
+            }}
+          >
+            <span>{label}</span>
+          </a>
+        );
+      }
+
+      const docLink = `/docs/${encodeURIComponent(targetDoc)}${anchorSlug ? `#${anchorSlug}` : ''}`;
       return (
         <Link
           key={idx}
@@ -819,7 +891,7 @@ function renderInlineFormatted(text: string): React.ReactNode {
               e.preventDefault();
               window.dispatchEvent(
                 new CustomEvent('cme-open-wikilink', {
-                  detail: { target: targetDoc.trim() },
+                  detail: { target: targetDoc, anchor: anchorSlug },
                 })
               );
             }
@@ -863,19 +935,19 @@ function renderInlineFormatted(text: string): React.ReactNode {
     if (part.startsWith('~~') && part.endsWith('~~') && part.length > 4) {
       return (
         <del key={idx} className="line-through text-cme-text-muted">
-          {renderInlineFormatted(part.slice(2, -2))}
+          {renderInlineFormatted(part.slice(2, -2), currentDocTarget)}
         </del>
       );
     }
 
     // Bold **...**
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
-      return <strong key={idx}>{renderInlineFormatted(part.slice(2, -2))}</strong>;
+      return <strong key={idx}>{renderInlineFormatted(part.slice(2, -2), currentDocTarget)}</strong>;
     }
 
     // Italic *...*
     if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
-      return <em key={idx}>{renderInlineFormatted(part.slice(1, -1))}</em>;
+      return <em key={idx}>{renderInlineFormatted(part.slice(1, -1), currentDocTarget)}</em>;
     }
 
     return part;

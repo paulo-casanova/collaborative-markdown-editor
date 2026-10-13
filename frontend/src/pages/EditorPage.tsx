@@ -61,7 +61,7 @@ export const EditorPage: React.FC = () => {
         is_bundle: docByPath.is_bundle,
       });
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
-      navigate(`/documents/${docByPath.id}`, { replace: true });
+      navigate(`/documents/${docByPath.id}${location.hash || ''}`, { replace: true });
     }
   }, [isByPath, docByPath, openTab, queryClient, navigate]);
 

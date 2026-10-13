@@ -14,6 +14,7 @@ import {
   InlineMathWidget,
   TableBlockWidget,
 } from './livePreviewWidgets';
+import { slugify } from '../../navigation/DocumentOutline';
 
 interface DecoItem {
   from: number;
@@ -36,7 +37,7 @@ export function createLivePreviewPlugin(isDark: boolean = false): Extension {
   });
 }
 
-function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false): DecorationSet {
+export function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
   const sel = state.selection.main;
@@ -45,6 +46,7 @@ function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false
 
   const docText = doc.toString();
   const items: DecoItem[] = [];
+  const headingSlugCounts: Record<string, number> = {};
 
   // Track replaced ranges to prevent overlapping replacement decorations
   const replacedRanges: { from: number; to: number }[] = [];
@@ -205,6 +207,20 @@ function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false
     if (headingMatch) {
       const level = headingMatch[1].length;
       const prefixLen = level + 1; // e.g. "## " = 3 chars
+      const rawHeadingText = headingMatch[2].trim();
+      const baseSlug = slugify(rawHeadingText.replace(/[*_`]/g, ''));
+      const count = headingSlugCounts[baseSlug] || 0;
+      headingSlugCounts[baseSlug] = count + 1;
+      const headingId = count === 0 ? baseSlug : `${baseSlug}-${count}`;
+
+      items.push({
+        from: lineFrom,
+        to: lineFrom,
+        deco: Decoration.line({
+          attributes: { id: headingId, 'data-heading-level': String(level) },
+        }),
+      });
+
       const headingClass =
         level === 1
           ? 'cme-live-h1'
@@ -434,9 +450,12 @@ function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false
     }
   }
 
-  // Sort items strictly by `from`, then by `to`
+  // Sort items strictly by `from`, then by `startSide`, then by `to`
   items.sort((a, b) => {
     if (a.from !== b.from) return a.from - b.from;
+    const sideA = (a.deco as any).startSide ?? 0;
+    const sideB = (b.deco as any).startSide ?? 0;
+    if (sideA !== sideB) return sideA - sideB;
     return a.to - b.to;
   });
 

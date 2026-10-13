@@ -2,6 +2,7 @@ import { WidgetType, EditorView } from '@codemirror/view';
 import katex from 'katex';
 import { renderMermaidSvg } from '../utils/mermaidRenderer';
 import hljs from 'highlight.js';
+import { findHeadingPosition, slugify } from '../../navigation/DocumentOutline';
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -233,37 +234,74 @@ export class WikiLinkWidget extends WidgetType {
     return this.target === other.target && this.label === other.label;
   }
 
-  toDOM(_view: EditorView): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const span = document.createElement('span');
     span.className =
       'wiki-link-node inline-block align-middle select-none relative my-0.5 mx-0.5';
 
     const cleanTarget = this.target.trim();
-    const targetDoc = cleanTarget.split('#')[0].trim();
+    const hashIndex = cleanTarget.indexOf('#');
+    const targetDoc = hashIndex >= 0 ? cleanTarget.slice(0, hashIndex).trim() : cleanTarget;
+    const rawAnchor = hashIndex >= 0 ? cleanTarget.slice(hashIndex + 1).trim() : '';
+    const isSameDoc = cleanTarget.startsWith('#') || targetDoc === '';
+    const anchorSlug = rawAnchor ? slugify(rawAnchor) : '';
 
     const pill = document.createElement('span');
     pill.className =
       'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md font-mono text-xs cursor-pointer border border-cme-primary/30 bg-cme-primary/5 text-cme-primary hover:bg-cme-primary/15 transition-colors';
-    pill.innerHTML = `<span class="font-medium underline decoration-cme-primary/40 underline-offset-2">${this.label}</span><span class="open-icon opacity-70 hover:opacity-100 hover:text-cme-primary text-[10px] ml-0.5" title="Open file directly">↗</span>`;
-    pill.title = `Wiki link: [[${this.target}]] (Click for reference card, Ctrl+Click or ↗ to open file)`;
+    const displayLabel = this.label || (isSameDoc ? (rawAnchor ? `#${rawAnchor}` : cleanTarget) : cleanTarget);
+    pill.innerHTML = `<span class="font-medium underline decoration-cme-primary/40 underline-offset-2">${escapeHtml(displayLabel)}</span><span class="open-icon opacity-70 hover:opacity-100 hover:text-cme-primary text-[10px] ml-0.5" title="${isSameDoc ? 'Jump to heading' : 'Open file directly'}">${isSameDoc ? '↓' : '↗'}</span>`;
+    pill.title = isSameDoc
+      ? `Heading link: [[${cleanTarget}]] (Click to jump to heading)`
+      : `Wiki link: [[${cleanTarget}]] (Click for reference card, Ctrl+Click or ↗ to open file)`;
     span.appendChild(pill);
 
     // Popover
     const popover = document.createElement('div');
     popover.className =
       'hidden absolute left-0 bottom-full mb-1.5 w-64 p-3 bg-cme-bg-surface border border-cme-border-base rounded-xl shadow-xl z-50 text-xs space-y-2';
-    popover.innerHTML = `
-      <div class="space-y-1">
-        <label class="font-semibold text-cme-text-muted text-[10px]">Target Document:</label>
-        <input type="text" class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary" placeholder="e.g. guides/intro.md" value="${this.target}" />
-      </div>
-      <div class="flex items-center justify-between pt-1 border-t border-cme-border-base">
-        <button type="button" class="open-btn px-2 py-1 rounded text-xs font-medium bg-cme-primary text-white hover:bg-cme-primary/90 transition-colors">Open File</button>
-      </div>
-    `;
+    if (isSameDoc) {
+      popover.innerHTML = `
+        <div class="space-y-1">
+          <label class="font-semibold text-cme-text-muted text-[10px]">Target Heading:</label>
+          <input type="text" readonly class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none" value="#${rawAnchor}" />
+        </div>
+        <div class="flex items-center justify-between pt-1 border-t border-cme-border-base">
+          <button type="button" class="jump-btn px-2 py-1 rounded text-xs font-medium bg-cme-primary text-white hover:bg-cme-primary/90 transition-colors">Jump to Heading</button>
+        </div>
+      `;
+    } else {
+      popover.innerHTML = `
+        <div class="space-y-1">
+          <label class="font-semibold text-cme-text-muted text-[10px]">Target Document:</label>
+          <input type="text" class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary" placeholder="e.g. guides/intro.md" value="${this.target}" />
+        </div>
+        <div class="flex items-center justify-between pt-1 border-t border-cme-border-base">
+          <button type="button" class="open-btn px-2 py-1 rounded text-xs font-medium bg-cme-primary text-white hover:bg-cme-primary/90 transition-colors">Open File</button>
+        </div>
+      `;
+    }
     span.appendChild(popover);
 
+    const jumpToHeading = () => {
+      const pos = findHeadingPosition(view.state.doc, rawAnchor);
+      if (pos) {
+        view.dispatch({
+          selection: { anchor: pos.from },
+          scrollIntoView: true,
+        });
+        view.focus();
+        popover.classList.add('hidden');
+        return true;
+      }
+      return false;
+    };
+
     const navigateToTarget = () => {
+      if (isSameDoc) {
+        jumpToHeading();
+        return;
+      }
       let handled = false;
       const onHandled = () => {
         handled = true;
@@ -271,14 +309,15 @@ export class WikiLinkWidget extends WidgetType {
       window.addEventListener('cme-wikilink-handled', onHandled, { once: true });
       window.dispatchEvent(
         new CustomEvent('cme-open-wikilink', {
-          detail: { target: targetDoc },
+          detail: { target: targetDoc, anchor: anchorSlug },
         })
       );
       setTimeout(() => {
         window.removeEventListener('cme-wikilink-handled', onHandled);
         if (!handled && typeof window !== 'undefined') {
+          const hashPart = anchorSlug ? `#${anchorSlug}` : '';
           if (!window.location.search.includes(encodeURIComponent(targetDoc))) {
-            window.location.href = `/documents/by-path?path=${encodeURIComponent(targetDoc)}`;
+            window.location.href = `/documents/by-path?path=${encodeURIComponent(targetDoc)}${hashPart}`;
           }
         }
       }, 50);
@@ -287,6 +326,13 @@ export class WikiLinkWidget extends WidgetType {
     pill.addEventListener('click', (e) => {
       e.stopPropagation();
       const targetEl = e.target as HTMLElement;
+      if (isSameDoc) {
+        const jumped = jumpToHeading();
+        if (!jumped) {
+          popover.classList.toggle('hidden');
+        }
+        return;
+      }
       if (e.ctrlKey || e.metaKey || targetEl.classList.contains('open-icon')) {
         navigateToTarget();
         return;
@@ -298,6 +344,12 @@ export class WikiLinkWidget extends WidgetType {
     openBtn?.addEventListener('click', (e) => {
       e.stopPropagation();
       navigateToTarget();
+    });
+
+    const jumpBtn = popover.querySelector('.jump-btn') as HTMLButtonElement;
+    jumpBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      jumpToHeading();
     });
 
     return span;

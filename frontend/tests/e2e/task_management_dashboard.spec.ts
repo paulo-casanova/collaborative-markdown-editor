@@ -25,7 +25,7 @@ test.describe('Phase 6, Step 6.3: Task Management Dashboard & Real-Time Event Fa
     testerToken = testerJson.token;
 
     // 3. Create a fresh test document
-    const docPath = `tasks_e2e_${Date.now()}.md`;
+    const docPath = `tasks_e2e_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.md`;
     const docRes = await request.post(`${BACKEND_URL}/api/v1/documents`, {
       headers: { Authorization: `Bearer ${adminToken}` },
       data: {

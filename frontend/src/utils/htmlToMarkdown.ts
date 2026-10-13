@@ -80,5 +80,9 @@ export function normalizeContentToMarkdown(content: string): string {
   // Strip remaining tags
   md = md.replace(/<[^>]+>/g, '');
 
-  return md.trim();
+  return md
+    .split('\n')
+    .map((l) => (l.trim().startsWith('|') ? l.trim() : l))
+    .join('\n')
+    .trim();
 }

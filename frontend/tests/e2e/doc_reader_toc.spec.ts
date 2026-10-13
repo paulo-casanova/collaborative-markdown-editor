@@ -2,15 +2,18 @@ import { test, expect } from '@playwright/test';
 import { BACKEND_URL } from './test_config';
 
 test.describe('Table of Contents & Documentation Reader View (Step 5.3)', () => {
+  test.describe.configure({ mode: 'serial' });
+
   let adminToken = '';
   let docId = '';
-  const timestamp = Date.now();
-  const docPath = `guides/intro_${timestamp}.md`;
-  const docTitle = `CME Documentation Guide ${timestamp}`;
+  let docPath = '';
+  let docTitle = '';
 
-  const docMarkdown = `# ${docTitle}
+  const getDocMarkdown = (title: string) => `# ${title}
 
 Welcome to the comprehensive CME reader documentation guide.
+
+Jump to internal heading: [[#Architecture Overview]] or with label [[#Architecture Overview|Go to Arch]].
 
 ## Getting Started
 
@@ -57,6 +60,10 @@ Formatted text with ~~deprecated syntax~~ and **bold text** and *italic notes*.
 `;
 
   test.beforeAll(async ({ request }) => {
+    const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    docPath = `guides/intro_${uniqueSuffix}.md`;
+    docTitle = `CME Documentation Guide ${uniqueSuffix}`;
+    const docMarkdown = getDocMarkdown(docTitle);
     // 1. Authenticate test_admin
     const adminRes = await request.post(`${BACKEND_URL}/api/v1/auth/login`, {
       data: { username: 'test_admin', password: 'password123' },
@@ -212,5 +219,30 @@ Formatted text with ~~deprecated syntax~~ and **bold text** and *italic notes*.
     const strike = article.locator('del');
     await expect(strike).toBeVisible();
     await expect(strike).toContainText('deprecated syntax');
+  });
+
+  test('navigates and scrolls via internal heading xrefs [[#Heading]] and piped label [[#Heading|Label]] in reader view', async ({
+    page,
+  }) => {
+    await page.goto(`/docs/${docPath}`);
+
+    const article = page.locator('[data-testid="reader-article"]');
+    await expect(article).toBeVisible();
+
+    // 1. Verify link renders as an in-page anchor with href="#architecture-overview"
+    const xrefLink = article.locator('a[href="#architecture-overview"]').first();
+    await expect(xrefLink).toBeVisible();
+    await expect(xrefLink).toHaveText('#Architecture Overview');
+
+    // 2. Click the heading link
+    await xrefLink.click();
+
+    // 3. Verify URL hash is updated to #architecture-overview
+    await expect(page).toHaveURL(new RegExp('#architecture-overview$'));
+
+    // 4. Verify piped heading link
+    const pipedLink = article.locator('a[href="#architecture-overview"]').nth(1);
+    await expect(pipedLink).toBeVisible();
+    await expect(pipedLink).toHaveText('Go to Arch');
   });
 });

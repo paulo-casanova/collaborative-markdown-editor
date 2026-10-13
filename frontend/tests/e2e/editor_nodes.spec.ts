@@ -75,7 +75,7 @@ test.describe('Collaborative TipTap Editor Custom NodeViews (Step 4.2)', () => {
   });
 
   test('renders Obsidian-style [[wiki-links]] and interactive reference popup', async ({ page }) => {
-    const wikiLink = page.locator('.wiki-link-node');
+    const wikiLink = page.locator('.wiki-link-node').first();
     await expect(wikiLink).toBeVisible();
 
     // Verify display label
@@ -91,6 +91,22 @@ test.describe('Collaborative TipTap Editor Custom NodeViews (Step 4.2)', () => {
 
     // Verify "Open File" action exists
     await expect(wikiLink.getByText('Open File')).toBeVisible();
+  });
+
+  test('supports internal heading cross-references [[#heading]] and jumps to heading in editor', async ({ page }) => {
+    // Locate the heading xref widget
+    const headingLink = page.locator('.wiki-link-node', { hasText: 'E2E Test Document' });
+    await expect(headingLink).toBeVisible();
+
+    // Verify indicator icon is present
+    await expect(headingLink.locator('.open-icon')).toBeVisible();
+
+    // Click the pill to jump to the heading
+    await headingLink.click();
+
+    // Verify heading line in CodeMirror is decorated with id="e2e-test-document"
+    const headingLine = page.locator('#e2e-test-document');
+    await expect(headingLine).toBeVisible();
   });
 
   test('renders syntax-highlighted code block with language selection, line numbers, and copy button', async ({ page }) => {
@@ -150,6 +166,9 @@ test.describe('Collaborative TipTap Editor Custom NodeViews (Step 4.2)', () => {
   });
 
   test('renders GFM Markdown tables with headers and rows, and supports click to edit', async ({ page }) => {
+    await page.evaluate(() => {
+      window.scrollTo(0, document.body.scrollHeight);
+    });
     const tableBlock = page.locator('.cme-table-block-node');
     await expect(tableBlock).toBeVisible();
 

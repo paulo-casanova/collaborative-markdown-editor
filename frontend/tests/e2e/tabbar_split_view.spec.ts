@@ -2,6 +2,8 @@ import { test, expect } from '@playwright/test';
 import { BACKEND_URL } from './test_config';
 
 test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
+  test.describe.configure({ mode: 'serial' });
+
   let adminToken = '';
   let docAId = '';
   let docBId = '';
@@ -9,7 +11,7 @@ test.describe('Multi-Document TabBar & Split-View Workspace (Step 5.2)', () => {
   let docBTitle = '';
 
   test.beforeAll(async ({ request }) => {
-    const timestamp = Date.now();
+    const timestamp = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     docATitle = `Doc Alpha ${timestamp}`;
     docBTitle = `Doc Beta ${timestamp}`;
 

@@ -20,7 +20,7 @@ import { useReviewStore } from '../../stores/reviewStore';
 import { Badge } from '../common/Badge';
 import { CollaborativeEditor } from '../editor/CollaborativeEditor';
 import { CmeCollabProvider, CollabConnectionStatus, ReviewEventPayload } from '../../api/collabProvider';
-import { DocumentOutline } from '../navigation/DocumentOutline';
+import { DocumentOutline, findHeadingPosition, slugify } from '../navigation/DocumentOutline';
 import { ReviewSidebar } from '../review/ReviewSidebar';
 import { reconcileAnchor } from '../../review/textAnchoring';
 
@@ -47,6 +47,55 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const handleEditorReady = useCallback((ed: any) => {
     setEditorInstance((prev: any) => prev || ed);
   }, []);
+
+  const scrollToHeading = useCallback(
+    (headingTarget: string) => {
+      if (!headingTarget) return;
+      const clean = headingTarget.replace(/^#/, '');
+      if (!clean) return;
+
+      if (editorInstance && !editorInstance.isDestroyed) {
+        const view = editorInstance.getView?.() || (editorInstance as any).view;
+        if (view?.state?.doc) {
+          const pos = findHeadingPosition(view.state.doc, clean);
+          if (pos) {
+            view.dispatch({
+              selection: { anchor: pos.from },
+              scrollIntoView: true,
+            });
+            view.focus();
+            return;
+          }
+        }
+      }
+
+      const dom = typeof window !== 'undefined' ? window.document : null;
+      const domEl = dom ? (dom.getElementById(clean) || dom.getElementById(slugify(clean))) : null;
+      if (domEl) {
+        domEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    },
+    [editorInstance]
+  );
+
+  useEffect(() => {
+    if (editorInstance && window.location.hash) {
+      const timer = setTimeout(() => {
+        scrollToHeading(window.location.hash);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [editorInstance, scrollToHeading]);
+
+  useEffect(() => {
+    const handleHash = () => {
+      if (window.location.hash) {
+        scrollToHeading(window.location.hash);
+      }
+    };
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, [scrollToHeading]);
 
   const provider = useMemo(() => {
     if (!documentId || documentId === 'by-path') return null;
@@ -402,7 +451,12 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-1">
-              <DocumentOutline markdown={document.content} />
+              <DocumentOutline
+                markdown={document.content}
+                onSelectHeading={(id) => {
+                  scrollToHeading(id);
+                }}
+              />
             </div>
           </aside>
         )}
