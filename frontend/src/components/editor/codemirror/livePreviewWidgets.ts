@@ -238,10 +238,14 @@ export class WikiLinkWidget extends WidgetType {
     span.className =
       'wiki-link-node inline-block align-middle select-none relative my-0.5 mx-0.5';
 
+    const cleanTarget = this.target.trim();
+    const targetDoc = cleanTarget.split('#')[0].trim();
+
     const pill = document.createElement('span');
     pill.className =
       'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md font-mono text-xs cursor-pointer border border-cme-primary/30 bg-cme-primary/5 text-cme-primary hover:bg-cme-primary/15 transition-colors';
-    pill.innerHTML = `<span class="font-medium underline decoration-cme-primary/40 underline-offset-2">${this.label}</span>`;
+    pill.innerHTML = `<span class="font-medium underline decoration-cme-primary/40 underline-offset-2">${this.label}</span><span class="open-icon opacity-70 hover:opacity-100 hover:text-cme-primary text-[10px] ml-0.5" title="Open file directly">↗</span>`;
+    pill.title = `Wiki link: [[${this.target}]] (Click for reference card, Ctrl+Click or ↗ to open file)`;
     span.appendChild(pill);
 
     // Popover
@@ -259,17 +263,41 @@ export class WikiLinkWidget extends WidgetType {
     `;
     span.appendChild(popover);
 
+    const navigateToTarget = () => {
+      let handled = false;
+      const onHandled = () => {
+        handled = true;
+      };
+      window.addEventListener('cme-wikilink-handled', onHandled, { once: true });
+      window.dispatchEvent(
+        new CustomEvent('cme-open-wikilink', {
+          detail: { target: targetDoc },
+        })
+      );
+      setTimeout(() => {
+        window.removeEventListener('cme-wikilink-handled', onHandled);
+        if (!handled && typeof window !== 'undefined') {
+          if (!window.location.search.includes(encodeURIComponent(targetDoc))) {
+            window.location.href = `/documents/by-path?path=${encodeURIComponent(targetDoc)}`;
+          }
+        }
+      }, 50);
+    };
+
     pill.addEventListener('click', (e) => {
       e.stopPropagation();
+      const targetEl = e.target as HTMLElement;
+      if (e.ctrlKey || e.metaKey || targetEl.classList.contains('open-icon')) {
+        navigateToTarget();
+        return;
+      }
       popover.classList.toggle('hidden');
     });
 
     const openBtn = popover.querySelector('.open-btn') as HTMLButtonElement;
     openBtn?.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (typeof window !== 'undefined') {
-        window.location.href = `/documents/by-path?path=${encodeURIComponent(this.target)}`;
-      }
+      navigateToTarget();
     });
 
     return span;

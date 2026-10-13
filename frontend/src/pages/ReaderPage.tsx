@@ -52,16 +52,17 @@ export const ReaderPage: React.FC = () => {
     queryKey: ['doc-reader', rawTarget],
     queryFn: async () => {
       if (!rawTarget) throw new Error('No document path or ID provided');
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTarget);
+      const targetPath = rawTarget.split('#')[0].trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetPath);
       if (isUuid) {
-        return await fetchDocument(rawTarget);
+        return await fetchDocument(targetPath);
       }
       try {
-        return await fetchDocumentByPath(rawTarget);
+        return await fetchDocumentByPath(targetPath);
       } catch (err) {
-        if (!rawTarget.startsWith('workspace/')) {
+        if (!targetPath.startsWith('workspace/')) {
           try {
-            return await fetchDocumentByPath(`workspace/${rawTarget}`);
+            return await fetchDocumentByPath(`workspace/${targetPath}`);
           } catch {
             throw err;
           }
@@ -667,13 +668,26 @@ function renderInlineFormatted(text: string): React.ReactNode {
     if (part.startsWith('[[') && part.endsWith(']]')) {
       const inner = part.slice(2, -2);
       const [target, alias] = inner.split('|');
-      const label = alias || target;
+      const label = (alias || target).trim();
+      const cleanTarget = target.trim();
+      const [targetDoc, anchor] = cleanTarget.split('#');
+      const docLink = `/docs/${encodeURIComponent(targetDoc.trim())}${anchor ? `#${slugify(anchor)}` : ''}`;
       return (
         <Link
           key={idx}
-          to={`/docs/${encodeURIComponent(target.trim())}`}
-          className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5"
-          title={`Open wiki link: ${target}`}
+          to={docLink}
+          className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
+          title={`Wiki link: [[${cleanTarget}]] (Click to view, Ctrl+Click to edit)`}
+          onClick={(e) => {
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              window.dispatchEvent(
+                new CustomEvent('cme-open-wikilink', {
+                  detail: { target: targetDoc.trim() },
+                })
+              );
+            }
+          }}
         >
           <span>{label}</span>
         </Link>

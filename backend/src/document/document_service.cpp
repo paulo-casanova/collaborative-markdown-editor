@@ -54,6 +54,39 @@ std::string derive_title(std::string_view content, std::string_view path) {
     return "Untitled";
 }
 
+std::string to_lower_string(std::string_view s) {
+    std::string res;
+    res.reserve(s.size());
+    for (char c : s) {
+        res.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return res;
+}
+
+size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
+    const size_t m = s1.size();
+    const size_t n = s2.size();
+    if (m == 0) return n;
+    if (n == 0) return m;
+
+    std::vector<size_t> dp0(n + 1);
+    std::vector<size_t> dp1(n + 1);
+
+    for (size_t j = 0; j <= n; ++j) dp0[j] = j;
+
+    for (size_t i = 1; i <= m; ++i) {
+        dp1[0] = i;
+        for (size_t j = 1; j <= n; ++j) {
+            char c1 = static_cast<char>(std::tolower(static_cast<unsigned char>(s1[i - 1])));
+            char c2 = static_cast<char>(std::tolower(static_cast<unsigned char>(s2[j - 1])));
+            size_t cost = (c1 == c2) ? 0 : 1;
+            dp1[j] = std::min({ dp0[j] + 1, dp1[j - 1] + 1, dp0[j - 1] + cost });
+        }
+        dp0 = dp1;
+    }
+    return dp0[n];
+}
+
 } // namespace
 
 DocumentService::DocumentService(
@@ -252,10 +285,20 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         return std::unexpected(ErrorCode::DatabaseError);
     }
 
-    std::string norm_path = normalize_rel_path(relative_path);
+    // Strip anchor if present (e.g., "target#heading")
+    std::string clean_path = relative_path;
+    auto hash_idx = clean_path.find('#');
+    if (hash_idx != std::string::npos) {
+        clean_path = clean_path.substr(0, hash_idx);
+    }
+    std::string norm_path = normalize_rel_path(clean_path);
     if (norm_path.empty() || has_path_traversal(norm_path)) {
         return std::unexpected(ErrorCode::InvalidArgument);
     }
+
+    std::filesystem::path fp(norm_path);
+    std::string basename = fp.filename().string();
+    std::string stem = fp.stem().string();
 
     auto conn_res = db_pool_->acquire();
     if (!conn_res.has_value()) {
@@ -265,6 +308,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
     try {
         pqxx::work tx(conn_res->get());
 
+        // 1. Exact fs_path match
         auto rows = tx.exec_params(
             "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
             "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
@@ -273,32 +317,167 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             norm_path
         );
 
+        // 2. Exact fs_path with .md extension if not already ending with .md
+        if (rows.empty() && !norm_path.ends_with(".md") && !norm_path.ends_with(".bundle")) {
+            rows = tx.exec_params(
+                "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM documents WHERE fs_path = $1;",
+                norm_path + ".md"
+            );
+        }
+
+        // 3. Exact title match (norm_path or stem)
+        if (rows.empty()) {
+            rows = tx.exec_params(
+                "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM documents WHERE title = $1 OR title = $2 LIMIT 1;",
+                norm_path,
+                stem
+            );
+        }
+
+        // 4. Vault-wide basename match (e.g. [[Test File Modified]] matches specs/Test File Modified.md)
+        if (rows.empty()) {
+            rows = tx.exec_params(
+                "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM documents "
+                "WHERE fs_path = $1 "
+                "   OR fs_path = $1 || '.md' "
+                "   OR fs_path LIKE '%/' || $1 "
+                "   OR fs_path LIKE '%/' || $1 || '.md' "
+                "   OR fs_path = $2 "
+                "   OR fs_path = $2 || '.md' "
+                "   OR fs_path LIKE '%/' || $2 "
+                "   OR fs_path LIKE '%/' || $2 || '.md' "
+                "LIMIT 1;",
+                basename,
+                stem
+            );
+        }
+
+        // 5. Case-insensitive match on fs_path, basename, or title (ILIKE)
+        if (rows.empty()) {
+            rows = tx.exec_params(
+                "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM documents "
+                "WHERE fs_path ILIKE $1 "
+                "   OR fs_path ILIKE $1 || '.md' "
+                "   OR fs_path ILIKE '%/' || $1 "
+                "   OR fs_path ILIKE '%/' || $1 || '.md' "
+                "   OR fs_path ILIKE $2 "
+                "   OR fs_path ILIKE $2 || '.md' "
+                "   OR fs_path ILIKE '%/' || $2 "
+                "   OR fs_path ILIKE '%/' || $2 || '.md' "
+                "   OR title ILIKE $1 "
+                "   OR title ILIKE $2 "
+                "LIMIT 1;",
+                basename,
+                stem
+            );
+        }
+
+        // 6. Typo-tolerant / fuzzy match across all existing documents (Levenshtein distance <= 2 or 3)
+        if (rows.empty()) {
+            auto all_docs = tx.exec(
+                "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM documents;"
+            );
+
+            size_t best_dist = std::numeric_limits<size_t>::max();
+            std::string best_id;
+
+            std::string needle1 = to_lower_string(stem);
+            std::string needle2 = to_lower_string(norm_path);
+
+            for (const auto& r : all_docs) {
+                std::string doc_title = to_lower_string(r[2].as<std::string>());
+                std::string doc_path = to_lower_string(r[1].as<std::string>());
+                std::filesystem::path dfp(doc_path);
+                std::string doc_stem = to_lower_string(dfp.stem().string());
+
+                size_t d1 = levenshtein_distance(needle1, doc_stem);
+                size_t d2 = levenshtein_distance(needle1, doc_title);
+                size_t d3 = levenshtein_distance(needle2, doc_path);
+                size_t min_d = std::min({d1, d2, d3});
+
+                size_t max_allowed = (needle1.size() >= 10 || needle2.size() >= 10) ? 3 : 2;
+                if (min_d <= max_allowed && min_d < best_dist) {
+                    best_dist = min_d;
+                    best_id = r[0].as<std::string>();
+                }
+            }
+
+            if (!best_id.empty()) {
+                rows = tx.exec_params(
+                    "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                    "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                    "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                    "FROM documents WHERE id = $1::uuid;",
+                    best_id
+                );
+            }
+        }
+
         std::string doc_id;
+        std::string actual_fs_path;
         std::string title;
         std::string owner_user_id;
         std::string created_at;
         std::string updated_at;
 
         if (rows.empty()) {
-            // Check if file exists on disk (Auto-reconciliation)
-            auto disk_exists = storage_->exists(norm_path);
-            if (!disk_exists.has_value() || !disk_exists.value()) {
+            // Check storage on disk (Auto-reconciliation)
+            std::string disk_target_path = norm_path;
+            auto disk_exists = storage_->exists(disk_target_path);
+            if (!disk_exists.value_or(false)) {
+                if (!disk_target_path.ends_with(".md") && storage_->exists(disk_target_path + ".md").value_or(false)) {
+                    disk_target_path += ".md";
+                } else {
+                    auto list_res = storage_->list_directory("", true);
+                    if (list_res.has_value()) {
+                        for (const auto& node : list_res.value()) {
+                            if (node.is_directory && !node.is_bundle) continue;
+                            std::filesystem::path np(node.relative_path);
+                            if (np.filename().string() == basename ||
+                                np.stem().string() == stem ||
+                                to_lower_string(np.stem().string()) == to_lower_string(stem)) {
+                                disk_target_path = node.relative_path;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!storage_->exists(disk_target_path).value_or(false)) {
                 return std::unexpected(ErrorCode::NotFound);
             }
 
-            bool is_bundle = storage_->is_bundle(norm_path).value_or(false);
-            std::string content_file = is_bundle ? (norm_path + "/index.md") : norm_path;
+            actual_fs_path = disk_target_path;
+            bool is_bundle = storage_->is_bundle(actual_fs_path).value_or(false);
+            std::string content_file = is_bundle ? (actual_fs_path + "/index.md") : actual_fs_path;
             auto content_res = storage_->read_file(content_file);
             std::string disk_content = content_res.has_value() ? content_res.value() : "";
 
-            title = derive_title(disk_content, norm_path);
+            title = derive_title(disk_content, actual_fs_path);
 
             auto ins_rows = tx.exec_params(
                 "INSERT INTO documents (fs_path, title, owner_user_id) "
                 "VALUES ($1, $2, NULLIF($3, '')::uuid) "
+                "ON CONFLICT (fs_path) DO UPDATE SET updated_at = NOW() "
                 "RETURNING id, TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "          TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
-                norm_path,
+                actual_fs_path,
                 title,
                 user.user_id
             );
@@ -309,6 +488,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         } else {
             auto r = rows[0];
             doc_id = r[0].as<std::string>();
+            actual_fs_path = r[1].as<std::string>();
             title = r[2].as<std::string>();
             owner_user_id = r[3].as<std::string>();
             created_at = r[4].as<std::string>();
@@ -318,7 +498,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         tx.commit();
 
         // Check permission
-        auto access_res = check_access(user, doc_id, norm_path);
+        auto access_res = check_access(user, doc_id, actual_fs_path);
         if (!access_res.has_value()) {
             return std::unexpected(access_res.error());
         }
@@ -326,14 +506,14 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             return std::unexpected(ErrorCode::PermissionDenied);
         }
 
-        bool is_bundle = storage_->is_bundle(norm_path).value_or(false);
-        std::string content_file = is_bundle ? (norm_path + "/index.md") : norm_path;
+        bool is_bundle = storage_->is_bundle(actual_fs_path).value_or(false);
+        std::string content_file = is_bundle ? (actual_fs_path + "/index.md") : actual_fs_path;
         auto read_res = storage_->read_file(content_file);
         std::string content = read_res.has_value() ? read_res.value() : "";
 
         return DocumentRecord{
             .id = doc_id,
-            .path = norm_path,
+            .path = actual_fs_path,
             .title = title,
             .content = std::move(content),
             .is_bundle = is_bundle,
