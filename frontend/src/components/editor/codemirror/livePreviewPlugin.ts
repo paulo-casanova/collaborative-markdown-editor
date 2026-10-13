@@ -11,6 +11,8 @@ import {
   TaskCheckboxWidget,
   DividerWidget,
   CodeBlockWidget,
+  InlineMathWidget,
+  TableBlockWidget,
 } from './livePreviewWidgets';
 
 interface DecoItem {
@@ -122,8 +124,54 @@ function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false
     }
   }
 
-  // 4. Line-by-line inspection for headings, task lists, dividers, inline formatting
+  // 3.5 Multiline Blocks: GFM Markdown Tables
   const lineCount = doc.lines;
+  let tableScanIdx = 1;
+  while (tableScanIdx <= lineCount) {
+    const scanLine = doc.line(tableScanIdx);
+    const scanText = scanLine.text.trim();
+    if (scanText.includes('|') && tableScanIdx < lineCount && !isOverlappingReplaced(scanLine.from, scanLine.to)) {
+      const nextLine = doc.line(tableScanIdx + 1);
+      const nextText = nextLine.text.trim();
+      const isDelimiter = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(nextText);
+      if (isDelimiter) {
+        const tableStartLine = scanLine;
+        let tableEndLine = nextLine;
+        let curIdx = tableScanIdx + 2;
+        while (curIdx <= lineCount) {
+          const curLine = doc.line(curIdx);
+          const curText = curLine.text.trim();
+          if (!curText.includes('|') || curText.length === 0) {
+            break;
+          }
+          tableEndLine = curLine;
+          curIdx++;
+        }
+
+        const tFrom = tableStartLine.from;
+        const tTo = tableEndLine.to;
+        const tableRaw = docText.slice(tFrom, tTo);
+        const cursorInsideTable = cursorTo >= tFrom && cursorFrom <= tTo;
+
+        if (!cursorInsideTable) {
+          addReplace(
+            tFrom,
+            tTo,
+            Decoration.replace({
+              widget: new TableBlockWidget(tableRaw, tFrom, tTo),
+              block: true,
+            })
+          );
+        }
+
+        tableScanIdx = curIdx;
+        continue;
+      }
+    }
+    tableScanIdx++;
+  }
+
+  // 4. Line-by-line inspection for headings, task lists, dividers, inline formatting
   for (let i = 1; i <= lineCount; i++) {
     const line = doc.line(i);
     const lineFrom = line.from;
@@ -340,6 +388,48 @@ function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false
           deco: Decoration.mark({ class: 'cme-live-code' }),
         });
         addReplace(cTo - 1, cTo, Decoration.replace({}));
+      }
+    }
+
+    // 4j. Inline math: $formula$
+    const inlineMathRegex = /(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)/g;
+    let mMatch: RegExpExecArray | null;
+    while ((mMatch = inlineMathRegex.exec(lineText)) !== null) {
+      const mathFormula = mMatch[1].trim();
+      // Skip pure currency like $10 or $5.50
+      if (/^\d+(?:\.\d+)?$/.test(mathFormula)) {
+        continue;
+      }
+      const mFrom = lineFrom + mMatch.index;
+      const mTo = mFrom + mMatch[0].length;
+
+      if (isOverlappingReplaced(mFrom, mTo)) continue;
+
+      const cursorInMath = cursorTo >= mFrom && cursorFrom <= mTo;
+      if (!cursorInMath) {
+        addReplace(
+          mFrom,
+          mTo,
+          Decoration.replace({
+            widget: new InlineMathWidget(mathFormula, mFrom, mTo),
+          })
+        );
+      } else {
+        items.push({
+          from: mFrom,
+          to: mFrom + 1,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
+        items.push({
+          from: mFrom + 1,
+          to: mTo - 1,
+          deco: Decoration.mark({ class: 'cme-live-code font-mono text-pink-600 dark:text-pink-400' }),
+        });
+        items.push({
+          from: mTo - 1,
+          to: mTo,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
       }
     }
   }

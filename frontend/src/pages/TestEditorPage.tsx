@@ -14,6 +14,18 @@ export const TestEditorPage: React.FC = () => {
     <p>Check out the documentation at <a class="wiki-link" data-target="guides/intro.md">Introduction Guide</a>.</p>
 
     <pre data-language="typescript"><code>const greeting: string = "Hello Collaborative Editor";</code></pre>
+
+    <p>Inline formula: $E = mc^2$ and Euler identity: $e^{i\\pi} + 1 = 0$.</p>
+
+    <table>
+      <thead>
+        <tr><th>Language</th><th>Typing</th><th>Performance</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Rust</td><td>Static</td><td>High</td></tr>
+        <tr><td>Python</td><td>Dynamic</td><td>Medium</td></tr>
+      </tbody>
+    </table>
   `;
 
   return (

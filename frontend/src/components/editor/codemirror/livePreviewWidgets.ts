@@ -394,3 +394,191 @@ export class CodeBlockWidget extends WidgetType {
   }
 }
 
+export class InlineMathWidget extends WidgetType {
+  constructor(
+    public latex: string,
+    public from: number,
+    public to: number
+  ) {
+    super();
+  }
+
+  eq(other: InlineMathWidget): boolean {
+    return this.latex === other.latex && this.from === other.from && this.to === other.to;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const span = document.createElement('span');
+    span.className =
+      'inline-math-node cme-inline-math inline-flex items-center px-1 py-0.5 rounded hover:bg-cme-bg-subtle/80 cursor-pointer align-baseline';
+    span.title = `$${this.latex}$ (Click to edit)`;
+
+    try {
+      katex.render(this.latex, span, {
+        throwOnError: false,
+        displayMode: false,
+      });
+    } catch {
+      span.textContent = `$${this.latex}$`;
+    }
+
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
+      view.dispatch({ selection: { anchor: this.from + 1 } });
+      view.focus();
+    });
+
+    return span;
+  }
+}
+
+export class TableBlockWidget extends WidgetType {
+  constructor(
+    public rawText: string,
+    public from: number,
+    public to: number
+  ) {
+    super();
+  }
+
+  eq(other: TableBlockWidget): boolean {
+    return this.rawText === other.rawText && this.from === other.from && this.to === other.to;
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const container = document.createElement('div');
+    container.className =
+      'cme-table-block-node my-4 overflow-x-auto rounded-xl border border-cme-border-base bg-cme-bg-surface shadow-sm cursor-pointer select-none';
+    container.title = 'Click table to edit markdown source';
+
+    const lines = this.rawText.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length < 2) {
+      container.textContent = this.rawText;
+      return container;
+    }
+
+    const splitRow = (line: string): string[] => {
+      let trimmed = line;
+      if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
+      if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
+      return trimmed.split('|').map((c) => c.trim());
+    };
+
+    const headerCells = splitRow(lines[0]);
+    const delimiterCells = splitRow(lines[1]);
+
+    const alignments: ('left' | 'center' | 'right')[] = delimiterCells.map((delim) => {
+      if (delim.startsWith(':') && delim.endsWith(':')) return 'center';
+      if (delim.endsWith(':')) return 'right';
+      return 'left';
+    });
+
+    const table = document.createElement('table');
+    table.className = 'w-full text-left text-sm border-collapse';
+
+    // Thead
+    const thead = document.createElement('thead');
+    thead.className = 'bg-cme-bg-subtle/80 text-cme-text-base border-b border-cme-border-base font-semibold';
+    const trHead = document.createElement('tr');
+    headerCells.forEach((header, idx) => {
+      const th = document.createElement('th');
+      th.className = 'px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0';
+      th.style.textAlign = alignments[idx] || 'left';
+      renderCellContent(th, header);
+      trHead.appendChild(th);
+    });
+    thead.appendChild(trHead);
+    table.appendChild(thead);
+
+    // Tbody
+    const tbody = document.createElement('tbody');
+    tbody.className = 'divide-y divide-cme-border-base/40 text-cme-text-base';
+    for (let r = 2; r < lines.length; r++) {
+      const rowCells = splitRow(lines[r]);
+      const tr = document.createElement('tr');
+      tr.className = (r - 2) % 2 === 1 ? 'bg-cme-bg-subtle/20 hover:bg-cme-bg-hover/40' : 'hover:bg-cme-bg-hover/40';
+      headerCells.forEach((_, colIdx) => {
+        const td = document.createElement('td');
+        td.className = 'px-4 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0';
+        td.style.textAlign = alignments[colIdx] || 'left';
+        const cellValue = rowCells[colIdx] || '';
+        renderCellContent(td, cellValue);
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    container.appendChild(table);
+
+    container.addEventListener('click', (e) => {
+      e.stopPropagation();
+      view.dispatch({ selection: { anchor: this.from + 2 } });
+      view.focus();
+    });
+
+    return container;
+  }
+}
+
+function renderCellContent(container: HTMLElement, text: string) {
+  if (!text) {
+    container.innerHTML = '&nbsp;';
+    return;
+  }
+
+  const mathRegex = /(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = mathRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      container.appendChild(renderSimpleText(text.slice(lastIndex, match.index)));
+    }
+    const mathSpan = document.createElement('span');
+    mathSpan.className = 'inline-math-cell';
+    try {
+      katex.render(match[1], mathSpan, { throwOnError: false, displayMode: false });
+    } catch {
+      mathSpan.textContent = match[0];
+    }
+    container.appendChild(mathSpan);
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    container.appendChild(renderSimpleText(text.slice(lastIndex)));
+  }
+}
+
+function renderSimpleText(str: string): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const tokenRegex = /(\*\*[^\*]+\*\*|`[^`]+`|\*[^\*]+\*)/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = tokenRegex.exec(str)) !== null) {
+    if (m.index > last) {
+      frag.appendChild(document.createTextNode(str.slice(last, m.index)));
+    }
+    const token = m[0];
+    if (token.startsWith('**') && token.endsWith('**')) {
+      const strong = document.createElement('strong');
+      strong.textContent = token.slice(2, -2);
+      frag.appendChild(strong);
+    } else if (token.startsWith('`') && token.endsWith('`')) {
+      const code = document.createElement('code');
+      code.className = 'px-1 py-0.5 rounded bg-cme-bg-subtle text-[11px] font-mono text-pink-600 dark:text-pink-400';
+      code.textContent = token.slice(1, -1);
+      frag.appendChild(code);
+    } else if (token.startsWith('*') && token.endsWith('*')) {
+      const em = document.createElement('em');
+      em.textContent = token.slice(1, -1);
+      frag.appendChild(em);
+    }
+    last = m.index + token.length;
+  }
+  if (last < str.length) {
+    frag.appendChild(document.createTextNode(str.slice(last)));
+  }
+  return frag;
+}
+

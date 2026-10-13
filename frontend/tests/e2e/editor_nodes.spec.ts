@@ -109,4 +109,41 @@ test.describe('Collaborative TipTap Editor Custom NodeViews (Step 4.2)', () => {
     const copyBtn = codeBlock.getByRole('button', { name: /Copy/i });
     await expect(copyBtn).toBeVisible();
   });
+
+  test('renders inline KaTeX math ($formula$) formulas with interactive unfolding', async ({ page }) => {
+    const inlineMath = page.locator('.cme-inline-math');
+    await expect(inlineMath.first()).toBeVisible();
+
+    // Verify KaTeX rendered formula output inside inline math
+    const katexEl = inlineMath.first().locator('.katex');
+    await expect(katexEl).toBeVisible();
+
+    // Click inline math widget to unfold into raw syntax in-place
+    await inlineMath.first().click();
+
+    // Verify raw editor text contains the $E = mc^2$ syntax
+    const editor = page.locator('.ProseMirror');
+    await expect(editor).toContainText('$E = mc^2$');
+  });
+
+  test('renders GFM Markdown tables with headers and rows, and supports click to edit', async ({ page }) => {
+    const tableBlock = page.locator('.cme-table-block-node');
+    await expect(tableBlock).toBeVisible();
+
+    // Verify rendered table headers
+    await expect(tableBlock.getByText('Language')).toBeVisible();
+    await expect(tableBlock.getByText('Typing')).toBeVisible();
+    await expect(tableBlock.getByText('Performance')).toBeVisible();
+
+    // Verify rendered table row cells
+    await expect(tableBlock.getByText('Rust')).toBeVisible();
+    await expect(tableBlock.getByText('Python')).toBeVisible();
+
+    // Click table block to unfold to raw Markdown pipe syntax
+    await tableBlock.click();
+
+    // Verify raw Markdown pipes appear in the editor
+    const editor = page.locator('.ProseMirror');
+    await expect(editor).toContainText('| Language |');
+  });
 });
