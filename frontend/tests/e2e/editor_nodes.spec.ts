@@ -169,4 +169,44 @@ test.describe('Collaborative TipTap Editor Custom NodeViews (Step 4.2)', () => {
     const editor = page.locator('.ProseMirror');
     await expect(editor).toContainText('| Language |');
   });
+
+  test('allows adding new lines at the end of the document via Enter and ArrowDown', async ({ page }) => {
+    // Navigate to end of document
+    await page.evaluate(() => {
+      const editorEl = document.querySelector('.cm-editor') as any;
+      const view = editorEl?.__tiptapEditor?.getView();
+      if (view) {
+        view.dispatch({ selection: { anchor: view.state.doc.length } });
+        view.focus();
+      }
+    });
+
+    const getDocLength = () =>
+      page.evaluate(() => {
+        const editorEl = document.querySelector('.cm-editor') as any;
+        const view = editorEl?.__tiptapEditor?.getView();
+        return view ? view.state.doc.length : 0;
+      });
+
+    const initialLen = await getDocLength();
+
+    // Press Enter to insert newline at end of document
+    await page.keyboard.press('Enter');
+    const lenAfterEnter = await getDocLength();
+    expect(lenAfterEnter).toBe(initialLen + 1);
+
+    // Type text on new line
+    await page.keyboard.type('End of document content');
+    const lenAfterText = await getDocLength();
+    expect(lenAfterText).toBe(lenAfterEnter + 'End of document content'.length);
+
+    // Press ArrowDown at end of document to append newline
+    await page.keyboard.press('ArrowDown');
+    const lenAfterArrow = await getDocLength();
+    expect(lenAfterArrow).toBe(lenAfterText + 1);
+
+    // Verify document contains the newly added content
+    const editor = page.locator('.ProseMirror');
+    await expect(editor).toContainText('End of document content');
+  });
 });

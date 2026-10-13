@@ -17,8 +17,9 @@ export const cmeEditorTheme = EditorView.theme({
     lineHeight: '1.7',
   },
   '.cm-content': {
-    minHeight: '450px',
+    minHeight: '100%',
     padding: '1.5rem',
+    paddingBottom: '12rem',
     caretColor: 'var(--cme-primary, #3b82f6) !important',
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',

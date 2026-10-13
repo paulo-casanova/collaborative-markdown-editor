@@ -1,8 +1,15 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { EditorView, ViewPlugin } from '@codemirror/view';
+import { EditorView, ViewPlugin, keymap } from '@codemirror/view';
 import { EditorState, Extension } from '@codemirror/state';
-import { markdown } from '@codemirror/lang-markdown';
-import { yCollab } from 'y-codemirror.next';
+import { markdown, insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
+import {
+  defaultKeymap,
+  historyKeymap,
+  indentWithTab,
+  insertNewlineAndIndent,
+  insertNewline,
+} from '@codemirror/commands';
+import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import * as Y from 'yjs';
 
 import { createLivePreviewPlugin } from './codemirror/livePreviewPlugin';
@@ -99,12 +106,59 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   useEffect(() => {
     if (!editorContainerRef.current) return;
 
+    const customKeymap = keymap.of([
+      {
+        key: 'Enter',
+        run: (view) => {
+          if (insertNewlineContinueMarkup(view)) {
+            return true;
+          }
+          return insertNewlineAndIndent(view);
+        },
+        shift: insertNewline,
+      },
+      {
+        key: 'Mod-Enter',
+        run: (view) => {
+          const end = view.state.doc.length;
+          view.dispatch({
+            changes: { from: end, insert: '\n' },
+            selection: { anchor: end + 1 },
+            scrollIntoView: true,
+          });
+          return true;
+        },
+      },
+      {
+        key: 'ArrowDown',
+        run: (view) => {
+          const sel = view.state.selection.main;
+          if (sel.empty && sel.head === view.state.doc.length) {
+            const lastLine = view.state.doc.lineAt(view.state.doc.length);
+            if (lastLine.length > 0) {
+              view.dispatch({
+                changes: { from: view.state.doc.length, insert: '\n' },
+                selection: { anchor: view.state.doc.length + 1 },
+                scrollIntoView: true,
+              });
+              return true;
+            }
+          }
+          return false;
+        },
+      },
+      ...(provider ? yUndoManagerKeymap : historyKeymap),
+      ...defaultKeymap,
+      indentWithTab,
+    ]);
+
     const extensions: Extension[] = [
       markdown(),
       createLivePreviewPlugin(isDark),
       cmeEditorTheme,
       remoteCursorClassPlugin,
       EditorView.lineWrapping,
+      customKeymap,
       EditorView.contentAttributes.of({
         class:
           'tiptap ProseMirror prose prose-sm md:prose-base dark:prose-invert max-w-none focus:outline-none min-h-[450px] p-6 text-cme-text-base leading-relaxed cursor-text',
@@ -183,7 +237,16 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   return (
     <div className="collaborative-editor-root rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm flex flex-col flex-1 h-full min-h-0 relative">
       {editable && <EditorToolbar editor={editor as any} provider={provider} />}
-      <div className="editor-content-viewport flex-1 overflow-y-auto">
+      <div
+        className="editor-content-viewport flex-1 overflow-y-auto cursor-text"
+        onClick={(e) => {
+          if (e.target === e.currentTarget && adapterRef.current) {
+            const view = adapterRef.current.getView();
+            view.dispatch({ selection: { anchor: view.state.doc.length } });
+            view.focus();
+          }
+        }}
+      >
         <div ref={editorContainerRef} className="h-full" />
       </div>
 
