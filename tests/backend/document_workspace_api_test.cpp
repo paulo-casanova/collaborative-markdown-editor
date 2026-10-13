@@ -440,6 +440,15 @@ int main() {
     std::filesystem::remove_all(test_storage);
     std::filesystem::remove_all(server_storage);
 
+    // Clean up test database records
+    try {
+        pqxx::connection conn(db_url);
+        pqxx::work clean_tx(conn);
+        clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/getting-started.md%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'guides/manual.md%';");
+        clean_tx.exec("DELETE FROM users WHERE username IN ('doc_author', 'doc_reader');");
+        clean_tx.commit();
+    } catch (...) {}
+
     std::cout << "\n========================================================\n";
     std::cout << "=== ALL DOCUMENT & WORKSPACE TESTS PASSED!           ===\n";
     std::cout << "========================================================\n";

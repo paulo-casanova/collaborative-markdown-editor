@@ -704,7 +704,14 @@ Result<SuggestionRecord> ReviewService::accept_suggestion(
         if (!room && doc_service_) {
             auto d = doc_service_->get_document_by_id(doc_id, user);
             if (d.has_value()) {
-                room = room_manager->get_or_create_room(doc_id, d->content, d->path);
+                std::vector<uint8_t> crdt_state;
+                if (doc_service_->storage()) {
+                    auto crdt_res = doc_service_->storage()->load_crdt_state(doc_id);
+                    if (crdt_res.has_value()) {
+                        crdt_state = std::move(*crdt_res);
+                    }
+                }
+                room = room_manager->get_or_create_room(doc_id, d->content, d->path, crdt_state);
             }
         }
 

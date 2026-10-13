@@ -308,6 +308,15 @@ int main() {
     std::filesystem::remove_all(test_storage);
     std::filesystem::remove(admin_cfg);
 
+    // Clean up test database records
+    try {
+        pqxx::connection conn(db_url);
+        pqxx::work clean_tx(conn);
+        clean_tx.exec("DELETE FROM documents WHERE fs_path = 'notes/debounced_note.md';");
+        clean_tx.exec("DELETE FROM users WHERE username = 'pers_tester';");
+        clean_tx.commit();
+    } catch (...) {}
+
     std::cout << "\n===============================================================\n";
     std::cout << "=== ALL PERSISTENCE & EVICTION TESTS PASSED (100% SUCCESS)  ===\n";
     std::cout << "===============================================================\n";

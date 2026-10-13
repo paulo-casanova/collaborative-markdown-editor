@@ -395,6 +395,14 @@ int main() {
             server_thread.join();
         }
         fs::remove_all(temp_dir);
+
+        // Clean up test records from database
+        {
+            pqxx::work clean_tx(conn);
+            clean_tx.exec("DELETE FROM documents WHERE fs_path = 'guides/intro_ssr.md';");
+            clean_tx.exec("DELETE FROM users WHERE username = 'ssr_tester';");
+            clean_tx.commit();
+        }
     }
 
     std::cout << "[SUCCESS] Step 2.4 Server-Side Markdown to Semantic HTML Renderer verified 100%!\n";

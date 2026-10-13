@@ -148,6 +148,35 @@ public:
         const std::string& relative_path,
         std::string_view content
     ) = 0;
+
+    /**
+     * @brief Persists binary CRDT document state for a document room.
+     * @param doc_id Unique document identifier.
+     * @param state_bytes Binary CRDT state bytes.
+     * @return Result<void> Success or ErrorCode.
+     */
+    virtual Result<void> save_crdt_state(
+        const std::string& doc_id,
+        std::span<const uint8_t> state_bytes
+    ) = 0;
+
+    /**
+     * @brief Loads persisted binary CRDT document state for a document room.
+     * @param doc_id Unique document identifier.
+     * @return Result<std::vector<uint8_t>> Binary CRDT state or NotFound.
+     */
+    virtual Result<std::vector<uint8_t>> load_crdt_state(
+        const std::string& doc_id
+    ) = 0;
+
+    /**
+     * @brief Deletes persisted binary CRDT document state for a document room.
+     * @param doc_id Unique document identifier.
+     * @return Result<void> Success or ErrorCode.
+     */
+    virtual Result<void> delete_crdt_state(
+        const std::string& doc_id
+    ) = 0;
 };
 
 } // namespace cme::storage

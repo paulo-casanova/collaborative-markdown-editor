@@ -47,17 +47,18 @@ class CMEAgentSimulator:
         self.ws_task: Optional[asyncio.Task] = None
         self.ws_stop_event = asyncio.Event()
 
-    def start_server_if_needed(self):
-        """Checks if target CME server is alive; if not, launches a test instance."""
-        try:
-            r = requests.get(f"{self.base_url}/api/v1/health", timeout=1.0)
-            if r.status_code == 200:
-                print(f"[INIT] CME Server active at {self.base_url}")
-                return
-        except Exception:
-            pass
+    def start_server_if_needed(self, force_spawn: bool = True):
+        """Checks if target CME server is alive; if not (or if force_spawn), launches an isolated test instance."""
+        if not force_spawn:
+            try:
+                r = requests.get(f"{self.base_url}/api/v1/health", timeout=1.0)
+                if r.status_code == 200:
+                    print(f"[INIT] CME Server active at {self.base_url}")
+                    return
+            except Exception:
+                pass
 
-        print(f"[INIT] No server detected at {self.base_url}. Spawning test daemon on port {self.spawn_port}...")
+        print(f"[INIT] Spawning dedicated isolated test daemon on port {self.spawn_port}...")
         self.base_url = f"http://127.0.0.1:{self.spawn_port}"
 
         # Clean test storage
@@ -121,6 +122,24 @@ class CMEAgentSimulator:
             self.token = resp.json().get("token")
             print("[AUTH] Successfully logged in as rev_alice.")
             return
+
+        # Fallback: create test_admin via cme-admin CLI if missing
+        admin_bin = Path(__file__).resolve().parent.parent / "build" / "bin" / "cme-admin"
+        if admin_bin.exists():
+            subprocess.run([
+                str(admin_bin),
+                "--db", self.db_url,
+                "user", "create",
+                "--username", "test_admin",
+                "--password", "password123",
+                "--admin"
+            ], capture_output=True)
+            payload = {"username": "test_admin", "password": "password123"}
+            resp = requests.post(login_url, json=payload, timeout=5.0)
+            if resp.status_code == 200:
+                self.token = resp.json().get("token")
+                print("[AUTH] Successfully provisioned and logged in as test_admin.")
+                return
 
         raise RuntimeError(f"Authentication failed: {resp.status_code} - {resp.text}")
 
@@ -193,17 +212,21 @@ async def run_simulation(args):
     print("=== Phase 7, Step 7.1: LLM Tooling & REST Automation Integration Test ===")
     print("=" * 70)
 
+    force_spawn = args.url is None
+    target_url = args.url if args.url else f"http://127.0.0.1:{args.port}"
+
     sim = CMEAgentSimulator(
-        base_url=args.url,
+        base_url=target_url,
         token=args.token,
         db_url=args.db_url,
         spawn_port=args.port,
         spawn_storage=args.data_dir,
     )
 
+    doc_id = None
     try:
         # Step 0: Server check & Authentication
-        sim.start_server_if_needed()
+        sim.start_server_if_needed(force_spawn=force_spawn)
         sim.authenticate()
 
         # Step 0.1: Create target test document for AI agent review
@@ -438,9 +461,6 @@ async def run_simulation(args):
         assert any(t["id"] == task_id and t["is_completed"] is True for t in tasks)
         print("  [PASS] Database state verified: comment OPEN, suggestion PENDING, task COMPLETED.")
 
-        # Clean up test document
-        requests.delete(f"{sim.base_url}/api/v1/documents/{doc_id}", headers=sim.auth_headers, timeout=5.0)
-
         print("\n" + "=" * 70)
         print("🎉 ALL 5 AI AGENT AUTOMATION ACTIONS PASSED!")
         print("Status criteria met: Programmatic API interactions verified with real-time WebSocket fanout.")
@@ -448,12 +468,17 @@ async def run_simulation(args):
         return 0
 
     finally:
+        if doc_id:
+            try:
+                requests.delete(f"{sim.base_url}/api/v1/documents/{doc_id}", headers=sim.auth_headers, timeout=5.0)
+            except Exception:
+                pass
         sim.cleanup()
 
 
 def main():
     parser = argparse.ArgumentParser(description="CME LLM Agent Simulation E2E Test (Step 7.1)")
-    parser.add_argument("--url", default="http://127.0.0.1:8080", help="Base HTTP URL of CME server")
+    parser.add_argument("--url", default=None, help="Base HTTP URL of CME server (default: spawns isolated test server on --port)")
     parser.add_argument("--token", default=None, help="Authentication API Token (Bearer)")
     parser.add_argument("--port", type=int, default=18092, help="Port to spawn test server on if none is running")
     parser.add_argument("--data-dir", default="/tmp/cme_agent_sim_storage", help="Data directory for test storage")

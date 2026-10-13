@@ -77,6 +77,19 @@ public:
         std::string_view content
     ) override;
 
+    Result<void> save_crdt_state(
+        const std::string& doc_id,
+        std::span<const uint8_t> state_bytes
+    ) override;
+
+    Result<std::vector<uint8_t>> load_crdt_state(
+        const std::string& doc_id
+    ) override;
+
+    Result<void> delete_crdt_state(
+        const std::string& doc_id
+    ) override;
+
     /**
      * @brief Access the configured root path.
      */
@@ -86,6 +99,11 @@ public:
      * @brief Access the active content root path (root_path / "content").
      */
     [[nodiscard]] const std::filesystem::path& content_root() const noexcept { return content_root_; }
+
+    /**
+     * @brief Access the CRDT root path (root_path / "crdt").
+     */
+    [[nodiscard]] const std::filesystem::path& crdt_root() const noexcept { return crdt_root_; }
 
     /**
      * @brief Access the trash root path (root_path / "trash").
@@ -108,6 +126,7 @@ private:
     std::filesystem::path trash_root_;
     std::filesystem::path snapshots_root_;
     std::filesystem::path backups_root_;
+    std::filesystem::path crdt_root_;
 
     mutable std::mutex mutex_;
 

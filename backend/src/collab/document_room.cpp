@@ -1,15 +1,50 @@
 #include "cme/collab/document_room.hpp"
+#include <iostream>
+#include <string_view>
 
 namespace cme::collab {
+
+namespace {
+
+size_t count_substrings(std::string_view str, std::string_view sub) {
+    if (sub.empty()) return 0;
+    size_t count = 0;
+    size_t pos = 0;
+    while ((pos = str.find(sub, pos)) != std::string_view::npos) {
+        count++;
+        pos += sub.size();
+    }
+    return count;
+}
+
+std::string get_first_line(std::string_view text) {
+    auto pos = text.find_first_of("\r\n");
+    if (pos == std::string_view::npos) return std::string(text);
+    return std::string(text.substr(0, pos));
+}
+
+} // namespace
 
 DocumentRoom::DocumentRoom(
     std::string document_id,
     std::string initial_content,
-    std::string fs_path
+    std::string fs_path,
+    std::span<const uint8_t> initial_crdt_state
 ) : document_id_(std::move(document_id)),
     fs_path_(std::move(fs_path)),
     last_edit_time_(std::chrono::system_clock::now()),
     last_flush_time_(std::chrono::system_clock::now()) {
+    if (!initial_crdt_state.empty()) {
+        auto res = doc_.apply_update(initial_crdt_state);
+        if (res.has_value()) {
+            std::string converged = doc_.get_text();
+            if (!initial_content.empty() && converged != initial_content) {
+                doc_.set_text(initial_content);
+                is_dirty_.store(true);
+            }
+            return;
+        }
+    }
     if (!initial_content.empty()) {
         doc_.insert_text(0, initial_content);
     }
@@ -53,11 +88,55 @@ std::vector<uint8_t> DocumentRoom::compute_sync_step2(std::span<const uint8_t> r
 
 Result<void> DocumentRoom::apply_client_update(std::span<const uint8_t> update_data) {
     std::lock_guard lock(mutex_);
+    std::string before = doc_.get_text();
     auto res = doc_.apply_update(update_data);
-    if (res.has_value()) {
-        is_dirty_.store(true);
-        last_edit_time_ = std::chrono::system_clock::now();
+    if (!res.has_value()) {
+        return res;
     }
+
+    std::string after = doc_.get_text();
+
+    // Check for duplicate merge corruption
+    bool is_duplicated = false;
+
+    // Condition 1: Direct doubling (before + before)
+    if (!before.empty() && after.size() >= before.size() * 2) {
+        if (after == before + before || after == before + "\n" + before || after == before + " " + before) {
+            is_duplicated = true;
+        }
+    }
+
+    // Condition 2: Primary heading duplication (# Heading)
+    if (!is_duplicated && !before.empty()) {
+        std::string heading = get_first_line(before);
+        if (!heading.empty() && heading.starts_with("#")) {
+            size_t count_before = count_substrings(before, heading);
+            size_t count_after = count_substrings(after, heading);
+            if (count_before == 1 && count_after > 1) {
+                is_duplicated = true;
+            }
+        }
+    }
+
+    // Condition 3: Full text replication (before occurs multiple times in after)
+    if (!is_duplicated && before.size() >= 10) {
+        size_t count_before = count_substrings(before, before);
+        size_t count_after = count_substrings(after, before);
+        if (count_before == 1 && count_after > 1) {
+            is_duplicated = true;
+        }
+    }
+
+    if (is_duplicated) {
+        std::cerr << "[DocumentRoom] Detected duplicate merge corruption in doc "
+                  << document_id_ << "; rejecting duplicate update and restoring clean state.\n";
+        doc_.set_text(before);
+        is_dirty_.store(false);
+        return res;
+    }
+
+    is_dirty_.store(true);
+    last_edit_time_ = std::chrono::system_clock::now();
     return res;
 }
 

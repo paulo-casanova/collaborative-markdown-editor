@@ -28,7 +28,8 @@ public:
     std::shared_ptr<DocumentRoom> get_or_create_room(
         const std::string& document_id,
         const std::string& initial_content = "",
-        const std::string& fs_path = ""
+        const std::string& fs_path = "",
+        std::span<const uint8_t> initial_crdt_state = {}
     );
 
     /**

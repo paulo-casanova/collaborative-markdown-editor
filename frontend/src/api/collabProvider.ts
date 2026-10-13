@@ -179,15 +179,33 @@ export class CmeCollabProvider {
         if (subtype === 0x01) {
           // Server SyncStep1: Compute diff and reply with SyncStep2 (0x00 0x02)
           const diff = Y.encodeStateAsUpdate(this.ydoc, payload);
-          const reply = new Uint8Array(2 + diff.length);
-          reply[0] = 0x00;
-          reply[1] = 0x02; // SyncStep2
-          reply.set(diff, 2);
-          this.send(reply.buffer);
+          // Only send non-empty update payload (empty lib0 v1 update is 2 bytes: [0, 0])
+          if (diff.length > 2) {
+            const reply = new Uint8Array(2 + diff.length);
+            reply[0] = 0x00;
+            reply[1] = 0x02; // SyncStep2
+            reply.set(diff, 2);
+            this.send(reply.buffer);
+          }
         } else if (subtype === 0x02 || subtype === 0x03) {
           // Server SyncStep2 or SyncUpdate: Apply update to local YDoc
           if (payload.length > 0) {
+            const ytext = this.ydoc.getText('content');
+            const beforeText = ytext.toString();
             Y.applyUpdate(this.ydoc, payload, this);
+            const afterText = ytext.toString();
+
+            // Guard against accidental duplication where client and server concurrent root inserts produce text + text
+            if (
+              beforeText.length > 0 &&
+              afterText.length === beforeText.length * 2 &&
+              afterText === beforeText + beforeText
+            ) {
+              console.warn('[CmeCollabProvider] Detected duplicated content merge; deduplicating');
+              this.ydoc.transact(() => {
+                ytext.delete(beforeText.length, beforeText.length);
+              }, this);
+            }
           }
           if (this.status !== 'connected') {
             this.setStatus('connected');

@@ -578,6 +578,9 @@ Result<std::string> DocumentService::delete_document(
             return std::unexpected(trash_res.error());
         }
 
+        // Clean up persisted CRDT state
+        storage_->delete_crdt_state(doc_id);
+
         // Delete database record (cascades to permissions, comments, tasks)
         tx.exec_params("DELETE FROM documents WHERE id = $1::uuid;", doc_id);
         tx.commit();

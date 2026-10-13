@@ -47,12 +47,14 @@ PosixStorageBackend::PosixStorageBackend(std::filesystem::path root_path)
       content_root_(root_path_ / "content"),
       trash_root_(root_path_ / "trash"),
       snapshots_root_(root_path_ / "snapshots"),
-      backups_root_(root_path_ / "backups") {
+      backups_root_(root_path_ / "backups"),
+      crdt_root_(root_path_ / "crdt") {
     
     std::filesystem::create_directories(content_root_);
     std::filesystem::create_directories(trash_root_);
     std::filesystem::create_directories(snapshots_root_);
     std::filesystem::create_directories(backups_root_);
+    std::filesystem::create_directories(crdt_root_);
 }
 
 Result<std::filesystem::path> PosixStorageBackend::resolve_safe_path(
@@ -511,6 +513,91 @@ Result<std::string> PosixStorageBackend::create_snapshot(
 
     std::string rel_result = std::string(year_str) + "/" + month_str + "/" + snap_filename;
     return rel_result;
+}
+
+Result<void> PosixStorageBackend::save_crdt_state(
+    const std::string& doc_id,
+    std::span<const uint8_t> state_bytes
+) {
+    if (doc_id.empty()) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+    std::string safe_name = sanitize_path_for_id(doc_id) + ".bin";
+    auto target_path = crdt_root_ / safe_name;
+    auto temp_path = crdt_root_ / (safe_name + ".tmp." + std::to_string(get_random_nonce()));
+
+    std::error_code ec;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::ofstream out(temp_path, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) {
+            return std::unexpected(ErrorCode::IoError);
+        }
+        if (!state_bytes.empty()) {
+            out.write(reinterpret_cast<const char*>(state_bytes.data()), static_cast<std::streamsize>(state_bytes.size()));
+        }
+        out.flush();
+        if (!out.good()) {
+            std::filesystem::remove(temp_path, ec);
+            return std::unexpected(ErrorCode::IoError);
+        }
+        out.close();
+
+        std::filesystem::rename(temp_path, target_path, ec);
+        if (ec) {
+            std::filesystem::remove(temp_path, ec);
+            return std::unexpected(ErrorCode::IoError);
+        }
+    }
+    return {};
+}
+
+Result<std::vector<uint8_t>> PosixStorageBackend::load_crdt_state(
+    const std::string& doc_id
+) {
+    if (doc_id.empty()) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+    std::string safe_name = sanitize_path_for_id(doc_id) + ".bin";
+    auto target_path = crdt_root_ / safe_name;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!std::filesystem::exists(target_path)) {
+        return std::unexpected(ErrorCode::NotFound);
+    }
+
+    std::ifstream in(target_path, std::ios::binary | std::ios::ate);
+    if (!in.is_open()) {
+        return std::unexpected(ErrorCode::IoError);
+    }
+    auto size = in.tellg();
+    if (size < 0) {
+        return std::unexpected(ErrorCode::IoError);
+    }
+    if (size == 0) {
+        return std::vector<uint8_t>{};
+    }
+    in.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buffer(static_cast<size_t>(size));
+    if (!in.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        return std::unexpected(ErrorCode::IoError);
+    }
+    return buffer;
+}
+
+Result<void> PosixStorageBackend::delete_crdt_state(
+    const std::string& doc_id
+) {
+    if (doc_id.empty()) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+    std::string safe_name = sanitize_path_for_id(doc_id) + ".bin";
+    auto target_path = crdt_root_ / safe_name;
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::error_code ec;
+    std::filesystem::remove(target_path, ec);
+    return {};
 }
 
 } // namespace cme::storage

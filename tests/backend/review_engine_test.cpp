@@ -517,6 +517,15 @@ int main() {
     std::filesystem::remove(admin_cfg);
     std::filesystem::remove_all(test_storage);
 
+    // Clean up test database records
+    try {
+        pqxx::connection conn(db_url);
+        pqxx::work clean_tx(conn);
+        clean_tx.exec("DELETE FROM documents WHERE fs_path = 'specs/review_flow.md';");
+        clean_tx.exec("DELETE FROM users WHERE username IN ('rev_alice', 'rev_bob');");
+        clean_tx.commit();
+    } catch (...) {}
+
     std::cout << "\n===============================================================\n";
     std::cout << "=== ALL REVIEW ENGINE & REAL-TIME TESTS PASSED (100% OK)     ===\n";
     std::cout << "===============================================================\n";

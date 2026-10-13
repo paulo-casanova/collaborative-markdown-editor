@@ -73,6 +73,8 @@ public:
         std::shared_ptr<storage::PosixStorageBackend> storage
     );
 
+    [[nodiscard]] std::shared_ptr<storage::PosixStorageBackend> storage() const noexcept { return storage_; }
+
     /**
      * @brief Creates a new document or document bundle.
      */

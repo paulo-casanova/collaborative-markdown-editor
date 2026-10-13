@@ -48,7 +48,8 @@ public:
     explicit DocumentRoom(
         std::string document_id,
         std::string initial_content = "",
-        std::string fs_path = ""
+        std::string fs_path = "",
+        std::span<const uint8_t> initial_crdt_state = {}
     );
 
     [[nodiscard]] const std::string& document_id() const noexcept { return document_id_; }

@@ -155,6 +155,15 @@ int main() {
     std::filesystem::remove_all(test_storage);
     std::filesystem::remove(admin_cfg);
 
+    // Clean up test database records
+    try {
+        pqxx::connection conn(db_url);
+        pqxx::work clean_tx(conn);
+        clean_tx.exec("DELETE FROM documents WHERE fs_path = 'guides/ws_intro.md';");
+        clean_tx.exec("DELETE FROM users WHERE username = 'ws_tester';");
+        clean_tx.commit();
+    } catch (...) {}
+
     std::cout << "\n========================================================\n";
     std::cout << "=== ALL WEBSOCKET TESTS PASSED (100% SUCCESS)         ===\n";
     std::cout << "========================================================\n";

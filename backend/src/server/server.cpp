@@ -2514,7 +2514,18 @@ Result<void> Server::start() {
                     return;
                 }
                 fs_path = doc_res->path;
-                room = room_manager_->get_or_create_room(doc_id, doc_res->content, fs_path);
+                std::vector<uint8_t> crdt_state;
+                if (storage_) {
+                    auto crdt_res = storage_->load_crdt_state(doc_id);
+                    if (crdt_res.has_value()) {
+                        crdt_state = std::move(*crdt_res);
+                    }
+                }
+                room = room_manager_->get_or_create_room(doc_id, doc_res->content, fs_path, crdt_state);
+                if (crdt_state.empty() && storage_ && !doc_res->content.empty()) {
+                    auto init_bytes = room->compute_sync_step2({});
+                    storage_->save_crdt_state(doc_id, init_bytes);
+                }
             } else {
                 fs_path = room->fs_path();
             }
@@ -2562,7 +2573,14 @@ Result<void> Server::start() {
 
             auto room = room_manager_->get_room(data->document_id);
             if (!room) {
-                room = room_manager_->get_or_create_room(data->document_id);
+                std::vector<uint8_t> crdt_state;
+                if (storage_) {
+                    auto crdt_res = storage_->load_crdt_state(data->document_id);
+                    if (crdt_res.has_value()) {
+                        crdt_state = std::move(*crdt_res);
+                    }
+                }
+                room = room_manager_->get_or_create_room(data->document_id, "", "", crdt_state);
             }
 
             room->add_peer(data->client_id, data->username, data->display_name, data->avatar_color);
@@ -2587,7 +2605,14 @@ Result<void> Server::start() {
 
             auto room = room_manager_->get_room(data->document_id);
             if (!room) {
-                room = room_manager_->get_or_create_room(data->document_id);
+                std::vector<uint8_t> crdt_state;
+                if (storage_) {
+                    auto crdt_res = storage_->load_crdt_state(data->document_id);
+                    if (crdt_res.has_value()) {
+                        crdt_state = std::move(*crdt_res);
+                    }
+                }
+                room = room_manager_->get_or_create_room(data->document_id, "", "", crdt_state);
             }
 
             switch (opcode) {
@@ -2620,12 +2645,23 @@ Result<void> Server::start() {
                                 );
                                 auto apply_res = room->apply_client_update(update_data);
                                 if (apply_res.has_value()) {
-                                    std::string broadcast_msg;
-                                    broadcast_msg.reserve(2 + sub_payload.size());
-                                    broadcast_msg.push_back('\x00');
-                                    broadcast_msg.push_back('\x03'); // SyncUpdate
-                                    broadcast_msg.append(sub_payload.data(), sub_payload.size());
-                                    ws->publish(data->topic, broadcast_msg, uWS::OpCode::BINARY);
+                                    if (room->is_dirty()) {
+                                        std::string broadcast_msg;
+                                        broadcast_msg.reserve(2 + sub_payload.size());
+                                        broadcast_msg.push_back('\x00');
+                                        broadcast_msg.push_back('\x03'); // SyncUpdate
+                                        broadcast_msg.append(sub_payload.data(), sub_payload.size());
+                                        ws->publish(data->topic, broadcast_msg, uWS::OpCode::BINARY);
+                                    } else {
+                                        // Update was deduplicated; transmit authoritative room state back to client to reset client
+                                        auto diff = room->compute_sync_step2({});
+                                        std::string reply;
+                                        reply.reserve(2 + diff.size());
+                                        reply.push_back('\x00');
+                                        reply.push_back('\x02'); // SyncStep2
+                                        reply.append(reinterpret_cast<const char*>(diff.data()), diff.size());
+                                        ws->send(reply, uWS::OpCode::BINARY);
+                                    }
                                 }
                             }
                             break;
@@ -2639,7 +2675,17 @@ Result<void> Server::start() {
                                 );
                                 auto apply_res = room->apply_client_update(update_data);
                                 if (apply_res.has_value()) {
-                                    ws->publish(data->topic, msg, uWS::OpCode::BINARY);
+                                    if (room->is_dirty()) {
+                                        ws->publish(data->topic, msg, uWS::OpCode::BINARY);
+                                    } else {
+                                        auto diff = room->compute_sync_step2({});
+                                        std::string reply;
+                                        reply.reserve(2 + diff.size());
+                                        reply.push_back('\x00');
+                                        reply.push_back('\x02'); // SyncStep2
+                                        reply.append(reinterpret_cast<const char*>(diff.data()), diff.size());
+                                        ws->send(reply, uWS::OpCode::BINARY);
+                                    }
                                 }
                             }
                             break;

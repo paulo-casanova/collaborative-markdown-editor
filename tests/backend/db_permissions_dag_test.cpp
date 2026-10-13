@@ -210,6 +210,16 @@ int main() {
         assert(*perm_dir == AccessLevel::Read);
 
         std::cout << "\n[PASS] All db_permissions_dag_test test cases succeeded!\n";
+
+        // Clean up test records
+        {
+            pqxx::work clean_tx(conn);
+            clean_tx.exec("DELETE FROM users WHERE username IN ('test_charlie', 'test_admin');");
+            clean_tx.exec("DELETE FROM teams WHERE name IN ('test_engineering', 'test_web_platform', 'test_frontend_devs');");
+            clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'test/%';");
+            clean_tx.commit();
+        }
+
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "[FAIL] Test failed with exception: " << e.what() << "\n";

@@ -60,7 +60,14 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
         return write_res;
     }
 
-    // 2. Create date-partitioned snapshot
+    // 2. Persist binary CRDT state
+    auto crdt_state = room.compute_sync_step2({});
+    auto crdt_res = storage_->save_crdt_state(room.document_id(), crdt_state);
+    if (!crdt_res.has_value()) {
+        std::cerr << "[WARN] PersistenceWorker failed to save CRDT state for: " << room.document_id() << "\n";
+    }
+
+    // 3. Create date-partitioned snapshot
     if (config_.enable_snapshots) {
         auto snap_res = storage_->create_snapshot(content_file, content);
         if (snap_res.has_value()) {

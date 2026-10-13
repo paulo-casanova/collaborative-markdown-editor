@@ -5,7 +5,8 @@ namespace cme::collab {
 std::shared_ptr<DocumentRoom> RoomManager::get_or_create_room(
     const std::string& document_id,
     const std::string& initial_content,
-    const std::string& fs_path
+    const std::string& fs_path,
+    std::span<const uint8_t> initial_crdt_state
 ) {
     std::lock_guard lock(mutex_);
     auto it = rooms_.find(document_id);
@@ -13,7 +14,7 @@ std::shared_ptr<DocumentRoom> RoomManager::get_or_create_room(
         return it->second;
     }
 
-    auto room = std::make_shared<DocumentRoom>(document_id, initial_content, fs_path);
+    auto room = std::make_shared<DocumentRoom>(document_id, initial_content, fs_path, initial_crdt_state);
     rooms_[document_id] = room;
     return room;
 }
