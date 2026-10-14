@@ -187,8 +187,8 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
 
     const cursorOnLine = cursorTo >= lineFrom && cursorFrom <= lineTo;
 
-    // 4a. Horizontal Rule: --- or ***
-    if (/^(?:---|---|\*\*\*|___)\s*$/.test(lineText.trim()) && lineText.trim().length >= 3) {
+    // 4a. Horizontal Rule: ---, ***, ___, - - -, * * *, etc.
+    if (/^(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(lineText.trim())) {
       if (!cursorOnLine) {
         addReplace(
           lineFrom,

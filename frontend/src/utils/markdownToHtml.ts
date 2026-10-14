@@ -128,7 +128,7 @@ export function parseMarkdownToHtml(markdown: string): string {
     }
 
     // Horizontal Rule
-    if (/^(---|___|\*\*\*)$/.test(trimmed)) {
+    if (/^(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(trimmed)) {
       closeList();
       closeBlockquote();
       output.push('<hr>');

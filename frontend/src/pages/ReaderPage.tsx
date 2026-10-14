@@ -468,7 +468,7 @@ export const ReaderPage: React.FC = () => {
 };
 
 // Markdown block renderer helper with heading slug anchors, KaTeX math, and Mermaid support
-function renderMarkdown(
+export function renderMarkdown(
   content: string,
   onCopyCode: (code: string, id: string) => void,
   copiedCodeId: string | null,
@@ -771,6 +771,19 @@ function renderMarkdown(
         i = curIdx;
         continue;
       }
+    }
+
+    // Horizontal Rule / Divider (---, ***, ___, - - -, * * *, etc.)
+    if (/^(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line.trim())) {
+      elements.push(
+        <hr
+          key={`hr-${i}`}
+          className="my-6 border-0 border-t border-cme-border-base"
+          data-testid="markdown-hr"
+        />
+      );
+      i++;
+      continue;
     }
 
     // Task list / Checkbox

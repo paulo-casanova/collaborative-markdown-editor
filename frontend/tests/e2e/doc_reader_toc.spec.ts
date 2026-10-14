@@ -56,7 +56,17 @@ Sample table:
 | Rust | Systems | High |
 | TypeScript | Multi | Fast |
 
+---
+
 Formatted text with ~~deprecated syntax~~ and **bold text** and *italic notes*.
+
+***
+
+Divider with asterisks.
+
+- - -
+
+Divider with spaced hyphens.
 `;
 
   test.beforeAll(async ({ request }) => {
@@ -219,6 +229,13 @@ Formatted text with ~~deprecated syntax~~ and **bold text** and *italic notes*.
     const strike = article.locator('del');
     await expect(strike).toBeVisible();
     await expect(strike).toContainText('deprecated syntax');
+
+    // 4. Verify horizontal rules / dividers (<hr />)
+    const hrs = article.locator('[data-testid="markdown-hr"]');
+    await expect(hrs).toHaveCount(3);
+    for (let h = 0; h < 3; h++) {
+      await expect(hrs.nth(h)).toBeVisible();
+    }
   });
 
   test('navigates and scrolls via internal heading xrefs [[#Heading]] and piped label [[#Heading|Label]] in reader view', async ({
