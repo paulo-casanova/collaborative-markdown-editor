@@ -339,6 +339,26 @@ int main() {
     assert(events.back()["status"] == "RESOLVED");
     std::cout << "  [PASS] WebSocket Opcode 0x02 received COMMENT_STATUS_CHANGED notification!\n";
 
+    // 6.5 Bob edits his comment content
+    {
+        nlohmann::json body = {{"content", "This paragraph needs further clarification on concurrency and performance."}};
+        auto resp = http_curl(
+            "PATCH",
+            base_url + "/api/v1/comments/" + comment_id,
+            {"Content-Type: application/json", "Authorization: Bearer " + bob_token},
+            body.dump()
+        );
+        assert(resp.status_code == 200);
+        auto json = nlohmann::json::parse(resp.body);
+        assert(json["content"] == "This paragraph needs further clarification on concurrency and performance.");
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    events = read_events_file(events_file);
+    assert(events.back()["event"] == "COMMENT_UPDATED");
+    assert(events.back()["comment"]["content"] == "This paragraph needs further clarification on concurrency and performance.");
+    std::cout << "  [PASS] WebSocket Opcode 0x02 received COMMENT_UPDATED notification!\n";
+
     // =========================================================================
     // 7. Inline Suggestions Testing & Live CRDT Injection
     // =========================================================================
@@ -484,7 +504,31 @@ int main() {
     events = read_events_file(events_file);
     assert(events.back()["event"] == "TASK_TOGGLED" || events.back()["event"] == "TASK_UPDATED");
     assert(events.back()["task"]["is_completed"] == true);
-    std::cout << "  [PASS] WebSocket Opcode 0x02 received TASK_TOGGLED notification!\n";
+    std::cout << "  [PASS] WebSocket Opcode 0x02 received TASK_TOGGLED / TASK_UPDATED notification!\n";
+
+    // Alice updates the task description and due date
+    {
+        nlohmann::json body = {
+            {"description", "Clarify lock-free queuing in review specifications"},
+            {"due_date", "2026-12-31T23:59:59Z"}
+        };
+        auto resp = http_curl(
+            "PATCH",
+            base_url + "/api/v1/tasks/" + task_id,
+            {"Content-Type: application/json", "Authorization: Bearer " + alice_token},
+            body.dump()
+        );
+        assert(resp.status_code == 200);
+        auto json = nlohmann::json::parse(resp.body);
+        assert(json["description"] == "Clarify lock-free queuing in review specifications");
+        assert(!json["due_date"].is_null());
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    events = read_events_file(events_file);
+    assert(events.back()["event"] == "TASK_UPDATED");
+    assert(events.back()["task"]["description"] == "Clarify lock-free queuing in review specifications");
+    std::cout << "  [PASS] WebSocket Opcode 0x02 received TASK_UPDATED notification!\n";
 
     // Delete comment
     {

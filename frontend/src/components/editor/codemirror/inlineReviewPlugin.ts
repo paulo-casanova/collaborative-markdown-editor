@@ -275,6 +275,15 @@ export class InlineCommentThreadWidget extends WidgetType {
     const actionButtons = document.createElement('div');
     actionButtons.className = 'action-buttons flex items-center gap-1 flex-shrink-0';
 
+    const editBtn = document.createElement('button');
+    editBtn.type = 'button';
+    editBtn.className =
+      'edit-btn px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover active:scale-95 text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer';
+    editBtn.setAttribute('data-testid', 'edit-comment-btn');
+    editBtn.title = 'Edit comment';
+    editBtn.textContent = '✏️ Edit';
+    actionButtons.appendChild(editBtn);
+
     const resolveBtn = document.createElement('button');
     resolveBtn.type = 'button';
     resolveBtn.className =
@@ -305,10 +314,85 @@ export class InlineCommentThreadWidget extends WidgetType {
     header.appendChild(actionButtons);
 
     // Root Comment Content
+    let isEditing = false;
     const body = document.createElement('div');
     body.className =
       'px-3 py-1.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed select-text';
     body.innerHTML = parseMarkdownToHtml(this.comment.content || '');
+
+    // Comment Edit Form (hidden by default)
+    const editForm = document.createElement('div');
+    editForm.className = 'px-3 py-1.5 bg-cme-bg-subtle/30 space-y-1.5 hidden';
+    if (editForm.style) editForm.style.display = 'none';
+
+    const updateEditDisplay = () => {
+      body.className = isEditing
+        ? 'hidden'
+        : 'px-3 py-1.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed select-text';
+      editForm.className = isEditing
+        ? 'px-3 py-1.5 bg-cme-bg-subtle/30 space-y-1.5'
+        : 'px-3 py-1.5 bg-cme-bg-subtle/30 space-y-1.5 hidden';
+      if (editForm.style) editForm.style.display = isEditing ? '' : 'none';
+      if (body.style) body.style.display = isEditing ? 'none' : '';
+    };
+
+    const editTextarea = document.createElement('textarea');
+    editTextarea.className =
+      'w-full p-1.5 text-xs bg-cme-bg-surface border border-cme-border-base rounded text-cme-text-base focus:outline-none focus:border-cme-primary resize-y min-h-[48px]';
+    editTextarea.setAttribute('data-testid', 'inline-comment-edit-textarea');
+    editTextarea.value = this.comment.content || '';
+
+    const editBtnRow = document.createElement('div');
+    editBtnRow.className = 'flex items-center justify-end gap-1.5';
+
+    const cancelEditBtn = document.createElement('button');
+    cancelEditBtn.type = 'button';
+    cancelEditBtn.className =
+      'px-2 py-0.5 text-[10px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer';
+    cancelEditBtn.textContent = 'Cancel';
+    cancelEditBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      isEditing = false;
+      updateEditDisplay();
+    });
+
+    const saveEditBtn = document.createElement('button');
+    saveEditBtn.type = 'button';
+    saveEditBtn.className =
+      'px-2.5 py-0.5 text-[10px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer';
+    saveEditBtn.setAttribute('data-testid', 'inline-comment-save-edit-btn');
+    saveEditBtn.textContent = 'Save';
+    saveEditBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const newText = editTextarea.value.trim();
+      if (!newText) return;
+      saveEditBtn.disabled = true;
+      saveEditBtn.textContent = '...';
+      const updated = await useReviewStore.getState().editComment(this.comment.id, newText);
+      if (updated) {
+        this.comment.content = updated.content;
+        body.innerHTML = parseMarkdownToHtml(updated.content || '');
+      }
+      isEditing = false;
+      updateEditDisplay();
+      saveEditBtn.disabled = false;
+      saveEditBtn.textContent = 'Save';
+    });
+
+    editBtnRow.appendChild(cancelEditBtn);
+    editBtnRow.appendChild(saveEditBtn);
+    editForm.appendChild(editTextarea);
+    editForm.appendChild(editBtnRow);
+
+    editBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      isEditing = !isEditing;
+      updateEditDisplay();
+      if (isEditing) {
+        editTextarea.value = this.comment.content || '';
+        editTextarea.focus();
+      }
+    });
 
     // Threaded Replies
     const repliesContainer = document.createElement('div');
@@ -327,20 +411,117 @@ export class InlineCommentThreadWidget extends WidgetType {
 
       const replyRow = document.createElement('div');
       replyRow.className = 'px-3 py-1.5 flex items-start gap-2 text-xs select-text';
-      replyRow.innerHTML = `
-        <span class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] select-none flex-shrink-0 mt-0.5" style="background-color: ${escapeHtml(rColor)}">
-          ${escapeHtml(rInitials)}
-        </span>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-1.5 mb-0.5">
-            <span class="font-medium text-cme-text-base text-[11px]">${escapeHtml(rName)}</span>
-            <span class="text-cme-text-muted text-[10px]">${timeAgo(reply.created_at)}</span>
-          </div>
-          <div class="text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed">
-            ${parseMarkdownToHtml(reply.content || '')}
-          </div>
-        </div>
+
+      const replyContentCol = document.createElement('div');
+      replyContentCol.className = 'flex-1 min-w-0';
+
+      const replyHeaderRow = document.createElement('div');
+      replyHeaderRow.className = 'flex items-center justify-between gap-1.5 mb-0.5';
+
+      const replyMeta = document.createElement('div');
+      replyMeta.className = 'flex items-center gap-1.5';
+      replyMeta.innerHTML = `
+        <span class="font-medium text-cme-text-base text-[11px]">${escapeHtml(rName)}</span>
+        <span class="text-cme-text-muted text-[10px]">${timeAgo(reply.created_at)}</span>
       `;
+
+      const rEditBtn = document.createElement('button');
+      rEditBtn.type = 'button';
+      rEditBtn.className =
+        'p-0.5 text-cme-text-muted hover:text-cme-text-base text-[10px] rounded cursor-pointer';
+      rEditBtn.title = 'Edit reply';
+      rEditBtn.textContent = '✏️';
+      rEditBtn.setAttribute('data-testid', 'inline-reply-edit-btn');
+
+      replyHeaderRow.appendChild(replyMeta);
+      replyHeaderRow.appendChild(rEditBtn);
+
+      const replyBody = document.createElement('div');
+      replyBody.className = 'text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed';
+      replyBody.innerHTML = parseMarkdownToHtml(reply.content || '');
+
+      let isEditingReply = false;
+      const replyEditForm = document.createElement('div');
+      replyEditForm.className = 'pt-1 space-y-1.5 hidden';
+      if (replyEditForm.style) replyEditForm.style.display = 'none';
+
+      const updateReplyDisplay = () => {
+        replyBody.className = isEditingReply
+          ? 'hidden'
+          : 'text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed';
+        replyEditForm.className = isEditingReply ? 'pt-1 space-y-1.5' : 'pt-1 space-y-1.5 hidden';
+        if (replyEditForm.style) replyEditForm.style.display = isEditingReply ? '' : 'none';
+        if (replyBody.style) replyBody.style.display = isEditingReply ? 'none' : '';
+      };
+
+      const replyTextarea = document.createElement('textarea');
+      replyTextarea.className =
+        'w-full p-1.5 text-xs bg-cme-bg-surface border border-cme-border-base rounded text-cme-text-base focus:outline-none focus:border-cme-primary resize-y min-h-[40px]';
+      replyTextarea.value = reply.content || '';
+
+      const replyBtnRow = document.createElement('div');
+      replyBtnRow.className = 'flex items-center justify-end gap-1.5';
+
+      const cancelReplyEditBtn = document.createElement('button');
+      cancelReplyEditBtn.type = 'button';
+      cancelReplyEditBtn.className =
+        'px-2 py-0.5 text-[10px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer';
+      cancelReplyEditBtn.textContent = 'Cancel';
+      cancelReplyEditBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isEditingReply = false;
+        updateReplyDisplay();
+      });
+
+      const saveReplyEditBtn = document.createElement('button');
+      saveReplyEditBtn.type = 'button';
+      saveReplyEditBtn.className =
+        'px-2 py-0.5 text-[10px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer';
+      saveReplyEditBtn.textContent = 'Save';
+      saveReplyEditBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const newReplyText = replyTextarea.value.trim();
+        if (!newReplyText) return;
+        saveReplyEditBtn.disabled = true;
+        saveReplyEditBtn.textContent = '...';
+        const updated = await useReviewStore.getState().editComment(reply.id, newReplyText);
+        if (updated) {
+          reply.content = updated.content;
+          replyBody.innerHTML = parseMarkdownToHtml(updated.content || '');
+        }
+        isEditingReply = false;
+        updateReplyDisplay();
+        saveReplyEditBtn.disabled = false;
+        saveReplyEditBtn.textContent = 'Save';
+      });
+
+      replyBtnRow.appendChild(cancelReplyEditBtn);
+      replyBtnRow.appendChild(saveReplyEditBtn);
+      replyEditForm.appendChild(replyTextarea);
+      replyEditForm.appendChild(replyBtnRow);
+
+      rEditBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isEditingReply = !isEditingReply;
+        updateReplyDisplay();
+        if (isEditingReply) {
+          replyTextarea.value = reply.content || '';
+          replyTextarea.focus();
+        }
+      });
+
+      replyContentCol.appendChild(replyHeaderRow);
+      replyContentCol.appendChild(replyBody);
+      replyContentCol.appendChild(replyEditForm);
+
+      const avatarSpan = document.createElement('span');
+      avatarSpan.className =
+        'inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] select-none flex-shrink-0 mt-0.5';
+      avatarSpan.textContent = rInitials;
+      if (avatarSpan.style) avatarSpan.style.backgroundColor = rColor;
+
+      replyRow.appendChild(avatarSpan);
+      replyRow.appendChild(replyContentCol);
       repliesContainer.appendChild(replyRow);
     });
 
@@ -400,6 +581,7 @@ export class InlineCommentThreadWidget extends WidgetType {
 
     card.appendChild(header);
     card.appendChild(body);
+    card.appendChild(editForm);
     if (replies.length > 0) {
       card.appendChild(repliesContainer);
     }

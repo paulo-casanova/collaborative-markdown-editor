@@ -368,6 +368,63 @@ Result<CommentRecord> ReviewService::reply_comment(
     }
 }
 
+Result<CommentRecord> ReviewService::update_comment_content(
+    const std::string& comment_id,
+    const auth::UserIdentity& user,
+    const std::string& content
+) {
+    if (content.empty()) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    std::string doc_id;
+    std::string author_id;
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT document_id::text, author_id::text FROM comments WHERE id = $1::uuid;",
+            comment_id
+        );
+        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
+        doc_id = rows[0][0].as<std::string>();
+        author_id = rows[0][1].as<std::string>();
+    } catch (...) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto access_res = check_doc_access(doc_id, user);
+    if (!access_res.has_value()) return std::unexpected(access_res.error());
+    if (access_res.value() < db::AccessLevel::Comment) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+    if (user.user_id != author_id && access_res.value() < db::AccessLevel::Edit && !user.is_system_admin) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "UPDATE comments "
+            "SET content = $1, updated_at = NOW() "
+            "WHERE id = $2::uuid "
+            "RETURNING id::text;",
+            content, comment_id
+        );
+        tx.commit();
+
+        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
+
+        return get_comment(comment_id, user);
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::update_comment_content failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 Result<CommentRecord> ReviewService::update_comment_status(
     const std::string& comment_id,
     const auth::UserIdentity& user,
@@ -1028,6 +1085,70 @@ Result<std::vector<TaskRecord>> ReviewService::list_all_tasks(
     return list;
 }
 
+Result<TaskRecord> ReviewService::get_task(
+    const std::string& task_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    TaskRecord rec;
+    std::string doc_id;
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT t.id::text, t.document_id::text, t.comment_id::text, t.description, "
+            "       t.is_completed, t.due_date::text, t.created_at::text, t.completed_at::text, "
+            "       u.id::text, u.username, u.display_name, u.avatar_color, "
+            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, '') "
+            "FROM tasks t "
+            "JOIN documents d ON t.document_id = d.id "
+            "LEFT JOIN users u ON t.assignee_id = u.id "
+            "WHERE t.id = $1::uuid;",
+            task_id
+        );
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        const auto& row = rows[0];
+        doc_id = row[1].as<std::string>();
+
+        std::optional<AuthorInfo> assignee;
+        if (!row[8].is_null()) {
+            assignee = AuthorInfo{
+                .id = row[8].as<std::string>(),
+                .username = row[9].as<std::string>(),
+                .display_name = row[10].as<std::string>(),
+                .avatar_color = row[11].as<std::string>()
+            };
+        }
+
+        rec = TaskRecord{
+            .id = row[0].as<std::string>(),
+            .document_id = doc_id,
+            .document_title = row[12].as<std::string>(),
+            .document_path = row[13].as<std::string>(),
+            .comment_id = row[2].is_null() ? std::nullopt : std::optional<std::string>(row[2].as<std::string>()),
+            .description = row[3].as<std::string>(),
+            .assignee = assignee,
+            .is_completed = row[4].as<bool>(),
+            .due_date = row[5].is_null() ? std::nullopt : std::optional<std::string>(row[5].as<std::string>()),
+            .created_at = row[6].as<std::string>(),
+            .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>())
+        };
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::get_task failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto access_res = check_doc_access(doc_id, user);
+    if (!access_res.has_value()) return std::unexpected(access_res.error());
+    if (access_res.value() < db::AccessLevel::Read) return std::unexpected(ErrorCode::PermissionDenied);
+
+    return rec;
+}
+
 Result<TaskRecord> ReviewService::create_task(
     const std::string& document_id,
     const auth::UserIdentity& user,
@@ -1046,6 +1167,7 @@ Result<TaskRecord> ReviewService::create_task(
     auto conn_res = db_pool_->acquire();
     if (!conn_res.has_value()) return std::unexpected(conn_res.error());
 
+    std::string task_id;
     try {
         pqxx::work tx(conn_res->get());
         pqxx::result rows;
@@ -1053,63 +1175,75 @@ Result<TaskRecord> ReviewService::create_task(
             rows = tx.exec_params(
                 "INSERT INTO tasks (document_id, comment_id, description, assignee_id, due_date) "
                 "VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5::timestamptz) "
-                "RETURNING id::text, created_at::text;",
+                "RETURNING id::text;",
                 document_id, *req.comment_id, req.description, *req.assignee_id, *req.due_date
             );
         } else if (req.comment_id.has_value() && req.assignee_id.has_value()) {
             rows = tx.exec_params(
                 "INSERT INTO tasks (document_id, comment_id, description, assignee_id) "
                 "VALUES ($1::uuid, $2::uuid, $3, $4::uuid) "
-                "RETURNING id::text, created_at::text;",
+                "RETURNING id::text;",
                 document_id, *req.comment_id, req.description, *req.assignee_id
+            );
+        } else if (req.comment_id.has_value() && req.due_date.has_value()) {
+            rows = tx.exec_params(
+                "INSERT INTO tasks (document_id, comment_id, description, due_date) "
+                "VALUES ($1::uuid, $2::uuid, $3, $4::timestamptz) "
+                "RETURNING id::text;",
+                document_id, *req.comment_id, req.description, *req.due_date
             );
         } else if (req.comment_id.has_value()) {
             rows = tx.exec_params(
                 "INSERT INTO tasks (document_id, comment_id, description) "
                 "VALUES ($1::uuid, $2::uuid, $3) "
-                "RETURNING id::text, created_at::text;",
+                "RETURNING id::text;",
                 document_id, *req.comment_id, req.description
+            );
+        } else if (req.assignee_id.has_value() && req.due_date.has_value()) {
+            rows = tx.exec_params(
+                "INSERT INTO tasks (document_id, description, assignee_id, due_date) "
+                "VALUES ($1::uuid, $2, $3::uuid, $4::timestamptz) "
+                "RETURNING id::text;",
+                document_id, req.description, *req.assignee_id, *req.due_date
             );
         } else if (req.assignee_id.has_value()) {
             rows = tx.exec_params(
                 "INSERT INTO tasks (document_id, description, assignee_id) "
                 "VALUES ($1::uuid, $2, $3::uuid) "
-                "RETURNING id::text, created_at::text;",
+                "RETURNING id::text;",
                 document_id, req.description, *req.assignee_id
+            );
+        } else if (req.due_date.has_value()) {
+            rows = tx.exec_params(
+                "INSERT INTO tasks (document_id, description, due_date) "
+                "VALUES ($1::uuid, $2, $3::timestamptz) "
+                "RETURNING id::text;",
+                document_id, req.description, *req.due_date
             );
         } else {
             rows = tx.exec_params(
                 "INSERT INTO tasks (document_id, description) "
                 "VALUES ($1::uuid, $2) "
-                "RETURNING id::text, created_at::text;",
+                "RETURNING id::text;",
                 document_id, req.description
             );
         }
         tx.commit();
 
         if (rows.empty()) return std::unexpected(ErrorCode::DatabaseError);
-
-        return TaskRecord{
-            .id = rows[0][0].as<std::string>(),
-            .document_id = document_id,
-            .comment_id = req.comment_id,
-            .description = req.description,
-            .assignee = std::nullopt,
-            .is_completed = false,
-            .due_date = req.due_date,
-            .created_at = rows[0][1].as<std::string>(),
-            .completed_at = std::nullopt
-        };
+        task_id = rows[0][0].as<std::string>();
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] ReviewService::create_task failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
+
+    return get_task(task_id, user);
 }
 
 Result<TaskRecord> ReviewService::update_task(
     const std::string& task_id,
     const auth::UserIdentity& user,
-    bool is_completed
+    const UpdateTaskRequest& req
 ) {
     if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
     auto conn_res = db_pool_->acquire();
@@ -1133,34 +1267,65 @@ Result<TaskRecord> ReviewService::update_task(
 
     try {
         pqxx::work tx(conn_res->get());
-        auto rows = tx.exec_params(
-            "UPDATE tasks "
-            "SET is_completed = $1, completed_at = CASE WHEN $1 THEN NOW() ELSE NULL END "
-            "WHERE id = $2::uuid "
-            "RETURNING id::text, document_id::text, comment_id::text, description, "
-            "          is_completed, due_date::text, created_at::text, completed_at::text;",
-            is_completed, task_id
-        );
-        tx.commit();
+        std::vector<std::string> set_clauses;
 
-        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
-        const auto& row = rows[0];
+        if (req.is_completed.has_value()) {
+            if (req.is_completed.value()) {
+                set_clauses.push_back("is_completed = TRUE, completed_at = NOW()");
+            } else {
+                set_clauses.push_back("is_completed = FALSE, completed_at = NULL");
+            }
+        }
 
-        return TaskRecord{
-            .id = row[0].as<std::string>(),
-            .document_id = row[1].as<std::string>(),
-            .comment_id = row[2].is_null() ? std::nullopt : std::optional<std::string>(row[2].as<std::string>()),
-            .description = row[3].as<std::string>(),
-            .assignee = std::nullopt,
-            .is_completed = row[4].as<bool>(),
-            .due_date = row[5].is_null() ? std::nullopt : std::optional<std::string>(row[5].as<std::string>()),
-            .created_at = row[6].as<std::string>(),
-            .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>())
-        };
+        if (req.description.has_value()) {
+            if (req.description.value().empty()) {
+                return std::unexpected(ErrorCode::InvalidArgument);
+            }
+            set_clauses.push_back("description = " + tx.quote(req.description.value()));
+        }
+
+        if (req.assignee_id.has_value()) {
+            if (req.assignee_id.value().empty()) {
+                set_clauses.push_back("assignee_id = NULL");
+            } else {
+                set_clauses.push_back("assignee_id = " + tx.quote(req.assignee_id.value()) + "::uuid");
+            }
+        }
+
+        if (req.due_date.has_value()) {
+            if (req.due_date.value().empty()) {
+                set_clauses.push_back("due_date = NULL");
+            } else {
+                set_clauses.push_back("due_date = " + tx.quote(req.due_date.value()) + "::timestamptz");
+            }
+        }
+
+        if (!set_clauses.empty()) {
+            std::string q = "UPDATE tasks SET ";
+            for (size_t i = 0; i < set_clauses.size(); ++i) {
+                if (i > 0) q += ", ";
+                q += set_clauses[i];
+            }
+            q += " WHERE id = " + tx.quote(task_id) + "::uuid;";
+            tx.exec(q);
+            tx.commit();
+        }
+
+        return get_task(task_id, user);
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] ReviewService::update_task failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
+}
+
+Result<TaskRecord> ReviewService::update_task(
+    const std::string& task_id,
+    const auth::UserIdentity& user,
+    bool is_completed
+) {
+    UpdateTaskRequest req;
+    req.is_completed = is_completed;
+    return update_task(task_id, user, req);
 }
 
 Result<void> ReviewService::delete_task(

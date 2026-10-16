@@ -13,6 +13,7 @@ import {
   Check,
   Hash,
   Trash2,
+  Pencil,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -27,6 +28,7 @@ import {
   acceptSuggestion,
   rejectSuggestion,
   replyComment,
+  updateComment,
   updateCommentStatus,
   deleteComment,
   fetchDocumentComments,
@@ -125,6 +127,21 @@ export const ReaderPage: React.FC = () => {
   const queryClient = useQueryClient();
   const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
   const [isSubmittingReply, setIsSubmittingReply] = useState<Record<string, boolean>>({});
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editingCommentText, setEditingCommentText] = useState('');
+
+  const handleEditComment = async (commentId: string) => {
+    const text = editingCommentText.trim();
+    if (!text) return;
+    try {
+      await updateComment(commentId, text);
+      setEditingCommentId(null);
+      setEditingCommentText('');
+      queryClient.invalidateQueries({ queryKey: ['reader-comments', docId] });
+    } catch (err) {
+      console.error('Failed to update comment in reader mode:', err);
+    }
+  };
 
   const handleAcceptSuggestion = async (suggId: string) => {
     try {
@@ -511,6 +528,22 @@ export const ReaderPage: React.FC = () => {
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <button
                                 type="button"
+                                onClick={() => {
+                                  if (editingCommentId === comment.id) {
+                                    setEditingCommentId(null);
+                                  } else {
+                                    setEditingCommentId(comment.id);
+                                    setEditingCommentText(comment.content);
+                                  }
+                                }}
+                                className="p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors cursor-pointer"
+                                data-testid="edit-comment-btn"
+                                title="Edit comment"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                              <button
+                                type="button"
                                 onClick={() => handleToggleCommentStatus(comment.id, comment.status)}
                                 className="px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer"
                                 data-testid="resolve-comment-btn"
@@ -537,11 +570,38 @@ export const ReaderPage: React.FC = () => {
                             </div>
                           )}
 
-                          {/* Root Comment Content */}
-                          <div
-                            className="px-3 py-1.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
-                            dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(comment.content || '') }}
-                          />
+                          {/* Root Comment Content / Edit Form */}
+                          {editingCommentId === comment.id ? (
+                            <div className="p-2 space-y-1.5 bg-cme-bg-subtle/30 border-b border-cme-border-base">
+                              <textarea
+                                value={editingCommentText}
+                                onChange={(e) => setEditingCommentText(e.target.value)}
+                                className="w-full p-1.5 text-xs bg-cme-bg-surface border border-cme-border-base rounded text-cme-text-base focus:outline-hidden focus:border-cme-primary resize-y min-h-[48px]"
+                                autoFocus
+                              />
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingCommentId(null)}
+                                  className="px-2 py-0.5 text-[11px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditComment(comment.id)}
+                                  className="px-2.5 py-0.5 text-[11px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer"
+                                >
+                                  Save
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div
+                              className="px-3 py-1.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
+                              dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(comment.content || '') }}
+                            />
+                          )}
 
                           {/* Nested Replies */}
                           {replies.length > 0 && (
@@ -565,16 +625,60 @@ export const ReaderPage: React.FC = () => {
                                       {rInitials}
                                     </span>
                                     <div className="flex-1 min-w-0">
-                                      <div className="flex items-center gap-1.5 mb-0.5">
-                                        <span className="font-medium text-cme-text-base text-[11px]">{rName}</span>
-                                        <span className="text-cme-text-muted text-[10px]">
-                                          {new Date(reply.created_at).toLocaleDateString()}
-                                        </span>
+                                      <div className="flex items-center justify-between gap-1.5 mb-0.5">
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="font-medium text-cme-text-base text-[11px]">{rName}</span>
+                                          <span className="text-cme-text-muted text-[10px]">
+                                            {new Date(reply.created_at).toLocaleDateString()}
+                                          </span>
+                                        </div>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (editingCommentId === reply.id) {
+                                              setEditingCommentId(null);
+                                            } else {
+                                              setEditingCommentId(reply.id);
+                                              setEditingCommentText(reply.content);
+                                            }
+                                          }}
+                                          className="p-0.5 text-cme-text-muted hover:text-cme-text-base rounded cursor-pointer"
+                                          title="Edit reply"
+                                        >
+                                          <Pencil className="w-2.5 h-2.5" />
+                                        </button>
                                       </div>
-                                      <div
-                                        className="text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
-                                        dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(reply.content || '') }}
-                                      />
+                                      {editingCommentId === reply.id ? (
+                                        <div className="pt-1 space-y-1.5">
+                                          <textarea
+                                            value={editingCommentText}
+                                            onChange={(e) => setEditingCommentText(e.target.value)}
+                                            className="w-full p-1.5 text-xs bg-cme-bg-surface border border-cme-border-base rounded text-cme-text-base focus:outline-hidden focus:border-cme-primary resize-y min-h-[40px]"
+                                            autoFocus
+                                          />
+                                          <div className="flex items-center justify-end gap-1.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => setEditingCommentId(null)}
+                                              className="px-2 py-0.5 text-[10px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer"
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleEditComment(reply.id)}
+                                              className="px-2 py-0.5 text-[10px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer"
+                                            >
+                                              Save
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div
+                                          className="text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
+                                          dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(reply.content || '') }}
+                                        />
+                                      )}
                                     </div>
                                   </div>
                                 );

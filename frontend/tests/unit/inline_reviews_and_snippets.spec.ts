@@ -24,6 +24,7 @@ class MockDOMElement {
   public eventListeners: Record<string, ((e: any) => void)[]> = {};
   public disabled: boolean = false;
   public value: string = '';
+  public style: Record<string, string> = {};
 
   constructor(tagName: string) {
     this.tagName = tagName.toUpperCase();
@@ -39,7 +40,11 @@ class MockDOMElement {
   }
 
   get textContent(): string {
-    return this._textContent || this.children.map((c) => c.textContent).join(' ');
+    const childText = this.children.map((c) => c.textContent).filter(Boolean).join(' ');
+    if (this._textContent && childText) {
+      return `${this._textContent} ${childText}`;
+    }
+    return this._textContent || childText;
   }
 
   set textContent(val: string) {
@@ -327,10 +332,103 @@ describe('Step 8.3: Inline Code-Diff Reviews & In-Document Discussions', () => {
     expect(dom.textContent).toContain('Updated with more details.');
 
     // Controls
+    expect(dom.querySelector('[data-testid="edit-comment-btn"]')).not.toBeNull();
     expect(dom.querySelector('[data-testid="resolve-comment-btn"]')).not.toBeNull();
     expect(dom.querySelector('[data-testid="delete-comment-btn"]')).not.toBeNull();
     expect(dom.querySelector('[data-testid="inline-reply-input"]')).not.toBeNull();
     expect(dom.querySelector('[data-testid="inline-reply-submit-btn"]')).not.toBeNull();
+    expect(dom.querySelector('[data-testid="inline-reply-edit-btn"]')).not.toBeNull();
+  });
+
+  it('supports updating comments and nested replies via COMMENT_UPDATED event in reviewStore', () => {
+    useReviewStore.setState({
+      documentId: 'doc-100',
+      comments: [
+        {
+          id: 'c-10',
+          document_id: 'doc-100',
+          content: 'Initial text',
+          status: 'OPEN',
+          author: { id: 'u1', username: 'alice', display_name: 'Alice', avatar_color: '#3b82f6' },
+          anchor: {},
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          replies: [
+            {
+              id: 'c-11',
+              document_id: 'doc-100',
+              parent_id: 'c-10',
+              content: 'Initial reply',
+              status: 'OPEN',
+              author: { id: 'u2', username: 'bob', display_name: 'Bob', avatar_color: '#10b981' },
+              anchor: {},
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+          ],
+        },
+      ],
+    });
+
+    // Root comment edit
+    useReviewStore.getState().handleWebSocketReviewEvent({
+      event: 'COMMENT_UPDATED',
+      document_id: 'doc-100',
+      comment: {
+        id: 'c-10',
+        content: 'Edited root text',
+        status: 'OPEN',
+      } as any,
+    });
+
+    const rootComment = useReviewStore.getState().comments.find((c) => c.id === 'c-10');
+    expect(rootComment?.content).toBe('Edited root text');
+
+    // Reply edit
+    useReviewStore.getState().handleWebSocketReviewEvent({
+      event: 'COMMENT_UPDATED',
+      document_id: 'doc-100',
+      comment: {
+        id: 'c-11',
+        content: 'Edited reply text',
+        status: 'OPEN',
+      } as any,
+    });
+
+    const updatedRoot = useReviewStore.getState().comments.find((c) => c.id === 'c-10');
+    expect(updatedRoot?.replies?.[0].content).toBe('Edited reply text');
+  });
+
+  it('supports updating task details via TASK_UPDATED event in reviewStore', () => {
+    useReviewStore.setState({
+      documentId: 'doc-100',
+      tasks: [
+        {
+          id: 't-10',
+          document_id: 'doc-100',
+          description: 'Original description',
+          is_completed: false,
+          created_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    useReviewStore.getState().handleWebSocketReviewEvent({
+      event: 'TASK_UPDATED',
+      document_id: 'doc-100',
+      task: {
+        id: 't-10',
+        document_id: 'doc-100',
+        description: 'Updated task description',
+        due_date: '2026-12-31',
+        is_completed: true,
+      } as any,
+    });
+
+    const task = useReviewStore.getState().tasks.find((t) => t.id === 't-10');
+    expect(task?.description).toBe('Updated task description');
+    expect(task?.due_date).toBe('2026-12-31');
+    expect(task?.is_completed).toBe(true);
   });
 
   it('toggles showInTextReviews state in useReviewStore to show/hide in-text reviews', () => {

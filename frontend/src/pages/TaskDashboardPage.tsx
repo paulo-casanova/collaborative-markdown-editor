@@ -12,11 +12,13 @@ import {
   ExternalLink,
   Trash2,
   Inbox,
+  Pencil,
 } from 'lucide-react';
 import { fetchAllTasks, updateTask, deleteTask } from '../api/reviews';
 import { fetchCurrentUser } from '../api/auth';
 import { TaskRecord } from '../review/types';
 import { useUIStore } from '../stores/uiStore';
+import { EditTaskModal } from '../components/review/EditTaskModal';
 
 export const TaskDashboardPage: React.FC = () => {
   const queryClient = useQueryClient();
@@ -24,6 +26,7 @@ export const TaskDashboardPage: React.FC = () => {
   const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
   const [filterTab, setFilterTab] = useState<'all' | 'assigned' | 'open' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
 
   // Fetch current user info
   const { data: currentUser } = useQuery({
@@ -410,19 +413,31 @@ export const TaskDashboardPage: React.FC = () => {
                       </div>
                     </div>
 
-                    <button
-                      type="button"
-                      data-testid="delete-dashboard-task-btn"
-                      onClick={() => {
-                        if (confirm('Delete this task?')) {
-                          deleteMutation.mutate(task.id);
-                        }
-                      }}
-                      className="p-1 rounded text-cme-text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40"
-                      title="Delete task"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        data-testid="edit-dashboard-task-btn"
+                        onClick={() => setEditingTask(task)}
+                        className="p-1 rounded text-cme-text-muted hover:text-cme-primary hover:bg-cme-bg-hover"
+                        title="Edit task"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        data-testid="delete-dashboard-task-btn"
+                        onClick={() => {
+                          if (confirm('Delete this task?')) {
+                            deleteMutation.mutate(task.id);
+                          }
+                        }}
+                        className="p-1 rounded text-cme-text-muted hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40"
+                        title="Delete task"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -430,6 +445,17 @@ export const TaskDashboardPage: React.FC = () => {
           ))
         )}
       </div>
+
+      {editingTask && (
+        <EditTaskModal
+          isOpen={!!editingTask}
+          onClose={() => setEditingTask(null)}
+          task={editingTask}
+          onSaved={() => {
+            queryClient.invalidateQueries({ queryKey: ['all-tasks'] });
+          }}
+        />
+      )}
     </div>
   );
 };

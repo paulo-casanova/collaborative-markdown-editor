@@ -8,6 +8,7 @@ import {
   AtSign,
   Plus,
   CheckSquare,
+  Pencil,
 } from 'lucide-react';
 import { CommentRecord } from '../../review/types';
 import { useReviewStore } from '../../stores/reviewStore';
@@ -31,12 +32,16 @@ export const CommentCard: React.FC<CommentCardProps> = ({
   collaborators = DEFAULT_COLLABORATORS,
   onScrollToAnchor,
 }) => {
-  const { postReply, toggleCommentStatus, deleteComment, activeItemId, setActiveItemId, tasks } =
+  const { postReply, editComment, toggleCommentStatus, deleteComment, activeItemId, setActiveItemId, tasks } =
     useReviewStore();
   const [replyText, setReplyText] = useState('');
   const [showReplyForm, setShowReplyForm] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isEditingComment, setIsEditingComment] = useState(false);
+  const [editedCommentText, setEditedCommentText] = useState(comment.content);
+  const [editingReplyId, setEditingReplyId] = useState<string | null>(null);
+  const [editedReplyText, setEditedReplyText] = useState('');
 
   // @mention autocomplete state
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
@@ -182,6 +187,19 @@ export const CommentCard: React.FC<CommentCardProps> = ({
           </span>
           <button
             type="button"
+            data-testid="edit-comment-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setEditedCommentText(comment.content);
+              setIsEditingComment(!isEditingComment);
+            }}
+            className="p-1 text-cme-text-muted hover:text-cme-primary hover:bg-cme-bg-hover rounded"
+            title="Edit comment"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
             data-testid="resolve-comment-btn"
             onClick={(e) => {
               e.stopPropagation();
@@ -213,33 +231,118 @@ export const CommentCard: React.FC<CommentCardProps> = ({
         </div>
       </div>
 
-      {/* Comment Body */}
-      <div className="text-cme-text-base text-xs leading-relaxed mb-3 whitespace-pre-wrap">
-        {renderCommentContent(comment.content)}
-      </div>
+      {/* Comment Body / Edit Form */}
+      {isEditingComment ? (
+        <div className="mb-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+          <textarea
+            data-testid="edit-comment-textarea"
+            value={editedCommentText}
+            onChange={(e) => setEditedCommentText(e.target.value)}
+            className="w-full p-2 text-xs bg-cme-bg-elevated border border-cme-border-base rounded-lg text-cme-text-base focus:outline-hidden focus:border-cme-primary focus:ring-1 focus:ring-cme-primary resize-y min-h-[60px]"
+            autoFocus
+          />
+          <div className="flex items-center justify-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => setIsEditingComment(false)}
+              className="px-2 py-1 text-xs rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              data-testid="save-comment-edit-btn"
+              onClick={async () => {
+                if (!editedCommentText.trim()) return;
+                await editComment(comment.id, editedCommentText.trim());
+                setIsEditingComment(false);
+              }}
+              className="px-2.5 py-1 text-xs rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-cme-text-base text-xs leading-relaxed mb-3 whitespace-pre-wrap">
+          {renderCommentContent(comment.content)}
+        </div>
+      )}
 
       {/* Nested Replies */}
       {comment.replies && comment.replies.length > 0 && (
         <div className="space-y-2 pl-3 border-l-2 border-cme-border-base my-2.5">
           {comment.replies.map((reply) => (
             <div key={reply.id} className="text-xs space-y-0.5">
-              <div className="flex items-center gap-1.5">
-                <div
-                  className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white"
-                  style={{ backgroundColor: reply.author?.avatar_color || '#10b981' }}
-                >
-                  {(reply.author?.display_name || reply.author?.username || 'U')[0].toUpperCase()}
+              <div className="flex items-center justify-between gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold text-white"
+                    style={{ backgroundColor: reply.author?.avatar_color || '#10b981' }}
+                  >
+                    {(reply.author?.display_name || reply.author?.username || 'U')[0].toUpperCase()}
+                  </div>
+                  <span className="font-medium text-[11px] text-cme-text-base">
+                    {reply.author?.display_name || reply.author?.username}
+                  </span>
+                  <span className="text-[10px] text-cme-text-muted">
+                    {reply.created_at ? new Date(reply.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                  </span>
                 </div>
-                <span className="font-medium text-[11px] text-cme-text-base">
-                  {reply.author?.display_name || reply.author?.username}
-                </span>
-                <span className="text-[10px] text-cme-text-muted">
-                  {reply.created_at ? new Date(reply.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                </span>
+                <button
+                  type="button"
+                  data-testid="edit-reply-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (editingReplyId === reply.id) {
+                      setEditingReplyId(null);
+                    } else {
+                      setEditingReplyId(reply.id);
+                      setEditedReplyText(reply.content);
+                    }
+                  }}
+                  className="p-0.5 text-cme-text-muted hover:text-cme-text-base rounded"
+                  title="Edit reply"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
               </div>
-              <div className="text-cme-text-muted text-[11px] pl-5 leading-normal whitespace-pre-wrap">
-                {renderCommentContent(reply.content)}
-              </div>
+              {editingReplyId === reply.id ? (
+                <div className="pl-5 pt-1 space-y-1.5" onClick={(e) => e.stopPropagation()}>
+                  <textarea
+                    data-testid="edit-reply-textarea"
+                    value={editedReplyText}
+                    onChange={(e) => setEditedReplyText(e.target.value)}
+                    className="w-full p-1.5 text-xs bg-cme-bg-elevated border border-cme-border-base rounded text-cme-text-base focus:outline-hidden focus:border-cme-primary resize-y min-h-[44px]"
+                    autoFocus
+                  />
+                  <div className="flex items-center justify-end gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setEditingReplyId(null)}
+                      className="px-2 py-0.5 text-[11px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="save-reply-edit-btn"
+                      onClick={async () => {
+                        if (!editedReplyText.trim()) return;
+                        await editComment(reply.id, editedReplyText.trim());
+                        setEditingReplyId(null);
+                      }}
+                      className="px-2 py-0.5 text-[11px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-cme-text-muted text-[11px] pl-5 leading-normal whitespace-pre-wrap">
+                  {renderCommentContent(reply.content)}
+                </div>
+              )}
             </div>
           ))}
         </div>

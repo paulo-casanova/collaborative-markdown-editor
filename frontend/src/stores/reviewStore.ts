@@ -48,6 +48,7 @@ export interface ReviewState {
   // Mutations
   postComment: (content: string) => Promise<CommentRecord | null>;
   postReply: (commentId: string, content: string) => Promise<CommentRecord | null>;
+  editComment: (commentId: string, content: string) => Promise<CommentRecord | null>;
   toggleCommentStatus: (commentId: string) => Promise<CommentRecord | null>;
   deleteComment: (commentId: string) => Promise<void>;
 
@@ -56,6 +57,7 @@ export interface ReviewState {
   rejectSuggestion: (suggestionId: string) => Promise<SuggestionRecord | null>;
 
   toggleTask: (taskId: string, isCompleted: boolean) => Promise<TaskRecord | null>;
+  editTask: (taskId: string, payload: reviewApi.UpdateTaskPayload) => Promise<TaskRecord | null>;
   postTask: (description: string, commentId?: string, assigneeId?: string, dueDate?: string) => Promise<TaskRecord | null>;
   deleteTask: (taskId: string) => Promise<void>;
 }
@@ -118,6 +120,24 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
               const replies = c.replies || [];
               if (replies.some((r) => r.id === comment.id)) return c;
               return { ...c, replies: [...replies, comment] };
+            }
+            return c;
+          }),
+        }));
+        break;
+      }
+      case 'COMMENT_UPDATED': {
+        if (!comment) return;
+        set((state) => ({
+          comments: state.comments.map((c) => {
+            if (c.id === comment.id) {
+              return { ...c, ...comment, replies: c.replies };
+            }
+            if (c.replies && c.replies.some((r) => r.id === comment.id)) {
+              return {
+                ...c,
+                replies: c.replies.map((r) => (r.id === comment.id ? { ...r, ...comment } : r)),
+              };
             }
             return c;
           }),
@@ -189,7 +209,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       case 'TASK_UPDATED': {
         if (!task) return;
         set((state) => ({
-          tasks: state.tasks.map((t) => (t.id === task.id ? { ...t, is_completed: task.is_completed } : t)),
+          tasks: state.tasks.map((t) => (t.id === task.id ? { ...t, ...task } : t)),
         }));
         break;
       }
@@ -253,6 +273,30 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       return reply;
     } catch (err) {
       console.error('[useReviewStore] Failed to post reply:', err);
+      return null;
+    }
+  },
+
+  editComment: async (commentId: string, content: string) => {
+    try {
+      const updated = await reviewApi.updateComment(commentId, content);
+      set((state) => ({
+        comments: state.comments.map((c) => {
+          if (c.id === commentId) {
+            return { ...c, ...updated, replies: c.replies };
+          }
+          if (c.replies && c.replies.some((r) => r.id === commentId)) {
+            return {
+              ...c,
+              replies: c.replies.map((r) => (r.id === commentId ? { ...r, ...updated } : r)),
+            };
+          }
+          return c;
+        }),
+      }));
+      return updated;
+    } catch (err) {
+      console.error('[useReviewStore] Failed to edit comment:', err);
       return null;
     }
   },
@@ -349,6 +393,19 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       return updated;
     } catch (err) {
       console.error('[useReviewStore] Failed to toggle task:', err);
+      return null;
+    }
+  },
+
+  editTask: async (taskId: string, payload: reviewApi.UpdateTaskPayload) => {
+    try {
+      const updated = await reviewApi.updateTask(taskId, payload);
+      set((state) => ({
+        tasks: state.tasks.map((t) => (t.id === taskId ? { ...t, ...updated } : t)),
+      }));
+      return updated;
+    } catch (err) {
+      console.error('[useReviewStore] Failed to edit task:', err);
       return null;
     }
   },

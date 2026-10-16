@@ -49,6 +49,13 @@ export async function updateCommentStatus(
   });
 }
 
+export async function updateComment(commentId: string, content: string): Promise<CommentRecord> {
+  return await apiRequest<CommentRecord>(`/api/v1/comments/${commentId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ content }),
+  });
+}
+
 export async function deleteComment(commentId: string): Promise<void> {
   await apiRequest<void>(`/api/v1/comments/${commentId}`, {
     method: 'DELETE',
@@ -131,10 +138,21 @@ export async function createTask(
   });
 }
 
-export async function updateTask(taskId: string, isCompleted: boolean): Promise<TaskRecord> {
+export interface UpdateTaskPayload {
+  is_completed?: boolean;
+  description?: string;
+  assignee_id?: string | null;
+  due_date?: string | null;
+}
+
+export async function updateTask(
+  taskId: string,
+  payload: boolean | UpdateTaskPayload
+): Promise<TaskRecord> {
+  const body = typeof payload === 'boolean' ? { is_completed: payload } : payload;
   return await apiRequest<TaskRecord>(`/api/v1/tasks/${taskId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ is_completed: isCompleted }),
+    body: JSON.stringify(body),
   });
 }
 

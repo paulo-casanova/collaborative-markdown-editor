@@ -175,6 +175,16 @@ struct CreateTaskRequest {
 };
 
 /**
+ * @struct UpdateTaskRequest
+ */
+struct UpdateTaskRequest {
+    std::optional<bool> is_completed;
+    std::optional<std::string> description;
+    std::optional<std::string> assignee_id;
+    std::optional<std::string> due_date;
+};
+
+/**
  * @class ReviewService
  * @brief Manages PostgreSQL CRUD operations and live reconciliation for review discussions, suggestions, and tasks.
  */
@@ -192,6 +202,7 @@ public:
     Result<CommentRecord> get_comment(const std::string& comment_id, const auth::UserIdentity& user);
     Result<CommentRecord> create_comment(const std::string& document_id, const auth::UserIdentity& user, const CreateCommentRequest& req);
     Result<CommentRecord> reply_comment(const std::string& comment_id, const auth::UserIdentity& user, const std::string& content);
+    Result<CommentRecord> update_comment_content(const std::string& comment_id, const auth::UserIdentity& user, const std::string& content);
     Result<CommentRecord> update_comment_status(const std::string& comment_id, const auth::UserIdentity& user, const std::string& status);
     Result<void> delete_comment(const std::string& comment_id, const auth::UserIdentity& user);
 
@@ -218,7 +229,9 @@ public:
         std::optional<bool> completed_filter = std::nullopt,
         bool assigned_to_me_only = false
     );
+    Result<TaskRecord> get_task(const std::string& task_id, const auth::UserIdentity& user);
     Result<TaskRecord> create_task(const std::string& document_id, const auth::UserIdentity& user, const CreateTaskRequest& req);
+    Result<TaskRecord> update_task(const std::string& task_id, const auth::UserIdentity& user, const UpdateTaskRequest& req);
     Result<TaskRecord> update_task(const std::string& task_id, const auth::UserIdentity& user, bool is_completed);
     Result<void> delete_task(const std::string& task_id, const auth::UserIdentity& user);
 

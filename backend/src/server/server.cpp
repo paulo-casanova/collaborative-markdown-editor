@@ -2638,6 +2638,54 @@ Result<void> Server::start() {
         });
     });
 
+    // PATCH /api/v1/comments/:id
+    app.patch("/api/v1/comments/:id", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        std::string comment_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, comment_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            std::string content;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                content = j.value("content", "");
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+            if (content.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Content cannot be empty"}});
+                return;
+            }
+            auto update_res = review_service_->update_comment_content(comment_id, *auth_res.value(), content);
+            if (!update_res.has_value()) {
+                if (update_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Comment not found"}});
+                } else if (update_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access or author required"}});
+                } else {
+                    send_json(res, "400 Bad Request", {{"error", "Failed to update comment"}});
+                }
+                return;
+            }
+            broadcast_review_event(update_res.value().document_id, {
+                {"event", "COMMENT_UPDATED"},
+                {"document_id", update_res.value().document_id},
+                {"comment", update_res.value().to_json()}
+            });
+            send_json(res, "200 OK", update_res.value().to_json());
+        });
+    });
+
     // DELETE /api/v1/comments/:id
     app.del("/api/v1/comments/:id", [this, authenticate_user, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
@@ -2900,14 +2948,31 @@ Result<void> Server::start() {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
             }
-            bool is_completed = true;
+            review::UpdateTaskRequest update_req;
             try {
                 auto j = nlohmann::json::parse(*body);
-                if (j.contains("is_completed")) {
-                    is_completed = j["is_completed"].get<bool>();
+                if (j.contains("is_completed") && !j["is_completed"].is_null()) {
+                    update_req.is_completed = j["is_completed"].get<bool>();
+                }
+                if (j.contains("description") && !j["description"].is_null()) {
+                    update_req.description = j["description"].get<std::string>();
+                }
+                if (j.contains("assignee_id")) {
+                    if (j["assignee_id"].is_null()) {
+                        update_req.assignee_id = "";
+                    } else {
+                        update_req.assignee_id = j["assignee_id"].get<std::string>();
+                    }
+                }
+                if (j.contains("due_date")) {
+                    if (j["due_date"].is_null()) {
+                        update_req.due_date = "";
+                    } else {
+                        update_req.due_date = j["due_date"].get<std::string>();
+                    }
                 }
             } catch (...) {}
-            auto task_res = review_service_->update_task(task_id, *auth_res.value(), is_completed);
+            auto task_res = review_service_->update_task(task_id, *auth_res.value(), update_req);
             if (!task_res.has_value()) {
                 if (task_res.error() == ErrorCode::NotFound) {
                     send_json(res, "404 Not Found", {{"error", "Task not found"}});
@@ -2919,7 +2984,7 @@ Result<void> Server::start() {
                 return;
             }
             broadcast_review_event(task_res.value().document_id, {
-                {"event", "TASK_TOGGLED"},
+                {"event", "TASK_UPDATED"},
                 {"document_id", task_res.value().document_id},
                 {"task", task_res.value().to_json()}
             });
