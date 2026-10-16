@@ -50,20 +50,6 @@ export const TabBar: React.FC = () => {
     return () => window.removeEventListener('click', handleOutsideClick);
   }, []);
 
-  // Keyboard shortcuts: Ctrl+W to close active tab
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'w') {
-        e.preventDefault();
-        if (activeTabId) {
-          handleClose(activeTabId);
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeTabId]);
-
   const handleTabClick = (tab: WorkspaceTab) => {
     setActiveTabId(tab.id);
     navigate(`${baseDocRoute}/${tab.id}`);

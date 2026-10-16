@@ -71,11 +71,18 @@ describe('WorkspaceStore & UIStore behavior', () => {
     expect(useWorkspaceStore.getState().outlineWidth).toBe(600);
   });
 
-  it('stores universal viewMode in UIStore', () => {
+  it('stores universal viewMode and clamps sidebarWidth in UIStore', () => {
     expect(useUIStore.getState().viewMode).toBe('edit');
     useUIStore.getState().setViewMode('read');
     expect(useUIStore.getState().viewMode).toBe('read');
     useUIStore.getState().setViewMode('edit');
     expect(useUIStore.getState().viewMode).toBe('edit');
+
+    useUIStore.getState().setSidebarWidth(320);
+    expect(useUIStore.getState().sidebarWidth).toBe(320);
+    useUIStore.getState().setSidebarWidth(120);
+    expect(useUIStore.getState().sidebarWidth).toBe(180);
+    useUIStore.getState().setSidebarWidth(800);
+    expect(useUIStore.getState().sidebarWidth).toBe(600);
   });
 });

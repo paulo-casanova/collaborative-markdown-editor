@@ -94,12 +94,12 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
 
   // Compute headings from props, markdown, or DOM
   useEffect(() => {
-    if (propHeadings && propHeadings.length > 0) {
+    if (propHeadings !== undefined) {
       setHeadings(propHeadings);
       return;
     }
 
-    if (markdown) {
+    if (markdown !== undefined) {
       const parsed = extractHeadingsFromMarkdown(markdown);
       setHeadings(parsed);
       return;

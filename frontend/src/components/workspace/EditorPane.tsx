@@ -44,6 +44,11 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const [showOutline, setShowOutline] = useState<boolean>(false);
   const [isResizingOutline, setIsResizingOutline] = useState<boolean>(false);
   const [editorInstance, setEditorInstance] = useState<any>(null);
+  const [liveContent, setLiveContent] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    setLiveContent(undefined);
+  }, [documentId]);
 
   const handleOutlineResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -72,6 +77,13 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
   const handleEditorReady = useCallback((ed: any) => {
     setEditorInstance((prev: any) => prev || ed);
+    const view = ed?.getView?.() || ed?.view;
+    if (view?.state?.doc) {
+      const currentText = view.state.doc.toString();
+      if (currentText) {
+        setLiveContent(currentText);
+      }
+    }
   }, []);
 
   const scrollToHeading = useCallback(
@@ -454,6 +466,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             initialContent={
               document.content || `# ${document.title || 'Document'}\n\nStart writing markdown here...`
             }
+            onChange={setLiveContent}
             onEditorReady={handleEditorReady}
             autoFocus={isPrimary ? 'end' : false}
           />
@@ -490,7 +503,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             </div>
             <div className="flex-1 overflow-y-auto p-1">
               <DocumentOutline
-                markdown={document.content}
+                markdown={liveContent !== undefined ? liveContent : document.content}
                 onSelectHeading={(id) => {
                   scrollToHeading(id);
                 }}

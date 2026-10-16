@@ -296,17 +296,52 @@ Divider with spaced hyphens.
     const resizedBox = await outlineSidebar.boundingBox();
     expect(resizedBox!.width).toBeGreaterThan(300);
 
-    // 3. Switch to Reader mode via the toolbar Reader button
+    // 3. Type a new heading in the editor and verify the Outline updates live
+    const editor = page.locator('.ProseMirror');
+    await editor.click();
+    await page.keyboard.press('Control+End');
+    await page.keyboard.type('\n\n## Live Dynamic Heading\n');
+    await expect(outlineSidebar.locator('[data-testid="toc-item-live-dynamic-heading"]')).toBeVisible();
+
+    // 4. Resize the left sidebar via its right-edge drag handle
+    const leftSidebar = page.locator('[data-testid="left-sidebar"]');
+    const sidebarResizer = page.locator('[data-testid="sidebar-resizer"]');
+    const sBox = await sidebarResizer.boundingBox();
+    expect(sBox).not.toBeNull();
+    if (sBox) {
+      await page.mouse.move(sBox.x + 1, sBox.y + 80);
+      await page.mouse.down();
+      await page.mouse.move(sBox.x + 60, sBox.y + 80);
+      await page.mouse.up();
+    }
+    const newLeftBox = await leftSidebar.boundingBox();
+    expect(newLeftBox!.width).toBeGreaterThan(290);
+
+    // 5. Switch to Reader mode via the toolbar Reader button
     const readerBtn = page.locator('[data-testid="switch-to-reader-btn"]');
     await expect(readerBtn).toBeVisible();
     await readerBtn.click();
     await expect(page).toHaveURL(new RegExp(`/docs/${docId}$`));
 
-    // 4. Click a document in FileTree while in Read mode and verify it stays in Read mode (/docs/...)
+    // 6. Verify Reader width toggle expands between standard column and full pane width
+    const widthToggle = page.locator('[data-testid="reader-width-toggle"]');
+    await expect(widthToggle).toBeVisible();
+    const mainEl = page.locator('main').last();
+    await expect(mainEl).toHaveClass(/max-w-4xl/);
+    await widthToggle.click();
+    await expect(mainEl).toHaveClass(/max-w-none/);
+    await widthToggle.click();
+    await expect(mainEl).toHaveClass(/max-w-4xl/);
+
+    // 7. Click a document in FileTree while in Read mode and verify it stays in Read mode (/docs/...)
     const fileTree = page.locator('[data-testid="file-tree-container"]');
     const docEntry = fileTree.getByText(docTitle);
     await expect(docEntry).toBeVisible();
     await docEntry.click();
     await expect(page).toHaveURL(new RegExp(`/docs/${docId}$`));
+
+    // 8. Press Ctrl+W to close the active tab and verify navigation back to /
+    await page.keyboard.press('Control+w');
+    await expect(page).toHaveURL(/\/$/);
   });
 });

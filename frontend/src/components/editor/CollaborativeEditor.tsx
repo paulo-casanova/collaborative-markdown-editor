@@ -85,6 +85,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   const isDark = resolvedTheme === 'dark';
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<CodeMirrorEditorAdapter | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const [editor, setEditor] = useState<CodeMirrorEditorAdapter | null>(null);
 
   const rawInitialText = useMemo(() => {
@@ -169,8 +171,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         if (update.selectionSet) {
           adapterRef.current?.notifySelectionUpdate();
         }
-        if (update.docChanged && onChange) {
-          onChange(update.state.doc.toString());
+        if (update.docChanged && onChangeRef.current) {
+          onChangeRef.current(update.state.doc.toString());
         }
         if (provider && (update.selectionSet || update.docChanged)) {
           const ytext = provider.ydoc.getText('content');

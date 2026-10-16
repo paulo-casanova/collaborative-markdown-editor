@@ -7,6 +7,7 @@ import { TokensModal } from '../auth/TokensModal';
 import { SearchModal } from '../search/SearchModal';
 import { useThemeStore } from '../../stores/themeStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useWorkspaceStore } from '../../stores/workspaceStore';
 
 export const AppShell: React.FC = () => {
   const { initThemeListener } = useThemeStore();
@@ -27,6 +28,42 @@ export const AppShell: React.FC = () => {
       setViewMode('edit');
     }
   }, [location.pathname, setViewMode]);
+
+  // Global keyboard shortcut: Ctrl+W / Cmd+W (or Alt+W) to close the current active tab
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey || e.altKey) && e.key.toLowerCase() === 'w') {
+        const { activeTabId, tabs, closeTab } = useWorkspaceStore.getState();
+        if (!activeTabId) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        const tabToClose = tabs.find((t) => t.id === activeTabId);
+        if (tabToClose?.isDirty) {
+          if (!confirm(`Document "${tabToClose.title}" has unsaved edits. Close anyway?`)) {
+            return;
+          }
+        }
+
+        closeTab(activeTabId);
+
+        const nextActive = useWorkspaceStore.getState().activeTabId;
+        const isRead =
+          useUIStore.getState().viewMode === 'read' ||
+          window.location.pathname.startsWith('/docs/');
+        const baseDocRoute = isRead ? '/docs' : '/documents';
+        if (nextActive) {
+          navigate(`${baseDocRoute}/${nextActive}`);
+        } else {
+          navigate('/');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+  }, [navigate]);
 
   // Global wikilink navigation listener
   useEffect(() => {

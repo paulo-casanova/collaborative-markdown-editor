@@ -7,6 +7,7 @@ import {
   MessageSquare,
   AlertCircle,
   Maximize2,
+  Minimize2,
   CheckCircle2,
   User,
   Sparkles,
@@ -28,7 +29,7 @@ import { DocumentOutline, extractHeadingsFromMarkdown, slugify } from '../compon
 import { renderMermaidSvg } from '../components/editor/utils/mermaidRenderer';
 
 type FontMode = 'sans' | 'serif' | 'mono';
-type WidthMode = 'focused' | 'standard' | 'fluid';
+type WidthMode = 'standard' | 'full';
 
 export const ReaderPage: React.FC = () => {
   const params = useParams();
@@ -210,18 +211,14 @@ export const ReaderPage: React.FC = () => {
       ? 'font-mono'
       : 'font-sans';
 
-  const widthClass =
-    widthMode === 'focused'
-      ? 'max-w-3xl'
-      : widthMode === 'fluid'
-      ? 'max-w-6xl'
-      : 'max-w-4xl';
+  const containerWidthClass = widthMode === 'full' ? 'max-w-none w-full' : 'max-w-7xl mx-auto';
+  const widthClass = widthMode === 'full' ? 'max-w-none w-full' : 'max-w-4xl mx-auto';
 
   return (
     <div className="min-h-full bg-cme-bg-base text-cme-text-base pb-24">
       {/* Top Reader Controls Header */}
       <header className="sticky top-0 z-20 bg-cme-bg-base/90 backdrop-blur border-b border-cme-border-base px-4 md:px-8 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+        <div className={`${containerWidthClass} flex items-center justify-between gap-4`}>
           {/* Left Metadata */}
           <div className="flex items-center gap-3 truncate">
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cme-primary/10 text-cme-primary text-[11px] font-semibold tracking-wide uppercase flex-shrink-0">
@@ -274,19 +271,20 @@ export const ReaderPage: React.FC = () => {
 
             {/* Width Toggle */}
             <button
-              onClick={() =>
-                setWidthMode(
-                  widthMode === 'focused'
-                    ? 'standard'
-                    : widthMode === 'standard'
-                    ? 'fluid'
-                    : 'focused'
-                )
-              }
-              className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover transition-colors hidden sm:flex"
-              title={`Width: ${widthMode}`}
+              onClick={() => setWidthMode(widthMode === 'standard' ? 'full' : 'standard')}
+              className={`p-1.5 rounded-lg border transition-colors hidden sm:flex ${
+                widthMode === 'full'
+                  ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
+                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+              }`}
+              title={widthMode === 'full' ? 'Restore column width' : 'Expand to full pane width'}
+              data-testid="reader-width-toggle"
             >
-              <Maximize2 className="w-3.5 h-3.5" />
+              {widthMode === 'full' ? (
+                <Minimize2 className="w-3.5 h-3.5" />
+              ) : (
+                <Maximize2 className="w-3.5 h-3.5" />
+              )}
             </button>
 
             {/* Review Overlay Toggle */}
@@ -320,9 +318,9 @@ export const ReaderPage: React.FC = () => {
       </header>
 
       {/* Main Reading Area with Right Sticky Table of Contents */}
-      <div className="max-w-7xl mx-auto px-4 md:px-8 pt-8 flex gap-8 items-start">
+      <div className={`${containerWidthClass} px-4 md:px-8 pt-8 flex gap-8 items-start`}>
         {/* Document Article Body */}
-        <main className={`flex-1 min-w-0 ${widthClass} mx-auto transition-all`}>
+        <main className={`flex-1 min-w-0 ${widthClass} transition-all`}>
           <article
             className={`prose dark:prose-invert max-w-none text-cme-text-base ${fontClass} leading-relaxed`}
             data-testid="reader-article"

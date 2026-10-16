@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -16,7 +16,33 @@ import { RecentDocuments } from '../navigation/RecentDocuments';
 
 export const Sidebar: React.FC = () => {
   const location = useLocation();
-  const { sidebarOpen, setSearchModalOpen } = useUIStore();
+  const { sidebarOpen, sidebarWidth, setSidebarWidth, setSearchModalOpen } = useUIStore();
+  const [isResizing, setIsResizing] = useState(false);
+
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = sidebarWidth || 256;
+      setIsResizing(true);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const deltaX = moveEvent.clientX - startX;
+        setSidebarWidth(startWidth + deltaX);
+      };
+
+      const handleMouseUp = () => {
+        setIsResizing(false);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    },
+    [sidebarWidth, setSidebarWidth]
+  );
 
   const { data: user } = useQuery({
     queryKey: ['auth-me'],
@@ -29,7 +55,20 @@ export const Sidebar: React.FC = () => {
   const isActive = (path: string) => location.pathname === path;
 
   return (
-    <aside className="w-64 border-r border-cme-border-base bg-cme-bg-surface flex flex-col h-[calc(100vh-3.5rem)] select-none">
+    <aside
+      style={{ width: `${sidebarWidth || 256}px` }}
+      className="relative flex-shrink-0 border-r border-cme-border-base bg-cme-bg-surface flex flex-col h-[calc(100vh-3.5rem)] select-none"
+      data-testid="left-sidebar"
+    >
+      {/* Right-edge Resize Handle */}
+      <div
+        onMouseDown={handleResizeStart}
+        className={`absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize z-20 transition-colors ${
+          isResizing ? 'bg-cme-primary' : 'hover:bg-cme-primary/50'
+        }`}
+        title="Drag to resize sidebar"
+        data-testid="sidebar-resizer"
+      />
       {/* Top Action Items */}
       <div className="p-3 space-y-1 border-b border-cme-border-base text-xs">
         <button
