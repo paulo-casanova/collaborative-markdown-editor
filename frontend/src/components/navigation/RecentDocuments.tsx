@@ -3,7 +3,10 @@ import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Clock, ChevronDown, ChevronRight, FileText, Package } from 'lucide-react';
 import { fetchRecentDocuments } from '../../api/documents';
+import { fetchCurrentUser } from '../../api/auth';
 import { DocumentRecord } from '../../types/document';
+import { useUIStore } from '../../stores/uiStore';
+import { useWorkspaceStore } from '../../stores/workspaceStore';
 
 function timeAgo(dateStr: string): string {
   try {
@@ -25,11 +28,23 @@ function timeAgo(dateStr: string): string {
 export const RecentDocuments: React.FC = () => {
   const location = useLocation();
   const [isOpen, setIsOpen] = useState(true);
+  const { viewMode } = useUIStore();
+  const { openTab } = useWorkspaceStore();
+
+  const isReadMode = viewMode === 'read' || location.pathname.startsWith('/docs/');
+  const baseDocRoute = isReadMode ? '/docs' : '/documents';
+
+  const { data: user } = useQuery({
+    queryKey: ['auth-me'],
+    queryFn: fetchCurrentUser,
+    retry: false,
+  });
 
   const { data: recents, isLoading } = useQuery({
-    queryKey: ['recent-documents'],
+    queryKey: ['recent-documents', user?.id ?? 'anon'],
     queryFn: () => fetchRecentDocuments(30),
     staleTime: 5000,
+    retry: 1,
   });
 
   return (
@@ -66,7 +81,15 @@ export const RecentDocuments: React.FC = () => {
               return (
                 <Link
                   key={doc.id}
-                  to={`/documents/${doc.id}`}
+                  to={`${baseDocRoute}/${doc.id}`}
+                  onClick={() => {
+                    openTab({
+                      id: doc.id,
+                      path: doc.path,
+                      title: doc.title || doc.path,
+                      is_bundle: doc.is_bundle,
+                    });
+                  }}
                   className={`flex items-center justify-between py-1.5 px-2 rounded-lg text-xs transition-colors group ${
                     isActive
                       ? 'bg-cme-primary/10 text-cme-primary font-medium'

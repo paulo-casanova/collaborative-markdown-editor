@@ -16,9 +16,12 @@ import {
 import { fetchAllTasks, updateTask, deleteTask } from '../api/reviews';
 import { fetchCurrentUser } from '../api/auth';
 import { TaskRecord } from '../review/types';
+import { useUIStore } from '../stores/uiStore';
 
 export const TaskDashboardPage: React.FC = () => {
   const queryClient = useQueryClient();
+  const { viewMode } = useUIStore();
+  const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
   const [filterTab, setFilterTab] = useState<'all' | 'assigned' | 'open' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -338,7 +341,7 @@ export const TaskDashboardPage: React.FC = () => {
                 </div>
 
                 <Link
-                  to={`/documents/${group.documentId}`}
+                  to={`${baseDocRoute}/${group.documentId}`}
                   className="flex items-center gap-1 text-xs text-cme-primary hover:underline font-medium"
                   data-testid="open-document-link"
                 >

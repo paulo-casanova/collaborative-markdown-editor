@@ -2,8 +2,6 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   PanelLeft,
-  BookOpen,
-  Edit3,
   CheckCircle,
   RefreshCw,
   WifiOff,
@@ -22,7 +20,6 @@ export const Header: React.FC = () => {
 
   const isEditorMode = location.pathname.startsWith('/documents/');
   const isReaderMode = location.pathname.startsWith('/docs/');
-  const currentDocId = isEditorMode ? location.pathname.split('/documents/')[1] : null;
 
   const renderSyncBadge = (status: SyncStatus) => {
     switch (status) {
@@ -129,36 +126,6 @@ export const Header: React.FC = () => {
         {/* Sync Status Badge */}
         {(isEditorMode || isReaderMode) && (
           <div className="hidden lg:block">{renderSyncBadge(syncStatus)}</div>
-        )}
-
-        {/* Mode Switcher: Editor vs Reader */}
-        {currentDocId && (
-          <div className="flex items-center p-0.5 rounded-lg border border-cme-border-base bg-cme-bg-subtle text-xs">
-            <Link
-              to={`/documents/${currentDocId}`}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md transition-colors ${
-                isEditorMode
-                  ? 'bg-cme-bg-surface text-cme-primary font-medium shadow-sm'
-                  : 'text-cme-text-muted hover:text-cme-text-base'
-              }`}
-              title="Interactive Markdown Editor"
-            >
-              <Edit3 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Edit</span>
-            </Link>
-            <Link
-              to={`/docs/${currentDocId}`}
-              className={`flex items-center gap-1 px-2 py-1 rounded-md transition-colors ${
-                isReaderMode
-                  ? 'bg-cme-bg-surface text-cme-primary font-medium shadow-sm'
-                  : 'text-cme-text-muted hover:text-cme-text-base'
-              }`}
-              title="Distraction-Free Reader View"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Read</span>
-            </Link>
-          </div>
         )}
 
         {/* Health Probe & Version Popover */}

@@ -23,6 +23,7 @@ import {
   fetchDocumentTasks,
 } from '../api/documents';
 import { useUIStore } from '../stores/uiStore';
+import { useWorkspaceStore } from '../stores/workspaceStore';
 import { DocumentOutline, extractHeadingsFromMarkdown, slugify } from '../components/navigation/DocumentOutline';
 import { renderMermaidSvg } from '../components/editor/utils/mermaidRenderer';
 
@@ -37,7 +38,8 @@ export const ReaderPage: React.FC = () => {
   const pathParam = searchParams.get('path');
   const rawTarget = pathParam || wildcard || (idParam !== 'by-path' ? idParam : '') || '';
 
-  const { setBreadcrumbs } = useUIStore();
+  const { setBreadcrumbs, setViewMode } = useUIStore();
+  const { openTab } = useWorkspaceStore();
   const [showReviews, setShowReviews] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
   const [widthMode, setWidthMode] = useState<WidthMode>('standard');
@@ -95,9 +97,16 @@ export const ReaderPage: React.FC = () => {
     enabled: Boolean(docId) && showReviews,
   });
 
-  // Keep breadcrumbs in sync
+  // Keep breadcrumbs and workspace tabs in sync
   useEffect(() => {
     if (document) {
+      openTab({
+        id: document.id,
+        path: document.path,
+        title: document.title || document.path.split('/').pop() || 'Document',
+        is_bundle: document.is_bundle,
+      });
+
       const parts = document.path.split('/');
       const breadcrumbs = [
         { label: 'Workspaces', path: '/' },
@@ -109,7 +118,7 @@ export const ReaderPage: React.FC = () => {
       ];
       setBreadcrumbs(breadcrumbs);
     }
-  }, [document, setBreadcrumbs]);
+  }, [document, openTab, setBreadcrumbs]);
 
   // Auto-scroll to heading anchor if present in URL on load
   // Auto-scroll to heading anchor if present in URL on load
@@ -298,6 +307,7 @@ export const ReaderPage: React.FC = () => {
             {/* Switch to Edit Mode */}
             <Link
               to={`/documents/${document.id}`}
+              onClick={() => setViewMode('edit')}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
               title="Open in Collaborative Editor"
               data-testid="switch-to-editor-btn"

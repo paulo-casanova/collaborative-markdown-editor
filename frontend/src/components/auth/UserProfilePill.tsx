@@ -23,7 +23,11 @@ export const UserProfilePill: React.FC = () => {
     mutationFn: logoutUser,
     onSuccess: () => {
       queryClient.setQueryData(['auth-me'], null);
+      queryClient.setQueryData(['workspace-tree'], []);
+      queryClient.setQueryData(['recent-documents'], []);
       queryClient.invalidateQueries({ queryKey: ['auth-me'] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       setMenuOpen(false);
       navigate('/');
     },

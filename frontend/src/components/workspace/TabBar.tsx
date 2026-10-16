@@ -12,6 +12,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useWorkspaceStore, WorkspaceTab } from '../../stores/workspaceStore';
+import { useUIStore } from '../../stores/uiStore';
 
 interface TabContextMenuState {
   x: number;
@@ -21,6 +22,8 @@ interface TabContextMenuState {
 
 export const TabBar: React.FC = () => {
   const navigate = useNavigate();
+  const { viewMode } = useUIStore();
+  const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
   const {
     tabs,
     activeTabId,
@@ -63,7 +66,7 @@ export const TabBar: React.FC = () => {
 
   const handleTabClick = (tab: WorkspaceTab) => {
     setActiveTabId(tab.id);
-    navigate(`/documents/${tab.id}`);
+    navigate(`${baseDocRoute}/${tab.id}`);
   };
 
   const handleClose = (tabId: string, e?: React.MouseEvent) => {
@@ -81,7 +84,7 @@ export const TabBar: React.FC = () => {
     if (activeTabId === tabId) {
       const nextActive = useWorkspaceStore.getState().activeTabId;
       if (nextActive) {
-        navigate(`/documents/${nextActive}`);
+        navigate(`${baseDocRoute}/${nextActive}`);
       } else {
         navigate('/');
       }

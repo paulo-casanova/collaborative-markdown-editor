@@ -262,4 +262,51 @@ Divider with spaced hyphens.
     await expect(pipedLink).toBeVisible();
     await expect(pipedLink).toHaveText('Go to Arch');
   });
+
+  test('supports resizing the editor outline sidebar and preserves universal Read/Edit mode when opening files', async ({
+    page,
+  }) => {
+    // 1. Open document in Editor mode and toggle Outline
+    await page.goto(`/documents/${docId}`);
+    await expect(page.locator('.ProseMirror')).toBeVisible();
+
+    // Verify no redundant header-mode toggle exists in the global header
+    await expect(page.locator('[data-testid="header-mode-edit"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="header-mode-read"]')).toHaveCount(0);
+
+    const outlineToggle = page.locator('[data-testid="editor-outline-toggle"]');
+    await outlineToggle.click();
+
+    const outlineSidebar = page.locator('[data-testid="editor-outline-sidebar"]');
+    await expect(outlineSidebar).toBeVisible();
+    const initialBox = await outlineSidebar.boundingBox();
+    expect(initialBox?.width).toBeCloseTo(256, 5);
+
+    // 2. Drag the outline resizer handle 80px to the left to widen the outline sidebar
+    const resizer = page.locator('[data-testid="outline-resizer"]');
+    const resizerBox = await resizer.boundingBox();
+    expect(resizerBox).not.toBeNull();
+    if (resizerBox) {
+      await page.mouse.move(resizerBox.x + 1, resizerBox.y + 50);
+      await page.mouse.down();
+      await page.mouse.move(resizerBox.x - 80, resizerBox.y + 50);
+      await page.mouse.up();
+    }
+
+    const resizedBox = await outlineSidebar.boundingBox();
+    expect(resizedBox!.width).toBeGreaterThan(300);
+
+    // 3. Switch to Reader mode via the toolbar Reader button
+    const readerBtn = page.locator('[data-testid="switch-to-reader-btn"]');
+    await expect(readerBtn).toBeVisible();
+    await readerBtn.click();
+    await expect(page).toHaveURL(new RegExp(`/docs/${docId}$`));
+
+    // 4. Click a document in FileTree while in Read mode and verify it stays in Read mode (/docs/...)
+    const fileTree = page.locator('[data-testid="file-tree-container"]');
+    const docEntry = fileTree.getByText(docTitle);
+    await expect(docEntry).toBeVisible();
+    await docEntry.click();
+    await expect(page).toHaveURL(new RegExp(`/docs/${docId}$`));
+  });
 });

@@ -211,6 +211,37 @@ Result<DocumentRecord> DocumentService::create_document(
     }
 }
 
+Result<std::string> DocumentService::create_directory(
+    const std::string& relative_path,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    std::string norm_path = normalize_rel_path(relative_path);
+    if (norm_path.empty() || has_path_traversal(norm_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    std::filesystem::path fp(norm_path);
+    std::string parent_dir = fp.parent_path().string();
+    auto access_res = check_access(user, "", parent_dir);
+    if (!access_res.has_value()) {
+        return std::unexpected(access_res.error());
+    }
+    if (access_res.value() < db::AccessLevel::Edit && !parent_dir.empty()) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    auto dir_res = storage_->create_directory(norm_path);
+    if (!dir_res.has_value()) {
+        return std::unexpected(dir_res.error());
+    }
+
+    return norm_path;
+}
+
 Result<DocumentRecord> DocumentService::get_document_by_id(
     const std::string& doc_id,
     const auth::UserIdentity& user
@@ -891,11 +922,6 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
         return std::unexpected(ErrorCode::DatabaseError);
     }
 
-    auto conn_res = db_pool_->acquire();
-    if (!conn_res.has_value()) {
-        return std::unexpected(conn_res.error());
-    }
-
     struct DocMeta {
         std::string id;
         std::string title;
@@ -905,74 +931,81 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
 
     std::map<std::string, DocMeta> indexed_docs;
 
-    try {
-        pqxx::read_transaction tx(conn_res->get());
-        auto rows = tx.exec(
-            "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
-            "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
-            "FROM documents;"
-        );
-        for (const auto& r : rows) {
-            indexed_docs[r[1].as<std::string>()] = DocMeta{
-                .id = r[0].as<std::string>(),
-                .title = r[2].as<std::string>(),
-                .owner_id = r[3].as<std::string>(),
-                .updated_at = r[4].as<std::string>()
-            };
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "[ERROR] get_workspace_tree DB fetch failed: " << e.what() << "\n";
-    }
-
     // List storage nodes recursively
     auto list_res = storage_->list_directory("", true);
     if (!list_res.has_value()) {
         return std::unexpected(list_res.error());
     }
 
-    // Auto-reconcile unindexed documents found on disk
-    std::vector<std::string> unindexed_paths;
-    for (const auto& node : list_res.value()) {
-        if (!node.is_directory || node.is_bundle) {
-            if (node.relative_path.find("/images/") == std::string::npos &&
-                node.name != "images" &&
-                !indexed_docs.contains(node.relative_path)) {
-                unindexed_paths.push_back(node.relative_path);
-            }
+    {
+        auto conn_res = db_pool_->acquire();
+        if (!conn_res.has_value()) {
+            return std::unexpected(conn_res.error());
         }
-    }
 
-    if (!unindexed_paths.empty()) {
         try {
-            pqxx::work wtx(conn_res->get());
-            for (const auto& path : unindexed_paths) {
-                bool is_bundle = storage_->is_bundle(path).value_or(false);
-                std::string content_file = is_bundle ? (path + "/index.md") : path;
-                auto content_res = storage_->read_file(content_file);
-                std::string disk_content = content_res.has_value() ? content_res.value() : "";
-                std::string title = derive_title(disk_content, path);
+            pqxx::read_transaction tx(conn_res->get());
+            auto rows = tx.exec(
+                "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM documents;"
+            );
+            for (const auto& r : rows) {
+                indexed_docs[r[1].as<std::string>()] = DocMeta{
+                    .id = r[0].as<std::string>(),
+                    .title = r[2].as<std::string>(),
+                    .owner_id = r[3].as<std::string>(),
+                    .updated_at = r[4].as<std::string>()
+                };
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] get_workspace_tree DB fetch failed: " << e.what() << "\n";
+        }
 
-                auto ins_rows = wtx.exec_params(
-                    "INSERT INTO documents (fs_path, title, owner_user_id) "
-                    "VALUES ($1, $2, NULLIF($3, '')::uuid) "
-                    "ON CONFLICT (fs_path) DO UPDATE SET updated_at = NOW() "
-                    "RETURNING id, TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
-                    path,
-                    title,
-                    user.user_id
-                );
-                if (!ins_rows.empty()) {
-                    indexed_docs[path] = DocMeta{
-                        .id = ins_rows[0][0].as<std::string>(),
-                        .title = title,
-                        .owner_id = user.user_id,
-                        .updated_at = ins_rows[0][1].as<std::string>()
-                    };
+        // Auto-reconcile unindexed documents found on disk
+        std::vector<std::string> unindexed_paths;
+        for (const auto& node : list_res.value()) {
+            if (!node.is_directory || node.is_bundle) {
+                if (node.relative_path.find("/images/") == std::string::npos &&
+                    node.name != "images" &&
+                    !indexed_docs.contains(node.relative_path)) {
+                    unindexed_paths.push_back(node.relative_path);
                 }
             }
-            wtx.commit();
-        } catch (const std::exception& e) {
-            std::cerr << "[WARN] Auto-reconciliation in get_workspace_tree failed: " << e.what() << "\n";
+        }
+
+        if (!unindexed_paths.empty()) {
+            try {
+                pqxx::work wtx(conn_res->get());
+                for (const auto& path : unindexed_paths) {
+                    bool is_bundle = storage_->is_bundle(path).value_or(false);
+                    std::string content_file = is_bundle ? (path + "/index.md") : path;
+                    auto content_res = storage_->read_file(content_file);
+                    std::string disk_content = content_res.has_value() ? content_res.value() : "";
+                    std::string title = derive_title(disk_content, path);
+
+                    auto ins_rows = wtx.exec_params(
+                        "INSERT INTO documents (fs_path, title, owner_user_id) "
+                        "VALUES ($1, $2, NULLIF($3, '')::uuid) "
+                        "ON CONFLICT (fs_path) DO UPDATE SET updated_at = NOW() "
+                        "RETURNING id, TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+                        path,
+                        title,
+                        user.user_id
+                    );
+                    if (!ins_rows.empty()) {
+                        indexed_docs[path] = DocMeta{
+                            .id = ins_rows[0][0].as<std::string>(),
+                            .title = title,
+                            .owner_id = user.user_id,
+                            .updated_at = ins_rows[0][1].as<std::string>()
+                        };
+                    }
+                }
+                wtx.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "[WARN] Auto-reconciliation in get_workspace_tree failed: " << e.what() << "\n";
+            }
         }
     }
 

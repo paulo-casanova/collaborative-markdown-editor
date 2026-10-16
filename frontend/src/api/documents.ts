@@ -21,6 +21,13 @@ export async function createDocument(payload: { path: string; title?: string; co
   });
 }
 
+export async function createDirectory(path: string): Promise<{ path: string; is_directory: boolean }> {
+  return apiRequest<{ path: string; is_directory: boolean }>('/api/v1/workspaces/directories', {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  });
+}
+
 export async function updateDocument(id: string, payload: { title?: string; content?: string }): Promise<DocumentRecord> {
   return apiRequest<DocumentRecord>(`/api/v1/documents/${id}`, {
     method: 'PUT',

@@ -302,5 +302,26 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     // 7. Verify page navigated away from the deleted document
     expect(page.url()).not.toContain(`/documents/${docId}`);
   });
+
+  test('creates a new folder via FileTree modal without creating a README.md file', async ({ page }) => {
+    await page.goto('/');
+
+    const newFolderBtn = page.locator('[data-testid="filetree-new-folder-btn"]');
+    await expect(newFolderBtn).toBeVisible();
+    await newFolderBtn.click();
+
+    const modalInput = page.locator('[data-testid="filetree-modal-input"]');
+    await expect(modalInput).toBeVisible();
+
+    const folderName = `empty_folder_${Date.now()}`;
+    await modalInput.fill(folderName);
+    await page.locator('[data-testid="filetree-modal-submit"]').click();
+
+    await expect(modalInput).not.toBeVisible();
+
+    const fileTree = page.locator('[data-testid="file-tree-container"]');
+    await expect(fileTree.getByText(folderName)).toBeVisible();
+    await expect(fileTree.getByText('README.md')).not.toBeVisible();
+  });
 });
 

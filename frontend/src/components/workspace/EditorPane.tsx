@@ -37,12 +37,38 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   onClosePane,
   isPrimary = true,
 }) => {
-  const { setBreadcrumbs, setSyncStatus } = useUIStore();
-  const { updateTabMetadata, closeTab } = useWorkspaceStore();
+  const { setBreadcrumbs, setSyncStatus, setViewMode } = useUIStore();
+  const { updateTabMetadata, closeTab, outlineWidth, setOutlineWidth } = useWorkspaceStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showOutline, setShowOutline] = useState<boolean>(false);
+  const [isResizingOutline, setIsResizingOutline] = useState<boolean>(false);
   const [editorInstance, setEditorInstance] = useState<any>(null);
+
+  const handleOutlineResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = outlineWidth || 256;
+      setIsResizingOutline(true);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const deltaX = startX - moveEvent.clientX;
+        setOutlineWidth(startWidth + deltaX);
+      };
+
+      const handleMouseUp = () => {
+        setIsResizingOutline(false);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    },
+    [outlineWidth, setOutlineWidth]
+  );
 
   const handleEditorReady = useCallback((ed: any) => {
     setEditorInstance((prev: any) => prev || ed);
@@ -197,7 +223,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         setBreadcrumbs(breadcrumbList);
       }
     }
-  }, [document, isPrimary, updateTabMetadata, setBreadcrumbs]);
+  }, [document, documentId, isPrimary, updateTabMetadata, setBreadcrumbs]);
 
   // Manage Collaborative WebSocket Provider
   useEffect(() => {
@@ -368,8 +394,10 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
             <Link
               to={`/docs/${document.id}`}
+              onClick={() => setViewMode('read')}
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
               title="Switch to Reader View"
+              data-testid="switch-to-reader-btn"
             >
               <BookOpen className="w-3.5 h-3.5 text-cme-text-muted" />
               <span className="hidden sm:inline">Reader</span>
@@ -434,9 +462,19 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         {/* Right Docked Table of Contents (TOC) Sidebar */}
         {showOutline && (
           <aside
-            className="w-64 border border-cme-border-base rounded-xl bg-cme-bg-surface flex-shrink-0 overflow-hidden flex flex-col shadow-sm"
+            style={{ width: `${outlineWidth || 256}px` }}
+            className="relative border border-cme-border-base rounded-xl bg-cme-bg-surface flex-shrink-0 overflow-hidden flex flex-col shadow-sm"
             data-testid="editor-outline-sidebar"
           >
+            {/* Left-edge Resize Handle */}
+            <div
+              onMouseDown={handleOutlineResizeStart}
+              className={`absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-20 transition-colors ${
+                isResizingOutline ? 'bg-cme-primary' : 'hover:bg-cme-primary/50'
+              }`}
+              title="Drag to resize outline"
+              data-testid="outline-resizer"
+            />
             <div className="flex items-center justify-between px-3 py-2.5 border-b border-cme-border-base text-xs font-semibold text-cme-text-base bg-cme-bg-subtle/50 flex-shrink-0">
               <span className="flex items-center gap-1.5">
                 <AlignLeft className="w-3.5 h-3.5 text-cme-primary" />

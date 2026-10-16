@@ -22,7 +22,7 @@ function formatBytes(bytes: number): string {
 }
 
 export const TrashPage: React.FC = () => {
-  const { setBreadcrumbs } = useUIStore();
+  const { setBreadcrumbs, viewMode } = useUIStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -48,7 +48,8 @@ export const TrashPage: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       if (confirm(`Document "${restoredDoc.title || restoredDoc.path}" restored successfully! Open now?`)) {
-        navigate(`/documents/${restoredDoc.id}`);
+        const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
+        navigate(`${baseDocRoute}/${restoredDoc.id}`);
       }
     },
     onError: (err: any) => {

@@ -15,6 +15,11 @@ export const LoginModal: React.FC = () => {
     mutationFn: () => loginUser(username, password),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['auth-me'] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
+      queryClient.invalidateQueries({ queryKey: ['trash-items'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
       setLoginModalOpen(false);
       setUsername('');
       setPassword('');

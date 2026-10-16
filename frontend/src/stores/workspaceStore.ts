@@ -18,6 +18,7 @@ interface WorkspaceState {
   splitMode: SplitMode;
   secondaryTabId: string | null;
   splitRatio: number; // 0.2 to 0.8, default 0.5
+  outlineWidth: number; // in px, default 256
 
   // Tab Actions
   openTab: (tab: Omit<WorkspaceTab, 'isPinned' | 'isDirty'>, activate?: boolean) => void;
@@ -30,10 +31,11 @@ interface WorkspaceState {
   togglePinTab: (tabId: string) => void;
   setTabDirty: (tabId: string, dirty: boolean) => void;
 
-  // Split-View Actions
+  // Split-View & Layout Actions
   setSplitMode: (mode: SplitMode, secondaryId?: string | null) => void;
   setSecondaryTabId: (tabId: string | null) => void;
   setSplitRatio: (ratio: number) => void;
+  setOutlineWidth: (width: number) => void;
   closeSplit: () => void;
 }
 
@@ -45,6 +47,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       splitMode: 'none',
       secondaryTabId: null,
       splitRatio: 0.5,
+      outlineWidth: 256,
 
       openTab: (newTab, activate = true) => {
         if (!newTab.id || newTab.id === 'by-path') return;
@@ -52,13 +55,20 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         const existingIndex = tabs.findIndex((t) => t.id === newTab.id);
 
         if (existingIndex >= 0) {
-          // Tab already exists; update path/title if changed, and activate if requested
+          // Tab already exists; preserve real title/path if newTab provides a placeholder
           const updatedTabs = [...tabs];
+          const existing = updatedTabs[existingIndex];
+          const isPlaceholderTitle =
+            !newTab.title || newTab.title === 'Document' || newTab.title === newTab.id;
+          const isPlaceholderPath = !newTab.path || newTab.path === newTab.id;
           updatedTabs[existingIndex] = {
-            ...updatedTabs[existingIndex],
-            path: newTab.path,
-            title: newTab.title,
-            is_bundle: newTab.is_bundle,
+            ...existing,
+            path: isPlaceholderPath && existing.path ? existing.path : newTab.path,
+            title:
+              isPlaceholderTitle && existing.title && existing.title !== 'Document'
+                ? existing.title
+                : newTab.title,
+            is_bundle: newTab.is_bundle ?? existing.is_bundle,
           };
           set({
             tabs: updatedTabs,
@@ -226,6 +236,11 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set({ splitRatio: clamped });
       },
 
+      setOutlineWidth: (width) => {
+        const clamped = Math.min(600, Math.max(180, Math.round(width)));
+        set({ outlineWidth: clamped });
+      },
+
       closeSplit: () => {
         set({ splitMode: 'none', secondaryTabId: null });
       },
@@ -238,6 +253,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         splitMode: state.splitMode,
         secondaryTabId: state.secondaryTabId === 'by-path' ? null : state.secondaryTabId,
         splitRatio: state.splitRatio,
+        outlineWidth: state.outlineWidth,
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {

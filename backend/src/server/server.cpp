@@ -634,6 +634,64 @@ Result<void> Server::start() {
         send_json(res, "200 OK", {{"tree", tree_res.value()}});
     });
 
+    // POST /api/v1/workspaces/directories
+    app.post("/api/v1/workspaces/directories", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string dir_path;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("path") && json["path"].is_string()) {
+                    dir_path = json["path"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (dir_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Field 'path' is required"}});
+                return;
+            }
+
+            auto dir_res = document_service_->create_directory(dir_path, *auth_res.value());
+            if (!dir_res.has_value()) {
+                if (dir_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (dir_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid path specification"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to create directory"}});
+                }
+                return;
+            }
+
+            send_json(res, "201 Created", {{"path", dir_res.value()}, {"is_directory", true}});
+        });
+    });
+
     // GET /api/v1/documents/by-path/html
     app.get("/api/v1/documents/by-path/html", [this](auto *res, auto *req) {
         std::string auth_hdr = std::string(req->getHeader("authorization"));

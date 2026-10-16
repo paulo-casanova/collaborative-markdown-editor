@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Search, FileText, CornerDownLeft, X, Loader2 } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
+import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { searchDocuments } from '../../api/documents';
 import { SearchResult } from '../../types/document';
 
 export const SearchModal: React.FC = () => {
   const navigate = useNavigate();
-  const { searchModalOpen, setSearchModalOpen } = useUIStore();
+  const location = useLocation();
+  const { searchModalOpen, setSearchModalOpen, viewMode } = useUIStore();
+  const { openTab } = useWorkspaceStore();
 
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -86,7 +89,13 @@ export const SearchModal: React.FC = () => {
 
   const handleSelect = (item: SearchResult) => {
     setSearchModalOpen(false);
-    navigate(`/documents/${item.id}`);
+    openTab({
+      id: item.id,
+      path: item.path,
+      title: item.title || item.path,
+    });
+    const isReadMode = viewMode === 'read' || location.pathname.startsWith('/docs/');
+    navigate(`${isReadMode ? '/docs' : '/documents'}/${item.id}`);
   };
 
   // Helper to highlight search query terms in text

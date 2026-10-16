@@ -84,6 +84,14 @@ public:
     );
 
     /**
+     * @brief Creates a new empty directory in workspace storage.
+     */
+    Result<std::string> create_directory(
+        const std::string& relative_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
      * @brief Fetches a document by its database UUID.
      */
     Result<DocumentRecord> get_document_by_id(

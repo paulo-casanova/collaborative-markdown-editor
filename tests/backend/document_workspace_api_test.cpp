@@ -429,6 +429,17 @@ int main() {
         auto purge_json = nlohmann::json::parse(purge_resp.body);
         assert(purge_json["status"] == "purged");
         std::cout << "  - DELETE /api/v1/trash/{id} permanently purged item.\n";
+
+        // Test 10: POST /api/v1/workspaces/directories creates an empty directory without README.md
+        nlohmann::json mkdir_body = {{"path", "empty_folder/sub_folder"}};
+        auto mkdir_resp = http_curl("POST", base_url + "/api/v1/workspaces/directories", auth_header, mkdir_body.dump());
+        assert(mkdir_resp.status_code == 201);
+        auto mkdir_json = nlohmann::json::parse(mkdir_resp.body);
+        assert(mkdir_json["path"] == "empty_folder/sub_folder");
+        assert(mkdir_json["is_directory"] == true);
+        assert(std::filesystem::is_directory(server_storage / "content" / "empty_folder" / "sub_folder"));
+        assert(!std::filesystem::exists(server_storage / "content" / "empty_folder" / "sub_folder" / "README.md"));
+        std::cout << "  - POST /api/v1/workspaces/directories created empty directory without README.md.\n";
     }
 
     // Stop server

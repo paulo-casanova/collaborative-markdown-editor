@@ -18,11 +18,14 @@ import {
 import {
   fetchWorkspaceTree,
   createDocument,
+  createDirectory,
   moveDocument,
   deleteDocument,
 } from '../../api/documents';
+import { fetchCurrentUser } from '../../api/auth';
 import { WorkspaceNode } from '../../types/document';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
+import { useUIStore } from '../../stores/uiStore';
 
 interface TreeNode extends WorkspaceNode {
   children?: TreeNode[];
@@ -100,6 +103,11 @@ export const FileTree: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { viewMode } = useUIStore();
+  const { openTab, updateTabMetadata, closeTab } = useWorkspaceStore();
+
+  const isReadMode = viewMode === 'read' || location.pathname.startsWith('/docs/');
+  const baseDocRoute = isReadMode ? '/docs' : '/documents';
 
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(
     () => new Set(['guides', 'specs', 'docs'])
@@ -112,16 +120,46 @@ export const FileTree: React.FC = () => {
   const [activeNode, setActiveNode] = useState<WorkspaceNode | null>(null);
   const [inputValue, setInputValue] = useState('');
 
+  const { data: user } = useQuery({
+    queryKey: ['auth-me'],
+    queryFn: fetchCurrentUser,
+    retry: false,
+  });
+
   const {
     data: rawNodes,
     isLoading,
     refetch,
     isRefetching,
   } = useQuery({
-    queryKey: ['workspace-tree'],
+    queryKey: ['workspace-tree', user?.id ?? 'anon'],
     queryFn: fetchWorkspaceTree,
-    retry: false,
+    retry: 1,
   });
+
+  // Synchronize open tab titles & paths whenever workspace tree nodes load
+  React.useEffect(() => {
+    if (!rawNodes || !Array.isArray(rawNodes)) return;
+    const currentTabs = useWorkspaceStore.getState().tabs;
+    for (const tab of currentTabs) {
+      const matchingNode = rawNodes.find((n) => n.id === tab.id);
+      if (matchingNode) {
+        const realTitle = matchingNode.title || matchingNode.name.replace(/\.(md|bundle)$/, '');
+        if (
+          !tab.title ||
+          tab.title.toLowerCase() === 'document' ||
+          tab.title === tab.id ||
+          tab.path === tab.id
+        ) {
+          updateTabMetadata(tab.id, {
+            path: matchingNode.path,
+            title: realTitle,
+            is_bundle: matchingNode.is_bundle,
+          });
+        }
+      }
+    }
+  }, [rawNodes, updateTabMetadata]);
 
   const tree = useMemo(() => {
     if (!rawNodes || !Array.isArray(rawNodes)) return [];
@@ -145,23 +183,44 @@ export const FileTree: React.FC = () => {
       createDocument(payload),
     onSuccess: (newDoc) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       setModalMode(null);
       setInputValue('');
-      navigate(`/documents/${newDoc.id}`);
+      navigate(`${baseDocRoute}/${newDoc.id}`);
     },
     onError: (err: any) => {
       alert(`Failed to create document: ${err.message || 'Unknown error'}`);
     },
   });
 
-  const { updateTabMetadata, closeTab } = useWorkspaceStore();
+  const createDirMutation = useMutation({
+    mutationFn: (path: string) => createDirectory(path),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        if (res?.path) {
+          next.add(res.path);
+          const parent = res.path.substring(0, res.path.lastIndexOf('/'));
+          if (parent) next.add(parent);
+        }
+        return next;
+      });
+      setModalMode(null);
+      setInputValue('');
+    },
+    onError: (err: any) => {
+      alert(`Failed to create folder: ${err.message || 'Unknown error'}`);
+    },
+  });
 
   const moveDocMutation = useMutation({
     mutationFn: ({ id, newPath, title }: { id: string; newPath: string; title?: string }) =>
       moveDocument(id, newPath, title),
     onSuccess: (updatedDoc) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
       queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
@@ -182,6 +241,7 @@ export const FileTree: React.FC = () => {
     mutationFn: ({ id }: { id: string; path?: string }) => deleteDocument(id),
     onSuccess: (_data, { id: deletedId, path: deletedPath }) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       queryClient.invalidateQueries({ queryKey: ['trash-items'] });
       queryClient.removeQueries({ queryKey: ['document', deletedId] });
@@ -213,7 +273,7 @@ export const FileTree: React.FC = () => {
       if (isViewingDeleted) {
         const nextActive = useWorkspaceStore.getState().activeTabId;
         if (nextActive) {
-          navigate(`/documents/${nextActive}`);
+          navigate(`${baseDocRoute}/${nextActive}`);
         } else {
           navigate('/');
         }
@@ -313,15 +373,9 @@ export const FileTree: React.FC = () => {
           ? activeNode.path
           : activeNode.path.substring(0, activeNode.path.lastIndexOf('/'))
         : '';
-      const folderName = inputValue.trim();
-      const fullPath = parentDir
-        ? `${parentDir}/${folderName}/README.md`
-        : `${folderName}/README.md`;
-      createDocMutation.mutate({
-        path: fullPath,
-        title: 'README',
-        content: `# ${folderName}\n\nFolder documentation.\n`,
-      });
+      const folderName = inputValue.trim().replace(/^\/+|\/+$/g, '');
+      const fullPath = parentDir ? `${parentDir}/${folderName}` : folderName;
+      createDirMutation.mutate(fullPath);
     } else if (modalMode === 'rename' && activeNode && activeNode.id) {
       const oldPath = activeNode.path;
       const dir = oldPath.substring(0, oldPath.lastIndexOf('/'));
@@ -348,10 +402,10 @@ export const FileTree: React.FC = () => {
 
     if (isDoc) {
       const docLink = node.id
-        ? `/documents/${node.id}`
-        : `/documents/by-path?path=${encodeURIComponent(node.path)}`;
+        ? `${baseDocRoute}/${node.id}`
+        : `${baseDocRoute}/by-path?path=${encodeURIComponent(node.path)}`;
       const isActive =
-        node.id && location.pathname.includes(node.id) ||
+        (node.id && location.pathname.includes(node.id)) ||
         location.search.includes(encodeURIComponent(node.path));
 
       return (
@@ -369,6 +423,16 @@ export const FileTree: React.FC = () => {
         >
           <Link
             to={docLink}
+            onClick={() => {
+              if (node.id) {
+                openTab({
+                  id: node.id,
+                  path: node.path,
+                  title: node.title || node.name.replace(/\.(md|bundle)$/, ''),
+                  is_bundle: node.is_bundle,
+                });
+              }
+            }}
             className="flex items-center gap-2 min-w-0 flex-1 truncate"
             title={node.title || node.name}
           >
