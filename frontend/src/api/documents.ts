@@ -136,7 +136,7 @@ export async function fetchDocumentByPath(path: string): Promise<DocumentRecord>
   return apiRequest<DocumentRecord>(`/api/v1/documents/by-path?path=${encodeURIComponent(path)}`);
 }
 
-export async function createDocument(payload: { path: string; title?: string; content?: string }): Promise<DocumentRecord> {
+export async function createDocument(payload: { path: string; title?: string; content?: string; number_headers?: boolean }): Promise<DocumentRecord> {
   return apiRequest<DocumentRecord>('/api/v1/documents', {
     method: 'POST',
     body: JSON.stringify(payload),
@@ -150,9 +150,9 @@ export async function createDirectory(path: string): Promise<{ path: string; is_
   });
 }
 
-export async function updateDocument(id: string, payload: { title?: string; content?: string }): Promise<DocumentRecord> {
+export async function updateDocument(id: string, payload: { title?: string; content?: string; number_headers?: boolean }): Promise<DocumentRecord> {
   return apiRequest<DocumentRecord>(`/api/v1/documents/${id}`, {
-    method: 'PUT',
+    method: 'PATCH',
     body: JSON.stringify(payload),
   });
 }

@@ -178,6 +178,7 @@ interface CollaborativeEditorProps {
   onEditorReady?: (editor: any) => void;
   autoFocus?: boolean | 'start' | 'end' | 'all';
   documentPath?: string;
+  onToggleNumberHeaders?: () => void;
 }
 
 const remoteCursorClassPlugin = ViewPlugin.fromClass(
@@ -226,6 +227,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   onEditorReady,
   autoFocus = false,
   documentPath,
+  onToggleNumberHeaders,
 }) => {
   const { resolvedTheme } = useThemeStore();
   const { numberHeaders } = useUIStore();
@@ -482,7 +484,13 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
   return (
     <div className="collaborative-editor-root rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm flex flex-col flex-1 h-full min-h-0 relative">
-      {editable && <EditorToolbar editor={editor as any} provider={provider} />}
+      {editable && (
+        <EditorToolbar
+          editor={editor as any}
+          provider={provider}
+          onToggleNumberHeaders={onToggleNumberHeaders}
+        />
+      )}
       <div
         className="editor-content-viewport flex-1 overflow-y-auto cursor-text"
         onClick={(e) => {

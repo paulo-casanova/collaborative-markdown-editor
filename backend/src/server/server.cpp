@@ -1271,6 +1271,9 @@ Result<void> Server::start() {
                 if (json.contains("is_bundle") && json["is_bundle"].is_boolean()) {
                     create_req.is_bundle = json["is_bundle"].get<bool>();
                 }
+                if (json.contains("number_headers") && json["number_headers"].is_boolean()) {
+                    create_req.number_headers = json["number_headers"].get<bool>();
+                }
             } catch (...) {
                 send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
                 return;
@@ -1702,21 +1705,88 @@ Result<void> Server::start() {
             }
 
             std::string content;
+            std::optional<std::string> opt_content;
             std::optional<std::string> title;
+            std::optional<bool> number_headers;
             try {
                 auto json = nlohmann::json::parse(*body);
                 if (json.contains("content") && json["content"].is_string()) {
-                    content = json["content"].get<std::string>();
+                    opt_content = json["content"].get<std::string>();
                 }
                 if (json.contains("title") && json["title"].is_string()) {
                     title = json["title"].get<std::string>();
+                }
+                if (json.contains("number_headers") && json["number_headers"].is_boolean()) {
+                    number_headers = json["number_headers"].get<bool>();
                 }
             } catch (...) {
                 send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
                 return;
             }
 
-            auto doc_res = document_service_->update_document(doc_id, content, title, *auth_res.value());
+            auto doc_res = document_service_->update_document(doc_id, opt_content, title, *auth_res.value(), number_headers);
+            if (!doc_res.has_value()) {
+                if (doc_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
+                } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to update document"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", doc_res.value().to_json(true));
+        });
+    });
+
+    // PATCH /api/v1/documents/:id
+    app.patch("/api/v1/documents/:id", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::optional<std::string> opt_content;
+            std::optional<std::string> title;
+            std::optional<bool> number_headers;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("content") && json["content"].is_string()) {
+                    opt_content = json["content"].get<std::string>();
+                }
+                if (json.contains("title") && json["title"].is_string()) {
+                    title = json["title"].get<std::string>();
+                }
+                if (json.contains("number_headers") && json["number_headers"].is_boolean()) {
+                    number_headers = json["number_headers"].get<bool>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            auto doc_res = document_service_->update_document(doc_id, opt_content, title, *auth_res.value(), number_headers);
             if (!doc_res.has_value()) {
                 if (doc_res.error() == ErrorCode::NotFound) {
                     send_json(res, "404 Not Found", {{"error", "Document not found"}});

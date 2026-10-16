@@ -127,7 +127,9 @@ int main() {
         cme::document::CreateDocumentRequest create_req{
             .path = "guides/intro.md",
             .content = "# Intro\nHello world",
-            .title = "Intro"
+            .title = "Intro",
+            .is_bundle = false,
+            .number_headers = true
         };
         auto create_res = doc_service.create_document(create_req, author_user);
         assert(create_res.has_value());
@@ -135,6 +137,7 @@ int main() {
         assert(!doc.id.empty());
         assert(doc.path == "guides/intro.md");
         assert(doc.title == "Intro");
+        assert(doc.number_headers == true);
         created_doc_id = doc.id;
 
         // Verify physical file on disk
@@ -147,12 +150,14 @@ int main() {
         auto by_id_res = doc_service.get_document_by_id(created_doc_id, author_user);
         assert(by_id_res.has_value());
         assert(by_id_res.value().content == "# Intro\nHello world");
+        assert(by_id_res.value().number_headers == true);
         std::cout << "  - Document retrieval by UUID verified.\n";
 
         // 1.3 Get by Path
         auto by_path_res = doc_service.get_document_by_path("guides/intro.md", author_user);
         assert(by_path_res.has_value());
         assert(by_path_res.value().id == created_doc_id);
+        assert(by_path_res.value().number_headers == true);
         std::cout << "  - Document lookup by relative path verified.\n";
 
         // 1.4 Get raw
@@ -162,10 +167,11 @@ int main() {
         std::cout << "  - Raw markdown streaming verified.\n";
 
         // 1.5 Update document
-        auto up_res = doc_service.update_document(created_doc_id, "# Intro\nUpdated text", "New Intro", author_user);
+        auto up_res = doc_service.update_document(created_doc_id, "# Intro\nUpdated text", "New Intro", author_user, false);
         assert(up_res.has_value());
         assert(up_res.value().content == "# Intro\nUpdated text");
         assert(up_res.value().title == "New Intro");
+        assert(up_res.value().number_headers == false);
         auto disk_updated = storage->read_file("guides/intro.md");
         assert(disk_updated.value() == "# Intro\nUpdated text");
         std::cout << "  - Document content update verified.\n";
@@ -308,6 +314,14 @@ int main() {
         auto raw_resp = http_curl("GET", base_url + "/api/v1/documents/" + rest_doc_id + "/raw", auth_header);
         assert(raw_resp.body == "# Intro\nCollaborative Live Edit");
         std::cout << "  - PUT /api/v1/documents/{id} updated document content.\n";
+
+        // 2.5b PATCH /api/v1/documents/{id} with number_headers
+        std::string patch_body = "{\"number_headers\":true}";
+        auto patch_resp = http_curl("PATCH", base_url + "/api/v1/documents/" + rest_doc_id, {"Authorization: Bearer " + token, "Content-Type: application/json"}, patch_body);
+        assert(patch_resp.status_code == 200);
+        auto patch_json = nlohmann::json::parse(patch_resp.body);
+        assert(patch_json["number_headers"] == true);
+        std::cout << "  - PATCH /api/v1/documents/{id} updated number_headers metadata.\n";
     }
 
     // 2.6 PATCH /api/v1/documents/{id}/move

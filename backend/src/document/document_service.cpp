@@ -194,13 +194,14 @@ Result<DocumentRecord> DocumentService::create_document(
         }
 
         std::string query =
-            "INSERT INTO documents (fs_path, title, owner_user_id, owner_team_id) "
-            "VALUES ($1, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid) "
+            "INSERT INTO documents (fs_path, title, owner_user_id, owner_team_id, number_headers) "
+            "VALUES ($1, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid, $5) "
             "RETURNING id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+            "          COALESCE(number_headers, false), "
             "          TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
             "          TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');";
 
-        auto row = tx.exec_params(query, norm_path, title, owner_id, owner_team_id);
+        auto row = tx.exec_params(query, norm_path, title, owner_id, owner_team_id, req.number_headers);
         if (row.empty()) {
             return std::unexpected(ErrorCode::DatabaseError);
         }
@@ -212,8 +213,9 @@ Result<DocumentRecord> DocumentService::create_document(
             .content = req.content,
             .is_bundle = is_bundle,
             .owner_user_id = row[0][3].as<std::string>(),
-            .created_at = row[0][4].as<std::string>(),
-            .updated_at = row[0][5].as<std::string>()
+            .number_headers = row[0][4].as<bool>(),
+            .created_at = row[0][5].as<std::string>(),
+            .updated_at = row[0][6].as<std::string>()
         };
 
         tx.commit();
@@ -310,6 +312,7 @@ Result<DocumentRecord> DocumentService::get_document_by_id(
 
         std::string query =
             "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+            "       COALESCE(number_headers, false), "
             "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
             "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
             "FROM documents WHERE id = $1::uuid;";
@@ -344,8 +347,9 @@ Result<DocumentRecord> DocumentService::get_document_by_id(
             .content = std::move(content),
             .is_bundle = is_bundle,
             .owner_user_id = r[3].as<std::string>(),
-            .created_at = r[4].as<std::string>(),
-            .updated_at = r[5].as<std::string>()
+            .number_headers = r[4].as<bool>(),
+            .created_at = r[5].as<std::string>(),
+            .updated_at = r[6].as<std::string>()
         };
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] get_document_by_id failed: " << e.what() << "\n";
@@ -387,6 +391,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         // 1. Exact fs_path match
         auto rows = tx.exec_params(
             "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+            "       COALESCE(number_headers, false), "
             "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
             "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
             "FROM documents WHERE fs_path = $1;",
@@ -397,6 +402,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         if (rows.empty() && !norm_path.ends_with(".md") && !norm_path.ends_with(".bundle")) {
             rows = tx.exec_params(
                 "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       COALESCE(number_headers, false), "
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
                 "FROM documents WHERE fs_path = $1;",
@@ -408,6 +414,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         if (rows.empty()) {
             rows = tx.exec_params(
                 "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       COALESCE(number_headers, false), "
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
                 "FROM documents WHERE title = $1 OR title = $2 LIMIT 1;",
@@ -420,6 +427,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         if (rows.empty()) {
             rows = tx.exec_params(
                 "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       COALESCE(number_headers, false), "
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
                 "FROM documents "
@@ -441,6 +449,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         if (rows.empty()) {
             rows = tx.exec_params(
                 "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       COALESCE(number_headers, false), "
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
                 "FROM documents "
@@ -464,6 +473,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         if (rows.empty()) {
             auto all_docs = tx.exec(
                 "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                "       COALESCE(number_headers, false), "
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
                 "FROM documents;"
@@ -496,6 +506,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             if (!best_id.empty()) {
                 rows = tx.exec_params(
                     "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
+                    "       COALESCE(number_headers, false), "
                     "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                     "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
                     "FROM documents WHERE id = $1::uuid;",
@@ -508,6 +519,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         std::string actual_fs_path;
         std::string title;
         std::string owner_user_id;
+        bool number_headers = false;
         std::string created_at;
         std::string updated_at;
 
@@ -567,8 +579,9 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             actual_fs_path = r[1].as<std::string>();
             title = r[2].as<std::string>();
             owner_user_id = r[3].as<std::string>();
-            created_at = r[4].as<std::string>();
-            updated_at = r[5].as<std::string>();
+            number_headers = r[4].as<bool>();
+            created_at = r[5].as<std::string>();
+            updated_at = r[6].as<std::string>();
         }
 
         tx.commit();
@@ -594,6 +607,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             .content = std::move(content),
             .is_bundle = is_bundle,
             .owner_user_id = owner_user_id,
+            .number_headers = number_headers,
             .created_at = created_at,
             .updated_at = updated_at
         };
@@ -616,9 +630,10 @@ Result<std::string> DocumentService::get_document_raw(
 
 Result<DocumentRecord> DocumentService::update_document(
     const std::string& doc_id,
-    const std::string& content,
+    std::optional<std::string> content,
     std::optional<std::string> title,
-    const auth::UserIdentity& user
+    const auth::UserIdentity& user,
+    std::optional<bool> number_headers
 ) {
     if (!storage_ || !db_pool_) {
         return std::unexpected(ErrorCode::DatabaseError);
@@ -633,7 +648,7 @@ Result<DocumentRecord> DocumentService::update_document(
         pqxx::work tx(conn_res->get());
 
         auto rows = tx.exec_params(
-            "SELECT id, fs_path, title, COALESCE(owner_user_id::text, '') "
+            "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), COALESCE(number_headers, false) "
             "FROM documents WHERE id = $1::uuid;",
             doc_id
         );
@@ -645,6 +660,7 @@ Result<DocumentRecord> DocumentService::update_document(
         std::string fs_path = r[1].as<std::string>();
         std::string current_title = r[2].as<std::string>();
         std::string owner_id = r[3].as<std::string>();
+        bool current_num_h = r[4].as<bool>();
 
         // Check permission
         auto access_res = check_access(user, doc_id, fs_path);
@@ -655,22 +671,31 @@ Result<DocumentRecord> DocumentService::update_document(
             return std::unexpected(ErrorCode::PermissionDenied);
         }
 
-        // Write content to storage
         bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
         std::string content_file = is_bundle ? (fs_path + "/index.md") : fs_path;
-        auto write_res = storage_->write_file(content_file, content, true);
-        if (!write_res.has_value()) {
-            return std::unexpected(write_res.error());
+
+        std::string final_content;
+        if (content.has_value()) {
+            final_content = *content;
+            auto write_res = storage_->write_file(content_file, final_content, true);
+            if (!write_res.has_value()) {
+                return std::unexpected(write_res.error());
+            }
+        } else {
+            auto read_res = storage_->read_file(content_file);
+            final_content = read_res.has_value() ? read_res.value() : "";
         }
 
-        // Update title if specified
         std::string new_title = title.value_or(current_title);
+        bool new_num_h = number_headers.value_or(current_num_h);
+
         auto up_rows = tx.exec_params(
-            "UPDATE documents SET title = $2, updated_at = NOW() WHERE id = $1::uuid "
+            "UPDATE documents SET title = $2, number_headers = $3, updated_at = NOW() WHERE id = $1::uuid "
             "RETURNING TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
             "          TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
             doc_id,
-            new_title
+            new_title,
+            new_num_h
         );
 
         std::string created_at = up_rows[0][0].as<std::string>();
@@ -681,9 +706,10 @@ Result<DocumentRecord> DocumentService::update_document(
             .id = doc_id,
             .path = fs_path,
             .title = new_title,
-            .content = content,
+            .content = std::move(final_content),
             .is_bundle = is_bundle,
             .owner_user_id = owner_id,
+            .number_headers = new_num_h,
             .created_at = created_at,
             .updated_at = updated_at
         };
@@ -717,7 +743,7 @@ Result<DocumentRecord> DocumentService::move_document(
         pqxx::work tx(conn_res->get());
 
         auto rows = tx.exec_params(
-            "SELECT id, fs_path, title, COALESCE(owner_user_id::text, '') "
+            "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), COALESCE(number_headers, false) "
             "FROM documents WHERE id = $1::uuid;",
             doc_id
         );
@@ -729,6 +755,7 @@ Result<DocumentRecord> DocumentService::move_document(
         std::string old_fs_path = r[1].as<std::string>();
         std::string title = r[2].as<std::string>();
         std::string owner_id = r[3].as<std::string>();
+        bool num_h = r[4].as<bool>();
 
         // Check permission on old document
         auto access_old = check_access(user, doc_id, old_fs_path);
@@ -787,6 +814,7 @@ Result<DocumentRecord> DocumentService::move_document(
             .content = "",
             .is_bundle = is_bundle,
             .owner_user_id = owner_id,
+            .number_headers = num_h,
             .created_at = created_at,
             .updated_at = updated_at
         };
@@ -1027,6 +1055,7 @@ Result<DocumentRecord> DocumentService::upload_workspace_file(
             .content = is_md ? std::string(data) : "",
             .is_bundle = false,
             .owner_user_id = rows[0][1].as<std::string>(),
+            .number_headers = false,
             .created_at = rows[0][2].as<std::string>(),
             .updated_at = rows[0][3].as<std::string>()
         };
@@ -1623,6 +1652,7 @@ Result<DocumentRecord> DocumentService::restore_trash_item(
             .content = content,
             .is_bundle = is_bundle,
             .owner_user_id = user.user_id,
+            .number_headers = false,
             .created_at = created_at,
             .updated_at = updated_at
         };

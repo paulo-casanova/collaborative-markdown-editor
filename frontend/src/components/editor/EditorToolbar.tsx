@@ -34,9 +34,10 @@ import { CmeCollabProvider } from '../../api/collabProvider';
 interface EditorToolbarProps {
   editor: any;
   provider?: CmeCollabProvider | null;
+  onToggleNumberHeaders?: () => void;
 }
 
-export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }) => {
+export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider, onToggleNumberHeaders }) => {
   const { numberHeaders, toggleNumberHeaders } = useUIStore();
   const {
     comments,
@@ -185,7 +186,13 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }
       </button>
       <button
         type="button"
-        onClick={() => toggleNumberHeaders()}
+        onClick={() => {
+          if (onToggleNumberHeaders) {
+            onToggleNumberHeaders();
+          } else {
+            toggleNumberHeaders();
+          }
+        }}
         className={btnClass(numberHeaders)}
         title="Automatically Number Headers"
         data-testid="toggle-header-numbering-btn"

@@ -121,4 +121,14 @@ describe('WorkspaceStore & UIStore behavior', () => {
     const tabs = useWorkspaceStore.getState().tabs;
     expect(tabs[0].is_bundle).toBe(true);
   });
+
+  it('manages document-level numberHeaders in UIStore', () => {
+    expect(useUIStore.getState().numberHeaders).toBe(false);
+
+    useUIStore.getState().setNumberHeaders(true);
+    expect(useUIStore.getState().numberHeaders).toBe(true);
+
+    useUIStore.getState().toggleNumberHeaders();
+    expect(useUIStore.getState().numberHeaders).toBe(false);
+  });
 });

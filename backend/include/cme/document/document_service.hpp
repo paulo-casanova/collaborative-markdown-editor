@@ -31,6 +31,7 @@ struct DocumentRecord {
     std::string content;         ///< Raw markdown content.
     bool is_bundle{false};       ///< True if document is stored as a directory bundle.
     std::string owner_user_id;   ///< UUID of document owner.
+    bool number_headers{false};  ///< True if hierarchical header numbering is enabled.
     std::string created_at;      ///< ISO-8601 creation timestamp.
     std::string updated_at;      ///< ISO-8601 last update timestamp.
 
@@ -41,6 +42,7 @@ struct DocumentRecord {
             {"title", title},
             {"is_bundle", is_bundle},
             {"owner_user_id", owner_user_id},
+            {"number_headers", number_headers},
             {"created_at", created_at},
             {"updated_at", updated_at}
         };
@@ -60,6 +62,7 @@ struct CreateDocumentRequest {
     std::string content;
     std::string title;
     bool is_bundle{false};
+    bool number_headers{false};
 };
 
 /**
@@ -116,13 +119,14 @@ public:
     );
 
     /**
-     * @brief Updates document content and optionally its title.
+     * @brief Updates document content, title, and/or header numbering metadata.
      */
     Result<DocumentRecord> update_document(
         const std::string& doc_id,
-        const std::string& content,
+        std::optional<std::string> content,
         std::optional<std::string> title,
-        const auth::UserIdentity& user
+        const auth::UserIdentity& user,
+        std::optional<bool> number_headers = std::nullopt
     );
 
     /**

@@ -6,6 +6,7 @@ export interface DocumentRecord {
   owner_user_id?: string;
   owner_team_id?: string;
   is_bundle: boolean;
+  number_headers?: boolean;
   created_at: string;
   updated_at: string;
 }

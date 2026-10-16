@@ -11,10 +11,10 @@ import {
   AlignLeft,
   MessageSquare,
   Edit2,
-  Hash,
   Shield,
 } from 'lucide-react';
-import { fetchDocument, moveDocument } from '../../api/documents';
+import { fetchDocument, moveDocument, updateDocument } from '../../api/documents';
+import { DocumentRecord } from '../../types/document';
 import { fetchCurrentUser } from '../../api/auth';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
@@ -42,7 +42,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   onClosePane,
   isPrimary = true,
 }) => {
-  const { setBreadcrumbs, setSyncStatus, setViewMode, numberHeaders, toggleNumberHeaders } = useUIStore();
+  const { setBreadcrumbs, setSyncStatus, setViewMode, numberHeaders, setNumberHeaders } = useUIStore();
   const { updateTabMetadata, closeTab, outlineWidth, setOutlineWidth } = useWorkspaceStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -246,6 +246,27 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     }
   }, [document, documentId, isPrimary, updateTabMetadata, setBreadcrumbs]);
 
+  // Synchronize document-level number_headers metadata into active editor state
+  useEffect(() => {
+    if (document && document.id === documentId) {
+      setNumberHeaders(Boolean(document.number_headers));
+    }
+  }, [document?.id, document?.number_headers, documentId, setNumberHeaders]);
+
+  const handleToggleNumberHeaders = async () => {
+    if (!document) return;
+    const next = !numberHeaders;
+    setNumberHeaders(next);
+    try {
+      await updateDocument(document.id, { number_headers: next });
+      queryClient.setQueryData<DocumentRecord>(['document', document.id], (old) =>
+        old ? { ...old, number_headers: next } : old
+      );
+    } catch (err) {
+      console.error('Failed to update document number_headers metadata', err);
+    }
+  };
+
   // Manage Collaborative WebSocket Provider
   useEffect(() => {
     if (!provider) return;
@@ -373,20 +394,6 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={() => toggleNumberHeaders()}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
-                numberHeaders
-                  ? 'bg-cme-primary text-white border-cme-primary'
-                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
-              }`}
-              title="Automatically Number Headers"
-              data-testid="editor-header-numbering-toggle"
-            >
-              <Hash className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Number Headers</span>
-            </button>
-
             <button
               onClick={() => setShowOutline(!showOutline)}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
@@ -525,6 +532,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             onEditorReady={handleEditorReady}
             autoFocus={isPrimary ? 'end' : false}
             documentPath={document?.path}
+            onToggleNumberHeaders={handleToggleNumberHeaders}
           />
         </div>
 

@@ -11,7 +11,6 @@ import {
   CheckCircle2,
   Copy,
   Check,
-  Hash,
   Trash2,
   Pencil,
 } from 'lucide-react';
@@ -59,7 +58,7 @@ export const ReaderPage: React.FC = () => {
   const pathParam = searchParams.get('path');
   const rawTarget = pathParam || wildcard || (idParam !== 'by-path' ? idParam : '') || '';
 
-  const { setBreadcrumbs, setViewMode, numberHeaders, toggleNumberHeaders } = useUIStore();
+  const { setBreadcrumbs, setViewMode } = useUIStore();
   const { openTab } = useWorkspaceStore();
   const [showReviews, setShowReviews] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
@@ -251,6 +250,9 @@ export const ReaderPage: React.FC = () => {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
 
+  // Document-level header numbering setting
+  const numberHeaders = Boolean(document?.number_headers);
+
   // Headings extracted for Table of Contents
   const headings = useMemo(() => {
     if (!document?.content) return [];
@@ -335,21 +337,6 @@ export const ReaderPage: React.FC = () => {
 
           {/* Right Toolbar Controls */}
           <div className="flex items-center gap-2">
-            {/* Number Headers Toggle */}
-            <button
-              onClick={() => toggleNumberHeaders()}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
-                numberHeaders
-                  ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
-                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
-              }`}
-              data-testid="reader-header-numbering-toggle"
-              title="Automatically number headings"
-            >
-              <Hash className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Number Headers</span>
-            </button>
-
             {/* Font Style Switcher */}
             <div className="hidden md:flex items-center border border-cme-border-base rounded-lg p-0.5 bg-cme-bg-surface text-xs">
               <button
