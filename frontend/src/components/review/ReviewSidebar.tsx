@@ -28,6 +28,8 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
     setFilter,
     showResolved,
     setShowResolved,
+    showInTextReviews,
+    setShowInTextReviews,
     setSidebarOpen,
     isLoading,
   } = useReviewStore();
@@ -187,18 +189,31 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
           </button>
         </div>
 
-        {/* Resolved Checkbox & Add Task Action */}
+        {/* Resolved Checkbox, Show in Text & Add Task Action */}
         <div className="flex items-center justify-between text-xs px-1 text-cme-text-muted">
-          <label className="flex items-center gap-1.5 cursor-pointer hover:text-cme-text-base select-none">
-            <input
-              type="checkbox"
-              data-testid="toggle-show-resolved"
-              checked={showResolved}
-              onChange={(e) => setShowResolved(e.target.checked)}
-              className="rounded text-cme-primary focus:ring-cme-primary cursor-pointer w-3.5 h-3.5"
-            />
-            <span className="text-[11px]">Show resolved & accepted</span>
-          </label>
+          <div className="flex items-center gap-2.5">
+            <label className="flex items-center gap-1.5 cursor-pointer hover:text-cme-text-base select-none">
+              <input
+                type="checkbox"
+                data-testid="toggle-show-resolved"
+                checked={showResolved}
+                onChange={(e) => setShowResolved(e.target.checked)}
+                className="rounded text-cme-primary focus:ring-cme-primary cursor-pointer w-3.5 h-3.5"
+              />
+              <span className="text-[11px]">Show resolved</span>
+            </label>
+
+            <label className="flex items-center gap-1.5 cursor-pointer hover:text-cme-text-base select-none">
+              <input
+                type="checkbox"
+                data-testid="toggle-show-in-text"
+                checked={showInTextReviews}
+                onChange={(e) => setShowInTextReviews(e.target.checked)}
+                className="rounded text-cme-primary focus:ring-cme-primary cursor-pointer w-3.5 h-3.5"
+              />
+              <span className="text-[11px]">Show in text</span>
+            </label>
+          </div>
 
           <button
             type="button"

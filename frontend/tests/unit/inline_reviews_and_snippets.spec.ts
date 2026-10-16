@@ -332,4 +332,14 @@ describe('Step 8.3: Inline Code-Diff Reviews & In-Document Discussions', () => {
     expect(dom.querySelector('[data-testid="inline-reply-input"]')).not.toBeNull();
     expect(dom.querySelector('[data-testid="inline-reply-submit-btn"]')).not.toBeNull();
   });
+
+  it('toggles showInTextReviews state in useReviewStore to show/hide in-text reviews', () => {
+    expect(useReviewStore.getState().showInTextReviews).toBe(true);
+
+    useReviewStore.getState().toggleInTextReviews();
+    expect(useReviewStore.getState().showInTextReviews).toBe(false);
+
+    useReviewStore.getState().setShowInTextReviews(true);
+    expect(useReviewStore.getState().showInTextReviews).toBe(true);
+  });
 });

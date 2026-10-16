@@ -408,11 +408,11 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
                   ? 'bg-cme-primary text-white border-cme-primary'
                   : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
               }`}
-              title="Toggle Review Discussions Panel"
-              data-testid="editor-reviews-toggle"
+              title="Toggle Review Panel"
+              data-testid="toggle-reviews-btn"
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Reviews</span>
+              <span className="hidden sm:inline">Review Panel</span>
               {comments.filter((c) => c.status === 'OPEN').length +
                 suggestions.filter((s) => s.status === 'PENDING').length +
                 tasks.filter((t) => !t.is_completed).length > 0 && (

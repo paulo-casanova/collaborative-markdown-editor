@@ -22,6 +22,8 @@ import {
   Redo,
   MessageSquare,
   GitPullRequest,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useReviewStore } from '../../stores/reviewStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -36,13 +38,13 @@ interface EditorToolbarProps {
 export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }) => {
   const { numberHeaders, toggleNumberHeaders } = useUIStore();
   const {
-    isSidebarOpen,
-    toggleSidebar,
     comments,
     suggestions,
     tasks,
     suggestingMode,
     toggleSuggestingMode,
+    showInTextReviews,
+    toggleInTextReviews,
     setPendingCommentSelection,
     setPendingSuggestionSelection,
   } = useReviewStore();
@@ -401,24 +403,26 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }
         {suggestingMode ? 'Suggesting' : 'Editing'}
       </button>
 
-      {/* Reviews Sidebar Toggle */}
+      {/* In-Text Reviews Toggle */}
       <button
         type="button"
-        data-testid="toggle-reviews-btn"
-        onClick={() => toggleSidebar()}
+        data-testid="toggle-in-text-reviews-btn"
+        onClick={() => toggleInTextReviews()}
         className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ml-auto transition-colors ${
-          isSidebarOpen
+          showInTextReviews
             ? 'bg-cme-primary text-white shadow-xs'
             : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
         }`}
-        title="Toggle Review Discussions Panel"
+        title={showInTextReviews ? 'Hide Reviews in Text' : 'Show Reviews in Text'}
       >
-        <MessageSquare className="w-3.5 h-3.5" />
-        <span>Reviews</span>
+        {showInTextReviews ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+        <span>In-Text Reviews</span>
         {openReviewsCount > 0 && (
           <span
             data-testid="toolbar-review-badge"
-            className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-white ml-0.5"
+            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ml-0.5 ${
+              showInTextReviews ? 'bg-white/20 text-white' : 'bg-amber-500 text-white'
+            }`}
           >
             {openReviewsCount}
           </span>

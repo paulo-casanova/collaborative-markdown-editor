@@ -440,7 +440,11 @@ function buildInlineReviewDecorations(
   const docText = doc.toString();
   const ydoc = provider?.ydoc;
 
-  const { comments, suggestions, showResolved } = useReviewStore.getState();
+  const { comments, suggestions, showResolved, showInTextReviews } = useReviewStore.getState();
+  if (showInTextReviews === false) {
+    return Decoration.none;
+  }
+
   const items: ReviewDecoItem[] = [];
 
   // 1. Process Suggestions: Diff Blocks and Anchor Marks

@@ -22,6 +22,7 @@ export interface ReviewState {
   activeItemId: string | null;
   filter: 'all' | 'comments' | 'suggestions' | 'tasks';
   showResolved: boolean;
+  showInTextReviews: boolean;
   isSidebarOpen: boolean;
   suggestingMode: boolean;
   isLoading: boolean;
@@ -35,6 +36,8 @@ export interface ReviewState {
   setActiveItemId: (id: string | null) => void;
   setFilter: (filter: 'all' | 'comments' | 'suggestions' | 'tasks') => void;
   setShowResolved: (show: boolean) => void;
+  setShowInTextReviews: (show: boolean) => void;
+  toggleInTextReviews: () => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   toggleSuggestingMode: () => void;
@@ -65,6 +68,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   activeItemId: null,
   filter: 'all',
   showResolved: true,
+  showInTextReviews: true,
   isSidebarOpen: false,
   suggestingMode: false,
   isLoading: false,
@@ -205,6 +209,8 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   setActiveItemId: (id: string | null) => set({ activeItemId: id }),
   setFilter: (filter) => set({ filter }),
   setShowResolved: (show) => set({ showResolved: show }),
+  setShowInTextReviews: (show) => set({ showInTextReviews: show }),
+  toggleInTextReviews: () => set((state) => ({ showInTextReviews: !state.showInTextReviews })),
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
   setSidebarOpen: (open) => set({ isSidebarOpen: open }),
   toggleSuggestingMode: () => set((state) => ({ suggestingMode: !state.suggestingMode })),
