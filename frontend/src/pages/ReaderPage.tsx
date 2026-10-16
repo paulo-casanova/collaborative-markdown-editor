@@ -479,7 +479,9 @@ export const ReaderPage: React.FC = () => {
                       return (
                         <div
                           key={comment.id}
-                          className="rounded-lg border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs"
+                          className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 ${
+                            isResolved ? 'border-l-zinc-400' : 'border-l-blue-500'
+                          }`}
                           data-testid="comment-item"
                           data-comment-id={comment.id}
                         >
@@ -642,7 +644,13 @@ export const ReaderPage: React.FC = () => {
                       return (
                         <div
                           key={sugg.id}
-                          className="rounded-lg border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs"
+                          className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 ${
+                            isAccepted
+                              ? 'border-l-emerald-500'
+                              : isPending
+                              ? 'border-l-amber-500'
+                              : 'border-l-rose-500'
+                          }`}
                           data-testid="suggestion-item"
                           data-suggestion-id={sugg.id}
                         >

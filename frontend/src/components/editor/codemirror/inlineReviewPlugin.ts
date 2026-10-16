@@ -68,9 +68,17 @@ export class InlineSuggestionWidget extends WidgetType {
     container.setAttribute('data-testid', 'inline-suggestion-widget');
     container.setAttribute('data-suggestion-id', this.suggestion.id);
 
+    const isPending = this.suggestion.status === 'PENDING';
+    const isAccepted = this.suggestion.status === 'ACCEPTED';
+
     const card = document.createElement('div');
+    const borderLeftColor = isAccepted
+      ? 'border-l-emerald-500'
+      : isPending
+      ? 'border-l-amber-500'
+      : 'border-l-zinc-400';
     card.className =
-      'rounded-lg border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs transition-all hover:border-cme-border-hover';
+      `rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm transition-all hover:border-cme-border-hover border-l-4 ${borderLeftColor}`;
 
     const author = this.suggestion.author || {
       username: 'Reviewer',
@@ -80,9 +88,6 @@ export class InlineSuggestionWidget extends WidgetType {
     const authorName = author.display_name || author.username || 'Reviewer';
     const authorColor = author.avatar_color || '#10b981';
     const initials = authorName.slice(0, 2).toUpperCase();
-
-    const isPending = this.suggestion.status === 'PENDING';
-    const isAccepted = this.suggestion.status === 'ACCEPTED';
 
     const statusBadgeClass = isAccepted
       ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
@@ -225,9 +230,15 @@ export class InlineCommentThreadWidget extends WidgetType {
     container.setAttribute('data-testid', 'inline-comment-widget');
     container.setAttribute('data-comment-id', this.comment.id);
 
+    const isResolved = this.comment.status === 'RESOLVED';
+    const replies = this.comment.replies || [];
+
     const card = document.createElement('div');
+    const borderLeftColor = isResolved
+      ? 'border-l-zinc-400'
+      : 'border-l-blue-500';
     card.className =
-      'rounded-lg border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs transition-all hover:border-cme-border-hover';
+      `rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm transition-all hover:border-cme-border-hover border-l-4 ${borderLeftColor}`;
 
     const author = this.comment.author || {
       username: 'Reviewer',
@@ -237,9 +248,6 @@ export class InlineCommentThreadWidget extends WidgetType {
     const authorName = author.display_name || author.username || 'Reviewer';
     const authorColor = author.avatar_color || '#3b82f6';
     const initials = authorName.slice(0, 2).toUpperCase();
-
-    const isResolved = this.comment.status === 'RESOLVED';
-    const replies = this.comment.replies || [];
 
     // Header
     const header = document.createElement('div');
