@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BookOpen,
   Edit3,
@@ -9,23 +9,31 @@ import {
   Maximize2,
   Minimize2,
   CheckCircle2,
-  User,
-  Sparkles,
   Copy,
   Check,
   Hash,
+  Trash2,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
 import {
   fetchDocument,
   fetchDocumentByPath,
-  fetchDocumentComments,
-  fetchDocumentSuggestions,
   fetchDocumentTasks,
   getWorkspaceFileUrl,
   isMarkdownPath,
 } from '../api/documents';
+import {
+  acceptSuggestion,
+  rejectSuggestion,
+  replyComment,
+  updateCommentStatus,
+  deleteComment,
+  fetchDocumentComments,
+  fetchDocumentSuggestions,
+} from '../api/reviews';
+import type { CommentRecord } from '../review/types';
+import { parseMarkdownToHtml } from '../utils/markdownToHtml';
 import { useUIStore } from '../stores/uiStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { DocumentOutline, extractHeadingsFromMarkdown, slugify } from '../components/navigation/DocumentOutline';
@@ -113,6 +121,65 @@ export const ReaderPage: React.FC = () => {
     queryFn: () => (docId ? fetchDocumentTasks(docId) : Promise.resolve([])),
     enabled: Boolean(docId) && showReviews,
   });
+
+  const queryClient = useQueryClient();
+  const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
+  const [isSubmittingReply, setIsSubmittingReply] = useState<Record<string, boolean>>({});
+
+  const handleAcceptSuggestion = async (suggId: string) => {
+    try {
+      await acceptSuggestion(suggId);
+      queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+      queryClient.invalidateQueries({ queryKey: ['document', docId] });
+      queryClient.invalidateQueries({ queryKey: ['document-by-path'] });
+    } catch (err) {
+      console.error('Failed to accept suggestion in reader mode:', err);
+    }
+  };
+
+  const handleRejectSuggestion = async (suggId: string) => {
+    try {
+      await rejectSuggestion(suggId);
+      queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+    } catch (err) {
+      console.error('Failed to reject suggestion in reader mode:', err);
+    }
+  };
+
+  const handleReplyComment = async (commentId: string) => {
+    const text = (replyInputs[commentId] || '').trim();
+    if (!text) return;
+    setIsSubmittingReply((prev) => ({ ...prev, [commentId]: true }));
+    try {
+      await replyComment(commentId, text);
+      setReplyInputs((prev) => ({ ...prev, [commentId]: '' }));
+      queryClient.invalidateQueries({ queryKey: ['reader-comments', docId] });
+    } catch (err) {
+      console.error('Failed to post reply in reader mode:', err);
+    } finally {
+      setIsSubmittingReply((prev) => ({ ...prev, [commentId]: false }));
+    }
+  };
+
+  const handleToggleCommentStatus = async (commentId: string, currentStatus: string) => {
+    const nextStatus = currentStatus === 'OPEN' ? 'RESOLVED' : 'OPEN';
+    try {
+      await updateCommentStatus(commentId, nextStatus);
+      queryClient.invalidateQueries({ queryKey: ['reader-comments', docId] });
+    } catch (err) {
+      console.error('Failed to toggle comment status in reader mode:', err);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    if (!window.confirm('Delete this comment thread?')) return;
+    try {
+      await deleteComment(commentId);
+      queryClient.invalidateQueries({ queryKey: ['reader-comments', docId] });
+    } catch (err) {
+      console.error('Failed to delete comment in reader mode:', err);
+    }
+  };
 
   // Keep breadcrumbs and workspace tabs in sync
   useEffect(() => {
@@ -382,8 +449,8 @@ export const ReaderPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Review Comments */}
-              <div className="space-y-3">
+              {/* Review Comments & Discussions */}
+              <div className="space-y-4">
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-cme-text-muted">
                   Inline Discussions ({comments.length})
                 </h4>
@@ -392,36 +459,164 @@ export const ReaderPage: React.FC = () => {
                     No open comments on this document.
                   </p>
                 ) : (
-                  <div className="space-y-2">
-                    {comments.map((comment) => (
-                      <div
-                        key={comment.id}
-                        className="p-3 rounded-xl border border-cme-border-base bg-cme-bg-base space-y-1.5"
-                        data-testid="comment-item"
-                      >
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-semibold text-cme-text-base flex items-center gap-1">
-                            <User className="w-3 h-3 text-cme-primary" />
-                            {comment.username || 'Collaborator'}
-                          </span>
-                          <span className="text-[11px] text-cme-text-muted font-mono">
-                            {new Date(comment.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                        {comment.quote && (
-                          <div className="text-xs italic text-cme-text-muted border-l-2 border-cme-primary pl-2 py-0.5 bg-cme-primary/5 rounded-r">
-                            "{comment.quote}"
+                  <div className="space-y-3">
+                    {comments.map((comment) => {
+                      const isResolved = comment.status === 'RESOLVED';
+                      const replies = comment.replies || [];
+                      const author = comment.author || {
+                        id: '',
+                        username: 'Collaborator',
+                        display_name: 'Collaborator',
+                        avatar_color: '#3b82f6',
+                      };
+                      const authorName = author.display_name || author.username || 'Collaborator';
+                      const authorColor = author.avatar_color || '#3b82f6';
+                      const initials = authorName.slice(0, 2).toUpperCase();
+                      const quoteText =
+                        comment.anchor?.quote?.exact ||
+                        (typeof comment.anchor?.quote === 'string' ? comment.anchor.quote : null);
+
+                      return (
+                        <div
+                          key={comment.id}
+                          className="rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs"
+                          data-testid="comment-item"
+                          data-comment-id={comment.id}
+                        >
+                          {/* Thread Header */}
+                          <div className="flex items-center justify-between px-3 py-2 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold text-[10px]"
+                                style={{ backgroundColor: authorColor }}
+                              >
+                                {initials}
+                              </span>
+                              <span className="font-medium text-cme-text-base">{authorName}</span>
+                              <span className="text-cme-text-muted text-[11px] font-mono">
+                                {new Date(comment.created_at).toLocaleDateString()}
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                                  isResolved
+                                    ? 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
+                                    : 'bg-cme-primary/10 text-cme-primary border border-cme-primary/20'
+                                }`}
+                              >
+                                {isResolved ? 'Resolved' : 'Open'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleToggleCommentStatus(comment.id, comment.status)}
+                                className="px-2 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-[11px] font-medium transition-colors cursor-pointer"
+                                data-testid="resolve-comment-btn"
+                                title="Toggle resolved status"
+                              >
+                                {isResolved ? 'Reopen' : '✓ Resolve'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteComment(comment.id)}
+                                className="p-1 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 text-[11px] transition-colors cursor-pointer"
+                                data-testid="delete-comment-btn"
+                                title="Delete comment"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
-                        )}
-                        <p className="text-xs text-cme-text-base">{comment.content}</p>
-                      </div>
-                    ))}
+
+                          {/* Anchored Quote if present */}
+                          {quoteText && (
+                            <div className="mx-3.5 mt-2.5 text-xs italic text-cme-text-muted border-l-2 border-cme-primary pl-2.5 py-1 bg-cme-primary/5 rounded-r">
+                              "{quoteText}"
+                            </div>
+                          )}
+
+                          {/* Root Comment Content */}
+                          <div
+                            className="px-3.5 py-2.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
+                            dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(comment.content || '') }}
+                          />
+
+                          {/* Nested Replies */}
+                          {replies.length > 0 && (
+                            <div className="border-t border-cme-border-base/40 divide-y divide-cme-border-base/30 bg-cme-bg-subtle/30">
+                              {replies.map((reply: CommentRecord) => {
+                                const rAuthor = reply.author || {
+                                  id: '',
+                                  username: 'Collaborator',
+                                  display_name: 'Collaborator',
+                                  avatar_color: '#6366f1',
+                                };
+                                const rName = rAuthor.display_name || rAuthor.username || 'Collaborator';
+                                const rColor = rAuthor.avatar_color || '#6366f1';
+                                const rInitials = rName.slice(0, 2).toUpperCase();
+                                return (
+                                  <div key={reply.id} className="px-3.5 py-2 flex items-start gap-2.5 text-xs">
+                                    <span
+                                      className="inline-flex items-center justify-center w-4 h-4 rounded-full text-white font-bold text-[9px] flex-shrink-0 mt-0.5"
+                                      style={{ backgroundColor: rColor }}
+                                    >
+                                      {rInitials}
+                                    </span>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-1.5 mb-0.5">
+                                        <span className="font-medium text-cme-text-base">{rName}</span>
+                                        <span className="text-cme-text-muted text-[10px]">
+                                          {new Date(reply.created_at).toLocaleDateString()}
+                                        </span>
+                                      </div>
+                                      <div
+                                        className="text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
+                                        dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(reply.content || '') }}
+                                      />
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Inline Reply Form */}
+                          <div className="px-3 py-2 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-2">
+                            <input
+                              type="text"
+                              placeholder="Write a reply..."
+                              value={replyInputs[comment.id] || ''}
+                              onChange={(e) =>
+                                setReplyInputs((prev) => ({ ...prev, [comment.id]: e.target.value }))
+                              }
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                  e.preventDefault();
+                                  handleReplyComment(comment.id);
+                                }
+                              }}
+                              className="reply-input flex-1 px-2.5 py-1 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary"
+                              data-testid="inline-reply-input"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleReplyComment(comment.id)}
+                              disabled={isSubmittingReply[comment.id]}
+                              className="reply-submit-btn px-3 py-1 rounded-md bg-cme-primary hover:bg-cme-primary/90 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50"
+                              data-testid="inline-reply-submit-btn"
+                            >
+                              {isSubmittingReply[comment.id] ? '...' : 'Reply'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
 
-              {/* Review Suggestions */}
-              <div className="space-y-3 pt-2">
+              {/* Review Suggestions with Unified Diff Blocks & Accept/Reject */}
+              <div className="space-y-4 pt-2">
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-cme-text-muted">
                   Suggested Edits ({suggestions.length})
                 </h4>
@@ -430,40 +625,92 @@ export const ReaderPage: React.FC = () => {
                     No pending suggestions on this document.
                   </p>
                 ) : (
-                  <div className="space-y-2">
-                    {suggestions.map((sugg) => (
-                      <div
-                        key={sugg.id}
-                        className="p-3 rounded-xl border border-cme-border-base bg-cme-bg-base space-y-2"
-                        data-testid="suggestion-item"
-                      >
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="font-semibold text-cme-text-base flex items-center gap-1">
-                            <Sparkles className="w-3 h-3 text-amber-500" />
-                            {sugg.username || 'Reviewer'}
-                          </span>
-                          <span
-                            className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold tracking-wider ${
-                              sugg.status === 'accepted'
-                                ? 'bg-emerald-500/10 text-emerald-500'
-                                : sugg.status === 'rejected'
-                                ? 'bg-rose-500/10 text-rose-500'
-                                : 'bg-amber-500/10 text-amber-500'
-                            }`}
-                          >
-                            {sugg.status}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                          <div className="p-2 rounded bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-300">
-                            - {sugg.original_text}
+                  <div className="space-y-3">
+                    {suggestions.map((sugg) => {
+                      const isPending = (sugg.status || '').toLowerCase() === 'pending';
+                      const isAccepted = (sugg.status || '').toLowerCase() === 'accepted';
+                      const author = sugg.author || {
+                        id: '',
+                        username: 'Reviewer',
+                        display_name: 'Reviewer',
+                        avatar_color: '#10b981',
+                      };
+                      const authorName = author.display_name || author.username || 'Reviewer';
+                      const authorColor = author.avatar_color || '#10b981';
+                      const initials = authorName.slice(0, 2).toUpperCase();
+
+                      return (
+                        <div
+                          key={sugg.id}
+                          className="rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs"
+                          data-testid="suggestion-item"
+                          data-suggestion-id={sugg.id}
+                        >
+                          {/* Diff Header */}
+                          <div className="flex items-center justify-between px-3 py-2 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs">
+                            <div className="flex items-center gap-2">
+                              <span
+                                className="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold text-[10px]"
+                                style={{ backgroundColor: authorColor }}
+                              >
+                                {initials}
+                              </span>
+                              <span className="font-medium text-cme-text-base">{authorName}</span>
+                              <span className="text-[11px] text-cme-text-muted font-mono">
+                                {new Date(sugg.created_at).toLocaleDateString()}
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold tracking-wider ${
+                                  isAccepted
+                                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+                                    : isPending
+                                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                                    : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                                }`}
+                              >
+                                {sugg.status}
+                              </span>
+                            </div>
+                            {isPending && (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleAcceptSuggestion(sugg.id)}
+                                  className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-xs flex items-center gap-1 transition-all shadow-xs cursor-pointer"
+                                  data-testid="accept-suggestion-btn"
+                                >
+                                  ✓ Accept
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRejectSuggestion(sugg.id)}
+                                  className="px-2.5 py-1 rounded-md bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-xs flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer"
+                                  data-testid="reject-suggestion-btn"
+                                >
+                                  ✕ Reject
+                                </button>
+                              </div>
+                            )}
                           </div>
-                          <div className="p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300">
-                            + {sugg.suggested_text}
+
+                          {/* Unified Diff Block */}
+                          <div className="font-mono text-xs divide-y divide-cme-border-base/30 bg-cme-bg-surface">
+                            <div className="diff-deletion flex items-start gap-2.5 px-3 py-2 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
+                              <span className="select-none font-bold text-rose-500 flex-shrink-0">-</span>
+                              <span className="line-through whitespace-pre-wrap break-all leading-relaxed">
+                                {sugg.original_text}
+                              </span>
+                            </div>
+                            <div className="diff-addition flex items-start gap-2.5 px-3 py-2 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
+                              <span className="select-none font-bold text-emerald-500 flex-shrink-0">+</span>
+                              <span className="whitespace-pre-wrap break-all leading-relaxed">
+                                {sugg.suggested_text}
+                              </span>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>

@@ -16,6 +16,10 @@ import {
   createLivePreviewPlugin,
   forceLivePreviewRebuild,
 } from './codemirror/livePreviewPlugin';
+import {
+  createInlineReviewPlugin,
+  forceReviewRebuild,
+} from './codemirror/inlineReviewPlugin';
 import { cmeEditorTheme } from './codemirror/theme';
 import { CodeMirrorEditorAdapter } from './codemirror/editorAdapter';
 import { EditorToolbar } from './EditorToolbar';
@@ -26,6 +30,7 @@ import { NewCommentModal } from '../review/NewCommentModal';
 import { normalizeContentToMarkdown } from '../../utils/htmlToMarkdown';
 import { useThemeStore } from '../../stores/themeStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useReviewStore } from '../../stores/reviewStore';
 import { subscribeLinkValidation } from '../../utils/linkValidator';
 
 const autoRenumberAnnotation = Annotation.define<boolean>();
@@ -259,6 +264,16 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     });
   }, []);
 
+  // Subscribe to review store updates (comments, suggestions, status updates)
+  useEffect(() => {
+    return useReviewStore.subscribe(() => {
+      const view = adapterRef.current?.getView?.();
+      if (view) {
+        view.dispatch({ effects: forceReviewRebuild.of(true) });
+      }
+    });
+  }, []);
+
   // When numberHeaders is toggled, update headings and refresh live preview
   useEffect(() => {
     const view = adapterRef.current?.getView?.();
@@ -335,6 +350,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     const extensions: Extension[] = [
       markdown(),
       createLivePreviewPlugin(isDark, documentPath),
+      createInlineReviewPlugin(provider, isDark),
       cmeEditorTheme,
       remoteCursorClassPlugin,
       EditorView.lineWrapping,

@@ -5,6 +5,13 @@ import hljs from 'highlight.js';
 import { findHeadingPosition, slugify } from '../../navigation/DocumentOutline';
 import { isExternalUrl } from '../../../utils/linkValidator';
 import { getWorkspaceFileUrl, isMarkdownPath } from '../../../api/documents';
+import {
+  parseCodeFenceHeader,
+  extractSnippetFromText,
+  fetchSnippetSource,
+  getSnippetState,
+  setSnippetState,
+} from '../../../utils/snippetSync';
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -564,7 +571,8 @@ export class CodeBlockWidget extends WidgetType {
     public language: string,
     public code: string,
     public from: number,
-    public to: number
+    public to: number,
+    public docPath?: string
   ) {
     super();
   }
@@ -574,7 +582,8 @@ export class CodeBlockWidget extends WidgetType {
       this.language === other.language &&
       this.code === other.code &&
       this.from === other.from &&
-      this.to === other.to
+      this.to === other.to &&
+      this.docPath === other.docPath
     );
   }
 
@@ -590,62 +599,172 @@ export class CodeBlockWidget extends WidgetType {
     header.className =
       'flex items-center justify-between px-3.5 py-1.5 border-b border-cme-border-base bg-cme-bg-surface/80 text-xs';
 
-    const currentLangLower = (this.language || '').toLowerCase().trim();
-    const effectiveLang = currentLangLower === 'none' ? '' : currentLangLower;
+    const snippetInfo = parseCodeFenceHeader(this.language);
+    const isSnippet = snippetInfo.isSnippet;
+    const effectiveLang = (snippetInfo.language || '').toLowerCase().trim();
 
-    const knownLanguages = [
-      { id: '', label: 'none' },
-      { id: 'typescript', label: 'TypeScript' },
-      { id: 'javascript', label: 'JavaScript' },
-      { id: 'python', label: 'Python' },
-      { id: 'cpp', label: 'C++' },
-      { id: 'c', label: 'C' },
-      { id: 'rust', label: 'Rust' },
-      { id: 'go', label: 'Go' },
-      { id: 'html', label: 'HTML' },
-      { id: 'css', label: 'CSS' },
-      { id: 'json', label: 'JSON' },
-      { id: 'yaml', label: 'YAML' },
-      { id: 'markdown', label: 'Markdown' },
-      { id: 'bash', label: 'Bash' },
-      { id: 'sql', label: 'SQL' },
-    ];
+    if (isSnippet) {
+      const sourceDisplay =
+        snippetInfo.source.length > 36
+          ? '...' + snippetInfo.source.slice(-33)
+          : snippetInfo.source;
 
-    let optionsHtml = '';
-    let found = false;
-    for (const item of knownLanguages) {
-      const isSelected = item.id === effectiveLang;
-      if (isSelected) found = true;
-      optionsHtml += `<option value="${item.id}" ${isSelected ? 'selected' : ''}>${item.label}</option>`;
-    }
-    if (!found && effectiveLang) {
-      optionsHtml += `<option value="${effectiveLang}" selected>${effectiveLang}</option>`;
-    }
+      header.innerHTML = `
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="px-2 py-0.5 rounded bg-cme-bg-subtle font-mono text-[11px] font-semibold text-cme-text-base border border-cme-border-base uppercase">
+            ${escapeHtml(effectiveLang || 'code')}
+          </span>
+          <span class="font-mono text-[11px] text-cme-primary flex items-center gap-1 select-text" title="${escapeHtml(snippetInfo.source)} #${escapeHtml(snippetInfo.marker)}">
+            🔗 ${escapeHtml(sourceDisplay)}
+            <span class="text-cme-text-muted">#${escapeHtml(snippetInfo.marker)}</span>
+          </span>
+          <span class="sync-status-badge"></span>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <button type="button" class="resync-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors cursor-pointer" data-testid="resync-snippet-btn" title="Re-sync code snippet from source">
+            Sync
+          </button>
+          <button type="button" class="copy-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors">Copy</button>
+        </div>
+      `;
 
-    header.innerHTML = `
-      <div class="flex items-center gap-2">
-        <select class="bg-transparent font-mono text-[11px] text-cme-text-muted hover:text-cme-text-base border-none focus:outline-none cursor-pointer" data-testid="code-block-lang-select">
-          ${optionsHtml}
-        </select>
-      </div>
-      <button type="button" class="copy-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors">Copy</button>
-    `;
+      const updateSyncBadge = (status?: string, error?: string) => {
+        const badge = header.querySelector('.sync-status-badge') as HTMLElement | null;
+        if (!badge) return;
+        if (status === 'syncing') {
+          badge.innerHTML = `<span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-sans text-[11px] font-medium animate-pulse">⟳ Syncing...</span>`;
+        } else if (status === 'failed') {
+          badge.innerHTML = `<span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 font-sans text-[11px] font-medium flex items-center gap-1 border border-rose-500/30" data-testid="snippet-sync-warning" title="${escapeHtml(error || 'Snippet sync failed')}">⚠ Snippet sync failed</span>`;
+        } else if (status === 'synced') {
+          badge.innerHTML = `<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-sans text-[11px] font-medium flex items-center gap-1" data-testid="snippet-sync-success">✓ Synced</span>`;
+        } else {
+          badge.innerHTML = '';
+        }
+      };
 
-    const select = header.querySelector('select') as HTMLSelectElement;
-    select.value = effectiveLang;
+      const triggerSync = (force: boolean = false) => {
+        const cached = getSnippetState(snippetInfo.source, snippetInfo.marker);
+        if (!force && cached) {
+          updateSyncBadge(cached.status, cached.error);
+          if (
+            cached.status === 'synced' &&
+            cached.code !== undefined &&
+            cached.code.trim() !== this.code.trim()
+          ) {
+            view.dispatch({
+              changes: {
+                from: this.from,
+                to: this.to,
+                insert: `\`\`\`${this.language}\n${cached.code}\n\`\`\``,
+              },
+            });
+          }
+          return;
+        }
 
-    select.addEventListener('change', (e) => {
-      e.stopPropagation();
-      const newLang = select.value;
-      const langHeader = newLang ? newLang : '';
-      view.dispatch({
-        changes: {
-          from: this.from,
-          to: this.to,
-          insert: `\`\`\`${langHeader}\n${this.code}\n\`\`\``,
-        },
+        updateSyncBadge('syncing');
+        setSnippetState(snippetInfo.source, snippetInfo.marker, { status: 'syncing' });
+
+        fetchSnippetSource(snippetInfo.source, this.docPath)
+          .then((rawSource) => {
+            const extracted = extractSnippetFromText(rawSource, snippetInfo.marker);
+            if (extracted.error) {
+              setSnippetState(snippetInfo.source, snippetInfo.marker, {
+                status: 'failed',
+                error: extracted.error,
+              });
+              updateSyncBadge('failed', extracted.error);
+            } else {
+              setSnippetState(snippetInfo.source, snippetInfo.marker, {
+                status: 'synced',
+                code: extracted.code,
+              });
+              updateSyncBadge('synced');
+              if (extracted.code.trim() !== this.code.trim()) {
+                view.dispatch({
+                  changes: {
+                    from: this.from,
+                    to: this.to,
+                    insert: `\`\`\`${this.language}\n${extracted.code}\n\`\`\``,
+                  },
+                });
+              }
+            }
+          })
+          .catch((err) => {
+            const errMsg = err?.message || 'Network error';
+            setSnippetState(snippetInfo.source, snippetInfo.marker, {
+              status: 'failed',
+              error: errMsg,
+            });
+            updateSyncBadge('failed', errMsg);
+          });
+      };
+
+      triggerSync(false);
+
+      const resyncBtn = header.querySelector('.resync-btn') as HTMLButtonElement | null;
+      if (resyncBtn) {
+        resyncBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          triggerSync(true);
+        });
+      }
+    } else {
+      const knownLanguages = [
+        { id: '', label: 'none' },
+        { id: 'typescript', label: 'TypeScript' },
+        { id: 'javascript', label: 'JavaScript' },
+        { id: 'python', label: 'Python' },
+        { id: 'cpp', label: 'C++' },
+        { id: 'c', label: 'C' },
+        { id: 'rust', label: 'Rust' },
+        { id: 'go', label: 'Go' },
+        { id: 'html', label: 'HTML' },
+        { id: 'css', label: 'CSS' },
+        { id: 'json', label: 'JSON' },
+        { id: 'yaml', label: 'YAML' },
+        { id: 'markdown', label: 'Markdown' },
+        { id: 'bash', label: 'Bash' },
+        { id: 'sql', label: 'SQL' },
+      ];
+
+      let optionsHtml = '';
+      let found = false;
+      for (const item of knownLanguages) {
+        const isSelected = item.id === effectiveLang;
+        if (isSelected) found = true;
+        optionsHtml += `<option value="${item.id}" ${isSelected ? 'selected' : ''}>${item.label}</option>`;
+      }
+      if (!found && effectiveLang) {
+        optionsHtml += `<option value="${effectiveLang}" selected>${effectiveLang}</option>`;
+      }
+
+      header.innerHTML = `
+        <div class="flex items-center gap-2">
+          <select class="bg-transparent font-mono text-[11px] text-cme-text-muted hover:text-cme-text-base border-none focus:outline-none cursor-pointer" data-testid="code-block-lang-select">
+            ${optionsHtml}
+          </select>
+        </div>
+        <button type="button" class="copy-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors">Copy</button>
+      `;
+
+      const select = header.querySelector('select') as HTMLSelectElement;
+      select.value = effectiveLang;
+
+      select.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const newLang = select.value;
+        const langHeader = newLang ? newLang : '';
+        view.dispatch({
+          changes: {
+            from: this.from,
+            to: this.to,
+            insert: `\`\`\`${langHeader}\n${this.code}\n\`\`\``,
+          },
+        });
       });
-    });
+    }
 
     const copyBtn = header.querySelector('.copy-btn') as HTMLButtonElement;
     copyBtn.addEventListener('click', (e) => {

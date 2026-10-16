@@ -810,6 +810,45 @@ Result<void> Server::start() {
         res->end(file_res.value());
     });
 
+    // GET /api/v1/workspaces/snippet-proxy?url=<encoded_url>
+    app.get("/api/v1/workspaces/snippet-proxy", [this](auto *res, auto *req) {
+        std::string url_param = url_decode(req->getQuery("url"));
+        if (url_param.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Missing url parameter"}});
+            return;
+        }
+        if (url_param.find("http://") != 0 && url_param.find("https://") != 0) {
+            send_json(res, "400 Bad Request", {{"error", "Only http:// and https:// URLs are supported"}});
+            return;
+        }
+        // Sanitize against shell command injection
+        if (url_param.find_first_of(";&|`$<>\"'\n\r") != std::string::npos) {
+            send_json(res, "400 Bad Request", {{"error", "Invalid URL characters"}});
+            return;
+        }
+
+        std::string cmd = "curl -s -L --max-time 5 \"" + url_param + "\"";
+        FILE* pipe = popen(cmd.c_str(), "r");
+        if (!pipe) {
+            send_json(res, "502 Bad Gateway", {{"error", "Failed to execute fetch"}});
+            return;
+        }
+        char buffer[2048];
+        std::string result;
+        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+            result += buffer;
+        }
+        int status = pclose(pipe);
+        if (status != 0 || result.empty()) {
+            send_json(res, "502 Bad Gateway", {{"error", "Failed to fetch remote URL"}});
+            return;
+        }
+
+        res->writeHeader("Content-Type", "text/plain; charset=utf-8");
+        res->writeHeader("Cache-Control", "public, max-age=60");
+        res->end(result);
+    });
+
     // GET /api/v1/workspaces/directory-details?path=<relative_path>
     app.get("/api/v1/workspaces/directory-details", [this](auto *res, auto *req) {
         std::string auth_hdr = std::string(req->getHeader("authorization"));

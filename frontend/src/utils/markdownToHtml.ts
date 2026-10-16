@@ -87,7 +87,12 @@ export function parseMarkdownToHtml(markdown: string): string {
         if (codeLang === 'mermaid') {
           output.push(`<div class="mermaid" data-source="${code.replace(/"/g, '&quot;')}"></div>`);
         } else {
-          output.push(`<pre><code class="language-${codeLang || 'plaintext'}">${escapeHtml(code)}</code></pre>`);
+          const isSnippet = codeLang.includes('|');
+          const parts = codeLang.split('|').map((p) => p.trim());
+          const effectiveLang = (parts[0] || 'plaintext').toLowerCase();
+          const sourceAttr = isSnippet && parts[1] ? ` data-snippet-source="${escapeHtml(parts[1])}"` : '';
+          const markerAttr = isSnippet && parts[2] ? ` data-snippet-marker="${escapeHtml(parts[2])}"` : '';
+          output.push(`<pre${sourceAttr}${markerAttr}><code class="language-${effectiveLang || 'plaintext'}">${escapeHtml(code)}</code></pre>`);
         }
       }
       continue;

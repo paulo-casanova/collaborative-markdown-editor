@@ -117,11 +117,11 @@ export function buildLivePreviewDecorations(
     }
   }
 
-  // 2. Multiline Blocks: Fenced Code Blocks (```lang ... ```)
-  const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)\n```/g;
+  // 2. Multiline Blocks: Fenced Code Blocks (```lang ... ``` or ```lang|source|marker ... ```)
+  const codeBlockRegex = /```([^\n]*)\n([\s\S]*?)\n```/g;
   while ((match = codeBlockRegex.exec(docText)) !== null) {
-    const lang = match[1].trim();
-    if (lang.toLowerCase() === 'mermaid') continue;
+    const rawHeader = match[1].trim();
+    if (rawHeader.toLowerCase().startsWith('mermaid')) continue;
     const from = match.index;
     const to = from + match[0].length;
     const code = match[2];
@@ -133,7 +133,7 @@ export function buildLivePreviewDecorations(
         from,
         to,
         Decoration.replace({
-          widget: new CodeBlockWidget(lang || '', code, from, to),
+          widget: new CodeBlockWidget(rawHeader || '', code, from, to, documentPath),
           block: true,
         })
       );
