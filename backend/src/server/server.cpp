@@ -810,6 +810,281 @@ Result<void> Server::start() {
         res->end(file_res.value());
     });
 
+    // GET /api/v1/workspaces/directory-details?path=<relative_path>
+    app.get("/api/v1/workspaces/directory-details", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string path_param = url_decode(req->getQuery("path"));
+        auto dash_res = document_service_->get_directory_dashboard(path_param, *auth_res.value());
+        if (!dash_res.has_value()) {
+            if (dash_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Directory not found"}});
+            } else if (dash_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to get directory details"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", dash_res.value());
+    });
+
+    // GET /api/v1/workspaces/permissions?target_type=...&target_id=...&directory_path=...
+    app.get("/api/v1/workspaces/permissions", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string target_type = url_decode(req->getQuery("target_type"));
+        std::string target_id = url_decode(req->getQuery("target_id"));
+        std::string directory_path = url_decode(req->getQuery("directory_path"));
+        if (target_type.empty()) {
+            target_type = !target_id.empty() ? "DOCUMENT" : "DIRECTORY";
+        }
+        for (auto& c : target_type) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+        auto perm_res = document_service_->get_node_permissions(target_type, target_id, directory_path, *auth_res.value());
+        if (!perm_res.has_value()) {
+            if (perm_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Node not found"}});
+            } else if (perm_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to retrieve permissions"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", perm_res.value());
+    });
+
+    // POST /api/v1/workspaces/permissions
+    app.post("/api/v1/workspaces/permissions", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string target_type;
+            std::string target_id;
+            std::string dir_path;
+            std::string grantee_type;
+            std::string grantee_id;
+            std::string access_level;
+
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("target_type") && json["target_type"].is_string()) target_type = json["target_type"].get<std::string>();
+                if (json.contains("target_id") && json["target_id"].is_string()) target_id = json["target_id"].get<std::string>();
+                if (json.contains("directory_path") && json["directory_path"].is_string()) dir_path = json["directory_path"].get<std::string>();
+                if (json.contains("grantee_type") && json["grantee_type"].is_string()) grantee_type = json["grantee_type"].get<std::string>();
+                if (json.contains("grantee_id") && json["grantee_id"].is_string()) grantee_id = json["grantee_id"].get<std::string>();
+                if (json.contains("access_level") && json["access_level"].is_string()) access_level = json["access_level"].get<std::string>();
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (target_type.empty()) {
+                target_type = !target_id.empty() ? "DOCUMENT" : "DIRECTORY";
+            }
+            for (auto& c : target_type) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+            auto set_res = document_service_->set_node_permission(
+                target_type, target_id, dir_path, grantee_type, grantee_id, access_level, *auth_res.value()
+            );
+            if (!set_res.has_value()) {
+                if (set_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (set_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid permission parameters"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to set permission"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", set_res.value());
+        });
+    });
+
+    // DELETE /api/v1/workspaces/permissions/:id
+    app.del("/api/v1/workspaces/permissions/:id", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string perm_id_str = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        int64_t perm_id = 0;
+        try {
+            perm_id = std::stoll(perm_id_str);
+        } catch (...) {
+            send_json(res, "400 Bad Request", {{"error", "Invalid permission ID"}});
+            return;
+        }
+
+        auto del_res = document_service_->delete_node_permission(perm_id, *auth_res.value());
+        if (!del_res.has_value()) {
+            if (del_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else if (del_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Permission not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to delete permission"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", {{"status", "deleted"}});
+    });
+
+    // PATCH /api/v1/workspaces/permissions/owner
+    app.patch("/api/v1/workspaces/permissions/owner", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string target_type;
+            std::string target_id;
+            std::string dir_path;
+            std::string new_owner_user_id;
+            std::string new_owner_team_id;
+
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("target_type") && json["target_type"].is_string()) target_type = json["target_type"].get<std::string>();
+                if (json.contains("target_id") && json["target_id"].is_string()) target_id = json["target_id"].get<std::string>();
+                if (json.contains("directory_path") && json["directory_path"].is_string()) dir_path = json["directory_path"].get<std::string>();
+                if (json.contains("new_owner_user_id") && json["new_owner_user_id"].is_string()) new_owner_user_id = json["new_owner_user_id"].get<std::string>();
+                if (json.contains("new_owner_team_id") && json["new_owner_team_id"].is_string()) new_owner_team_id = json["new_owner_team_id"].get<std::string>();
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (target_type.empty()) {
+                target_type = !target_id.empty() ? "DOCUMENT" : "DIRECTORY";
+            }
+            for (auto& c : target_type) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+            auto trans_res = document_service_->transfer_node_ownership(
+                target_type, target_id, dir_path, new_owner_user_id, new_owner_team_id, *auth_res.value()
+            );
+            if (!trans_res.has_value()) {
+                if (trans_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to transfer ownership"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", {{"status", "transferred"}});
+        });
+    });
+
+    // GET /api/v1/workspaces/principals
+    app.get("/api/v1/workspaces/principals", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto princ_res = document_service_->get_assignable_principals(*auth_res.value());
+        if (!princ_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to retrieve principals"}});
+            return;
+        }
+
+        send_json(res, "200 OK", princ_res.value());
+    });
+
     // GET /api/v1/documents/by-path/html
     app.get("/api/v1/documents/by-path/html", [this](auto *res, auto *req) {
         std::string auth_hdr = std::string(req->getHeader("authorization"));
@@ -1257,6 +1532,74 @@ Result<void> Server::start() {
         write_cors_headers(res);
         res->writeHeader("Content-Type", content_type);
         res->end(asset_res.value());
+    });
+
+    // GET /api/v1/documents/:id/assets
+    app.get("/api/v1/documents/:id/assets", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto assets_res = document_service_->list_document_assets(doc_id, *auth_res.value());
+        if (!assets_res.has_value()) {
+            if (assets_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (assets_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list assets"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", assets_res.value());
+    });
+
+    // DELETE /api/v1/documents/:id/assets/:filename
+    app.del("/api/v1/documents/:id/assets/:filename", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string filename = url_decode(req->getParameter(1));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto del_res = document_service_->delete_document_asset(doc_id, filename, *auth_res.value());
+        if (!del_res.has_value()) {
+            if (del_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Asset not found"}});
+            } else if (del_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to delete asset"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", {{"status", "deleted"}});
     });
 
     // GET /api/v1/documents/:id

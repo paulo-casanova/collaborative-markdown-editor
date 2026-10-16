@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   FileText,
+  Folder,
   Package,
   X,
   Pin,
@@ -52,7 +53,11 @@ export const TabBar: React.FC = () => {
 
   const handleTabClick = (tab: WorkspaceTab) => {
     setActiveTabId(tab.id);
-    navigate(`${baseDocRoute}/${tab.id}`);
+    if (tab.is_directory || tab.id.startsWith('dir:')) {
+      navigate(`/documents/${tab.id}`);
+    } else {
+      navigate(`${baseDocRoute}/${tab.id}`);
+    }
   };
 
   const handleClose = (tabId: string, e?: React.MouseEvent) => {
@@ -70,7 +75,11 @@ export const TabBar: React.FC = () => {
     if (activeTabId === tabId) {
       const nextActive = useWorkspaceStore.getState().activeTabId;
       if (nextActive) {
-        navigate(`${baseDocRoute}/${nextActive}`);
+        if (nextActive.startsWith('dir:')) {
+          navigate(`/documents/${nextActive}`);
+        } else {
+          navigate(`${baseDocRoute}/${nextActive}`);
+        }
       } else {
         navigate('/');
       }
@@ -156,6 +165,8 @@ export const TabBar: React.FC = () => {
               {/* Tab Icon */}
               {tab.isPinned ? (
                 <Pin className="w-3 h-3 text-amber-500 flex-shrink-0" />
+              ) : tab.is_directory || tab.id.startsWith('dir:') ? (
+                <Folder className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
               ) : tab.is_bundle ? (
                 <Package className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" />
               ) : (

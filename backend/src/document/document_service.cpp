@@ -180,14 +180,27 @@ Result<DocumentRecord> DocumentService::create_document(
     try {
         pqxx::work tx(conn_res->get());
 
+        std::string owner_id = user.user_id;
+        std::string owner_team_id = "";
+        if (!parent_dir.empty()) {
+            auto p_rows = tx.exec_params(
+                "SELECT owner_user_id::text, owner_team_id::text FROM directory_metadata WHERE directory_path = $1",
+                parent_dir
+            );
+            if (!p_rows.empty()) {
+                if (!p_rows[0][0].is_null()) owner_id = p_rows[0][0].as<std::string>();
+                if (!p_rows[0][1].is_null()) owner_team_id = p_rows[0][1].as<std::string>();
+            }
+        }
+
         std::string query =
-            "INSERT INTO documents (fs_path, title, owner_user_id) "
-            "VALUES ($1, $2, NULLIF($3, '')::uuid) "
+            "INSERT INTO documents (fs_path, title, owner_user_id, owner_team_id) "
+            "VALUES ($1, $2, NULLIF($3, '')::uuid, NULLIF($4, '')::uuid) "
             "RETURNING id, fs_path, title, COALESCE(owner_user_id::text, ''), "
             "          TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
             "          TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');";
 
-        auto row = tx.exec_params(query, norm_path, title, user.user_id);
+        auto row = tx.exec_params(query, norm_path, title, owner_id, owner_team_id);
         if (row.empty()) {
             return std::unexpected(ErrorCode::DatabaseError);
         }
@@ -237,6 +250,38 @@ Result<std::string> DocumentService::create_directory(
     auto dir_res = storage_->create_directory(norm_path);
     if (!dir_res.has_value()) {
         return std::unexpected(dir_res.error());
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (conn_res.has_value()) {
+        try {
+            pqxx::work tx(conn_res->get());
+            std::string owner_id = user.user_id;
+            std::string owner_team_id = "";
+            if (!parent_dir.empty()) {
+                auto p_rows = tx.exec_params(
+                    "SELECT owner_user_id::text, owner_team_id::text FROM directory_metadata WHERE directory_path = $1",
+                    parent_dir
+                );
+                if (!p_rows.empty()) {
+                    if (!p_rows[0][0].is_null()) owner_id = p_rows[0][0].as<std::string>();
+                    if (!p_rows[0][1].is_null()) owner_team_id = p_rows[0][1].as<std::string>();
+                }
+            }
+            tx.exec_params(
+                R"(
+                INSERT INTO directory_metadata (directory_path, owner_user_id, owner_team_id)
+                VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid)
+                ON CONFLICT (directory_path) DO UPDATE SET updated_at = NOW();
+                )",
+                norm_path,
+                owner_id,
+                owner_team_id
+            );
+            tx.commit();
+        } catch (const std::exception& e) {
+            std::cerr << "[WARN] Failed to record directory_metadata: " << e.what() << "\n";
+        }
     }
 
     return norm_path;
@@ -1597,6 +1642,584 @@ Result<void> DocumentService::purge_trash_item(
     }
 
     return storage_->purge_from_trash(trash_id);
+}
+
+Result<nlohmann::json> DocumentService::list_document_assets(
+    const std::string& doc_id,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    std::string fs_path;
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+            doc_id
+        );
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        fs_path = rows[0][0].as<std::string>();
+    } catch (...) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto access_res = check_access(user, doc_id, fs_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+    std::string scan_dir = is_bundle ? fs_path : std::filesystem::path(fs_path).parent_path().string();
+
+    nlohmann::json assets = nlohmann::json::array();
+    auto list_res = storage_->list_directory(scan_dir, true);
+    if (list_res.has_value()) {
+        for (const auto& node : list_res.value()) {
+            if (node.is_directory) continue;
+
+            // Skip main document file
+            std::string lower_node = to_lower_string(node.relative_path);
+            if (lower_node == to_lower_string(fs_path) ||
+                lower_node == to_lower_string(fs_path + "/index.md") ||
+                lower_node == to_lower_string(fs_path + "/" + std::filesystem::path(fs_path).filename().string() + ".md")) {
+                continue;
+            }
+
+            // Path relative to scan_dir
+            std::string bundle_rel = node.relative_path;
+            if (!scan_dir.empty() && bundle_rel.starts_with(scan_dir + "/")) {
+                bundle_rel = bundle_rel.substr(scan_dir.length() + 1);
+            }
+
+            bool is_img = lower_node.ends_with(".png") || lower_node.ends_with(".jpg") ||
+                          lower_node.ends_with(".jpeg") || lower_node.ends_with(".gif") ||
+                          lower_node.ends_with(".svg") || lower_node.ends_with(".webp") ||
+                          lower_node.ends_with(".ico") || lower_node.ends_with(".bmp");
+
+            nlohmann::json asset;
+            asset["name"] = node.name;
+            asset["relative_path"] = node.relative_path;
+            asset["bundle_relative_path"] = bundle_rel;
+            asset["size_bytes"] = node.size_bytes;
+            asset["is_image"] = is_img;
+
+            std::time_t tt = std::chrono::system_clock::to_time_t(node.last_modified);
+            std::stringstream ss;
+            ss << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%SZ");
+            asset["last_modified"] = ss.str();
+
+            asset["url"] = "/api/v1/workspaces/files?path=" + node.relative_path;
+            assets.push_back(std::move(asset));
+        }
+    }
+
+    nlohmann::json result;
+    result["doc_id"] = doc_id;
+    result["fs_path"] = fs_path;
+    result["is_bundle"] = is_bundle;
+    result["assets"] = std::move(assets);
+    return result;
+}
+
+Result<void> DocumentService::delete_document_asset(
+    const std::string& doc_id,
+    const std::string& filename,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    std::string fs_path;
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+            doc_id
+        );
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        fs_path = rows[0][0].as<std::string>();
+    } catch (...) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto access_res = check_access(user, doc_id, fs_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Edit) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    std::string clean_fn = normalize_rel_path(filename);
+    if (clean_fn.empty() || has_path_traversal(clean_fn)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+    std::string asset_path;
+    if (is_bundle) {
+        if (clean_fn.find('/') != std::string::npos) {
+            asset_path = fs_path + "/" + clean_fn;
+        } else {
+            asset_path = fs_path + "/images/" + clean_fn;
+            if (!storage_->read_file(asset_path).has_value()) {
+                asset_path = fs_path + "/" + clean_fn;
+            }
+        }
+    } else {
+        std::filesystem::path fp(fs_path);
+        std::string parent = fp.parent_path().string();
+        asset_path = (parent.empty() ? "" : parent + "/") + clean_fn;
+    }
+
+    auto rm_res = storage_->delete_to_trash(asset_path);
+    if (!rm_res.has_value()) {
+        return std::unexpected(rm_res.error());
+    }
+
+    return {};
+}
+
+Result<nlohmann::json> DocumentService::get_directory_dashboard(
+    const std::string& relative_path,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    std::string clean_path = normalize_rel_path(relative_path);
+    if (has_path_traversal(clean_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto access_res = check_access(user, "", clean_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    auto list_res = storage_->list_directory(clean_path, false);
+    if (!list_res.has_value()) {
+        return std::unexpected(list_res.error());
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    struct ChildDocMeta {
+        std::string id;
+        std::string title;
+        std::string owner_user_id;
+        std::string owner_name;
+        std::string updated_at;
+        int comments_count{0};
+        int suggestions_count{0};
+        int open_tasks_count{0};
+    };
+    std::map<std::string, ChildDocMeta> doc_metas;
+    std::map<std::string, std::pair<std::string, std::string>> dir_owners;
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+
+        auto doc_rows = tx.exec_params(
+            R"(
+            SELECT d.id, d.fs_path, d.title, COALESCE(d.owner_user_id::text, ''),
+                   COALESCE(u.display_name, u.username, ''),
+                   TO_CHAR(d.updated_at, 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+                   (SELECT COUNT(*) FROM comments c WHERE c.document_id = d.id AND c.status = 'OPEN'),
+                   (SELECT COUNT(*) FROM suggestions s WHERE s.document_id = d.id AND s.status = 'PENDING'),
+                   (SELECT COUNT(*) FROM tasks t WHERE t.document_id = d.id AND t.is_completed = FALSE)
+            FROM documents d
+            LEFT JOIN users u ON d.owner_user_id = u.id
+            WHERE ($1 = '' AND d.fs_path NOT LIKE '%/%') OR ($1 <> '' AND d.fs_path LIKE $1 || '/%');
+            )",
+            clean_path
+        );
+
+        for (const auto& r : doc_rows) {
+            std::string p = r[1].as<std::string>();
+            doc_metas[p] = ChildDocMeta{
+                .id = r[0].as<std::string>(),
+                .title = r[2].as<std::string>(),
+                .owner_user_id = r[3].as<std::string>(),
+                .owner_name = r[4].as<std::string>(),
+                .updated_at = r[5].as<std::string>(),
+                .comments_count = r[6].as<int>(),
+                .suggestions_count = r[7].as<int>(),
+                .open_tasks_count = r[8].as<int>()
+            };
+        }
+
+        auto dir_rows = tx.exec_params(
+            R"(
+            SELECT dm.directory_path, COALESCE(dm.owner_user_id::text, ''),
+                   COALESCE(u.display_name, u.username, '')
+            FROM directory_metadata dm
+            LEFT JOIN users u ON dm.owner_user_id = u.id
+            WHERE ($1 = '' AND dm.directory_path NOT LIKE '%/%') OR ($1 <> '' AND dm.directory_path LIKE $1 || '/%');
+            )",
+            clean_path
+        );
+
+        for (const auto& r : dir_rows) {
+            dir_owners[r[0].as<std::string>()] = {r[1].as<std::string>(), r[2].as<std::string>()};
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] get_directory_dashboard DB query failed: " << e.what() << "\n";
+    }
+
+    nlohmann::json items = nlohmann::json::array();
+    for (const auto& node : list_res.value()) {
+        std::string doc_id = doc_metas.contains(node.relative_path) ? doc_metas[node.relative_path].id : "";
+        auto child_access = check_access(user, doc_id, node.relative_path);
+        if (child_access.has_value() && child_access.value() < db::AccessLevel::Read) {
+            continue;
+        }
+
+        nlohmann::json item;
+        item["name"] = node.name;
+        item["path"] = node.relative_path;
+        item["is_directory"] = node.is_directory;
+        item["is_bundle"] = node.is_bundle;
+        item["size_bytes"] = node.size_bytes;
+
+        std::string type = "file";
+        if (node.is_bundle) type = "bundle";
+        else if (node.is_directory) type = "directory";
+        else if (node.name.ends_with(".md") || node.name.ends_with(".markdown")) type = "document";
+        item["type"] = type;
+
+        if (doc_metas.contains(node.relative_path)) {
+            const auto& m = doc_metas[node.relative_path];
+            item["id"] = m.id;
+            item["title"] = m.title;
+            item["owner_user_id"] = m.owner_user_id;
+            item["owner_name"] = m.owner_name;
+            item["updated_at"] = m.updated_at;
+            item["comments_count"] = m.comments_count;
+            item["suggestions_count"] = m.suggestions_count;
+            item["open_tasks_count"] = m.open_tasks_count;
+        } else {
+            if (node.is_directory && dir_owners.contains(node.relative_path)) {
+                item["owner_user_id"] = dir_owners[node.relative_path].first;
+                item["owner_name"] = dir_owners[node.relative_path].second;
+            } else {
+                item["owner_user_id"] = "";
+                item["owner_name"] = "";
+            }
+            item["comments_count"] = 0;
+            item["suggestions_count"] = 0;
+            item["open_tasks_count"] = 0;
+
+            std::time_t tt = std::chrono::system_clock::to_time_t(node.last_modified);
+            std::stringstream ss;
+            ss << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%SZ");
+            item["updated_at"] = ss.str();
+        }
+
+        items.push_back(std::move(item));
+    }
+
+    nlohmann::json resp;
+    resp["path"] = clean_path;
+    resp["items"] = std::move(items);
+    return resp;
+}
+
+Result<nlohmann::json> DocumentService::get_node_permissions(
+    const std::string& target_type,
+    const std::string& target_id,
+    const std::string& dir_path,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    auto details_res = db::PermissionEngine::get_permission_details(
+        conn_res->get(),
+        user.user_id,
+        target_type,
+        target_id,
+        dir_path
+    );
+    if (!details_res.has_value()) {
+        return std::unexpected(details_res.error());
+    }
+
+    const auto& d = details_res.value();
+    nlohmann::json res;
+    res["target_type"] = d.target_type;
+    res["target_id"] = d.target_id;
+    res["target_path"] = d.target_path;
+    res["effective_permission"] = db::to_string(d.effective_level);
+    res["can_manage"] = d.can_manage;
+
+    res["owner"] = {
+        {"id", d.owner.id},
+        {"name", d.owner.name},
+        {"display_name", d.owner.display_name},
+        {"is_team", d.owner.is_team}
+    };
+
+    res["explicit_grants"] = nlohmann::json::array();
+    for (const auto& g : d.explicit_grants) {
+        res["explicit_grants"].push_back({
+            {"id", g.id},
+            {"grantee_type", g.grantee_type},
+            {"grantee_id", g.grantee_id},
+            {"grantee_name", g.grantee_name},
+            {"access_level", db::to_string(g.access_level)}
+        });
+    }
+
+    res["inherited_grants"] = nlohmann::json::array();
+    for (const auto& g : d.inherited_grants) {
+        res["inherited_grants"].push_back({
+            {"id", g.id},
+            {"grantee_type", g.grantee_type},
+            {"grantee_id", g.grantee_id},
+            {"grantee_name", g.grantee_name},
+            {"access_level", db::to_string(g.access_level)},
+            {"inherited_from", g.inherited_from}
+        });
+    }
+
+    return res;
+}
+
+Result<nlohmann::json> DocumentService::set_node_permission(
+    const std::string& target_type,
+    const std::string& target_id,
+    const std::string& dir_path,
+    const std::string& grantee_type,
+    const std::string& grantee_id,
+    const std::string& access_level,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    auto details_res = db::PermissionEngine::get_permission_details(
+        conn_res->get(),
+        user.user_id,
+        target_type,
+        target_id,
+        dir_path
+    );
+    if (!details_res.has_value() || !details_res.value().can_manage) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    std::string clean_lvl = access_level;
+    for (auto& c : clean_lvl) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (clean_lvl != "READ" && clean_lvl != "COMMENT" && clean_lvl != "EDIT" && clean_lvl != "ADMIN") {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        if (target_type == "DOCUMENT") {
+            tx.exec_params(
+                R"(
+                DELETE FROM permissions
+                WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid AND grantee_type = $2 AND grantee_id = $3::uuid;
+                INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level)
+                VALUES ('DOCUMENT', $1::uuid, $2, $3::uuid, $4);
+                )",
+                target_id,
+                grantee_type,
+                grantee_id,
+                clean_lvl
+            );
+        } else {
+            std::string clean_dir = normalize_rel_path(dir_path);
+            tx.exec_params(
+                R"(
+                DELETE FROM permissions
+                WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1 AND grantee_type = $2 AND grantee_id = $3::uuid;
+                INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level)
+                VALUES ('DIRECTORY', $1, $2, $3::uuid, $4);
+                )",
+                clean_dir,
+                grantee_type,
+                grantee_id,
+                clean_lvl
+            );
+        }
+        tx.commit();
+        return get_node_permissions(target_type, target_id, dir_path, user);
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] set_node_permission failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<void> DocumentService::delete_node_permission(
+    int64_t permission_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto row = tx.exec_params(
+            "SELECT target_type, COALESCE(target_id::text, ''), COALESCE(directory_path, '') FROM permissions WHERE id = $1",
+            permission_id
+        );
+        if (row.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        std::string target_type = row[0][0].as<std::string>();
+        std::string target_id = row[0][1].as<std::string>();
+        std::string dir_path = row[0][2].as<std::string>();
+
+        auto details = db::PermissionEngine::get_permission_details(
+            conn_res->get(),
+            user.user_id,
+            target_type,
+            target_id,
+            dir_path
+        );
+        if (!details.has_value() || !details.value().can_manage) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+
+        tx.exec_params("DELETE FROM permissions WHERE id = $1", permission_id);
+        tx.commit();
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] delete_node_permission failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<void> DocumentService::transfer_node_ownership(
+    const std::string& target_type,
+    const std::string& target_id,
+    const std::string& dir_path,
+    const std::string& new_owner_user_id,
+    const std::string& new_owner_team_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    auto details = db::PermissionEngine::get_permission_details(
+        conn_res->get(),
+        user.user_id,
+        target_type,
+        target_id,
+        dir_path
+    );
+    if (!details.has_value() || !details.value().can_manage) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        if (target_type == "DOCUMENT") {
+            tx.exec_params(
+                R"(
+                UPDATE documents
+                SET owner_user_id = NULLIF($2, '')::uuid,
+                    owner_team_id = NULLIF($3, '')::uuid,
+                    updated_at = NOW()
+                WHERE id = $1::uuid;
+                )",
+                target_id,
+                new_owner_user_id,
+                new_owner_team_id
+            );
+        } else {
+            std::string clean_dir = normalize_rel_path(dir_path);
+            tx.exec_params(
+                R"(
+                INSERT INTO directory_metadata (directory_path, owner_user_id, owner_team_id)
+                VALUES ($1, NULLIF($2, '')::uuid, NULLIF($3, '')::uuid)
+                ON CONFLICT (directory_path) DO UPDATE
+                SET owner_user_id = NULLIF($2, '')::uuid,
+                    owner_team_id = NULLIF($3, '')::uuid,
+                    updated_at = NOW();
+                )",
+                clean_dir,
+                new_owner_user_id,
+                new_owner_team_id
+            );
+        }
+        tx.commit();
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] transfer_node_ownership failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<nlohmann::json> DocumentService::get_assignable_principals(
+    const auth::UserIdentity& user
+) {
+    (void)user;
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto u_rows = tx.exec(
+            "SELECT id::text, username, COALESCE(display_name, username) FROM users ORDER BY username ASC"
+        );
+        auto t_rows = tx.exec(
+            "SELECT id::text, name, COALESCE(description, '') FROM teams ORDER BY name ASC"
+        );
+
+        nlohmann::json users = nlohmann::json::array();
+        for (const auto& r : u_rows) {
+            users.push_back({
+                {"id", r[0].as<std::string>()},
+                {"username", r[1].as<std::string>()},
+                {"display_name", r[2].as<std::string>()}
+            });
+        }
+
+        nlohmann::json teams = nlohmann::json::array();
+        for (const auto& r : t_rows) {
+            teams.push_back({
+                {"id", r[0].as<std::string>()},
+                {"name", r[1].as<std::string>()},
+                {"description", r[2].as<std::string>()}
+            });
+        }
+
+        return nlohmann::json{
+            {"users", std::move(users)},
+            {"teams", std::move(teams)}
+        };
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] get_assignable_principals failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
 }
 
 } // namespace cme::document

@@ -6,6 +6,7 @@ import { fetchDocumentByPath } from '../api/documents';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { TabBar } from '../components/workspace/TabBar';
 import { EditorPane } from '../components/workspace/EditorPane';
+import { DirectoryView } from '../components/workspace/DirectoryView';
 
 export const EditorPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -72,14 +73,26 @@ export const EditorPage: React.FC = () => {
     }
   }, [tabs, closeTab]);
 
-  // If a document ID is provided in the route (and not 'by-path'), ensure it's registered in open tabs
+  // If a document ID or directory ID is provided in the route (and not 'by-path'), ensure it's registered in open tabs
   useEffect(() => {
     if (id && id !== 'by-path') {
-      openTab({
-        id,
-        path: id,
-        title: 'Document',
-      });
+      if (id.startsWith('dir:')) {
+        const dirPath = id.replace(/^dir:/, '');
+        const segments = dirPath.split('/').filter(Boolean);
+        const title = segments.length > 0 ? segments[segments.length - 1] : 'Root';
+        openTab({
+          id,
+          path: dirPath,
+          title,
+          is_directory: true,
+        });
+      } else {
+        openTab({
+          id,
+          path: id,
+          title: 'Document',
+        });
+      }
     }
   }, [id, openTab]);
 
@@ -94,6 +107,21 @@ export const EditorPage: React.FC = () => {
     secondaryTabId && secondaryTabId !== primaryDocId && secondaryTabId !== 'by-path'
       ? secondaryTabId
       : validTabs.find((t) => t.id !== primaryDocId)?.id || primaryDocId;
+
+  const renderPane = (docId: string, label?: string, onClose?: () => void, isPrimary = true) => {
+    if (docId.startsWith('dir:')) {
+      const dirPath = docId.replace(/^dir:/, '');
+      return <DirectoryView path={dirPath} />;
+    }
+    return (
+      <EditorPane
+        documentId={docId}
+        paneLabel={label}
+        onClosePane={onClose}
+        isPrimary={isPrimary}
+      />
+    );
+  };
 
   // Splitter drag resize logic
   const handleMouseDown = () => {
@@ -167,7 +195,7 @@ export const EditorPage: React.FC = () => {
         ) : !isSplitActive ? (
           // Single-Pane View
           <div className="h-full overflow-hidden">
-            <EditorPane documentId={primaryDocId} isPrimary={true} />
+            {renderPane(primaryDocId, undefined, undefined, true)}
           </div>
         ) : splitMode === 'vertical' ? (
           // Dual-Pane Vertical Split (Side-by-Side)
@@ -181,11 +209,7 @@ export const EditorPage: React.FC = () => {
               className="h-full overflow-hidden border-r border-cme-border-base"
               data-testid="primary-pane-wrapper"
             >
-              <EditorPane
-                documentId={primaryDocId}
-                paneLabel="Left Pane"
-                isPrimary={true}
-              />
+              {renderPane(primaryDocId, 'Left Pane', undefined, true)}
             </div>
 
             {/* Splitter Resizer */}
@@ -201,12 +225,7 @@ export const EditorPage: React.FC = () => {
               className="flex-1 h-full overflow-hidden"
               data-testid="secondary-pane-wrapper"
             >
-              <EditorPane
-                documentId={secondaryDocId!}
-                paneLabel="Right Pane"
-                onClosePane={closeSplit}
-                isPrimary={false}
-              />
+              {renderPane(secondaryDocId!, 'Right Pane', closeSplit, false)}
             </div>
           </div>
         ) : (
@@ -221,11 +240,7 @@ export const EditorPage: React.FC = () => {
               className="w-full overflow-y-auto border-b border-cme-border-base"
               data-testid="primary-pane-wrapper"
             >
-              <EditorPane
-                documentId={primaryDocId}
-                paneLabel="Top Pane"
-                isPrimary={true}
-              />
+              {renderPane(primaryDocId, 'Top Pane', undefined, true)}
             </div>
 
             {/* Splitter Resizer */}
@@ -241,12 +256,7 @@ export const EditorPage: React.FC = () => {
               className="flex-1 w-full overflow-y-auto"
               data-testid="secondary-pane-wrapper"
             >
-              <EditorPane
-                documentId={secondaryDocId!}
-                paneLabel="Bottom Pane"
-                onClosePane={closeSplit}
-                isPrimary={false}
-              />
+              {renderPane(secondaryDocId!, 'Bottom Pane', closeSplit, false)}
             </div>
           </div>
         )}

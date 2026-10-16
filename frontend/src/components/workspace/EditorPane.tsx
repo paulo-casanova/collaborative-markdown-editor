@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Edit2,
   Hash,
+  Shield,
 } from 'lucide-react';
 import { fetchDocument, moveDocument } from '../../api/documents';
 import { fetchCurrentUser } from '../../api/auth';
@@ -25,6 +26,8 @@ import { DocumentOutline, findHeadingPosition, slugify } from '../navigation/Doc
 import { ReviewSidebar } from '../review/ReviewSidebar';
 import { reconcileAnchor } from '../../review/textAnchoring';
 import { updateCachedDocumentHeadings } from '../../utils/linkValidator';
+import { BundleAssetsSidebar } from './BundleAssetsSidebar';
+import { AccessControlModal } from './AccessControlModal';
 
 interface EditorPaneProps {
   documentId: string;
@@ -48,6 +51,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const [editorInstance, setEditorInstance] = useState<any>(null);
   const [liveContent, setLiveContent] = useState<string | undefined>(undefined);
   const [cursorLine, setCursorLine] = useState<number>(1);
+  const [showAssets, setShowAssets] = useState<boolean>(false);
+  const [showAcl, setShowAcl] = useState<boolean>(false);
 
   useEffect(() => {
     setLiveContent(undefined);
@@ -422,6 +427,32 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               )}
             </button>
 
+            {document.is_bundle && (
+              <button
+                onClick={() => setShowAssets(!showAssets)}
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                  showAssets
+                    ? 'bg-purple-600 text-white border-purple-600'
+                    : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+                }`}
+                title="Toggle Bundle Assets Media Drawer"
+                data-testid="editor-assets-toggle"
+              >
+                <Package className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Assets</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowAcl(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover text-xs font-medium transition-colors"
+              title="Manage Document Access Control & Permissions"
+              data-testid="editor-access-btn"
+            >
+              <Shield className="w-3.5 h-3.5 text-blue-500" />
+              <span className="hidden sm:inline">Access</span>
+            </button>
+
             <Link
               to={`/docs/${document.id}`}
               onClick={() => setViewMode('read')}
@@ -591,7 +622,57 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             }}
           />
         )}
+
+        {/* Bundle Assets Drawer */}
+        {showAssets && (
+          <BundleAssetsSidebar
+            documentId={document.id}
+            onClose={() => setShowAssets(false)}
+            onInsert={(markdown) => {
+              try {
+                let ed = editorInstance;
+                if (!ed || ed.isDestroyed) {
+                  const domEl =
+                    typeof window !== 'undefined'
+                      ? window.document.querySelector('.collaborative-editor-root .ProseMirror')
+                      : null;
+                  ed = (domEl as any)?.__tiptapEditor;
+                }
+                if (ed && !ed.isDestroyed) {
+                  if (typeof ed.commands?.insertContent === 'function') {
+                    ed.commands.insertContent(markdown);
+                    ed.commands.focus();
+                    return;
+                  }
+                  const view = ed.getView?.() || (ed as any).view;
+                  if (view) {
+                    const { from } = view.state.selection.main;
+                    view.dispatch({
+                      changes: { from, insert: markdown },
+                      selection: { anchor: from + markdown.length },
+                    });
+                    view.focus();
+                    return;
+                  }
+                }
+              } catch (e) {
+                console.warn('[EditorPane] onInsert asset warning:', e);
+              }
+            }}
+          />
+        )}
       </div>
+
+      {/* Access Control Modal */}
+      {showAcl && (
+        <AccessControlModal
+          isOpen={showAcl}
+          onClose={() => setShowAcl(false)}
+          targetType="DOCUMENT"
+          targetId={document.id}
+          title={document.title || document.path}
+        />
+      )}
     </div>
   );
 };

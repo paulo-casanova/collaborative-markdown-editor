@@ -440,6 +440,103 @@ int main() {
         assert(std::filesystem::is_directory(server_storage / "content" / "empty_folder" / "sub_folder"));
         assert(!std::filesystem::exists(server_storage / "content" / "empty_folder" / "sub_folder" / "README.md"));
         std::cout << "  - POST /api/v1/workspaces/directories created empty directory without README.md.\n";
+
+        // 2.15 GET /api/v1/workspaces/directory-details
+        auto dash_resp = http_curl("GET", base_url + "/api/v1/workspaces/directory-details?path=empty_folder", auth_header);
+        assert(dash_resp.status_code == 200);
+        auto dash_json = nlohmann::json::parse(dash_resp.body);
+        assert(dash_json.contains("items"));
+        assert(dash_json["items"].is_array());
+        assert(dash_json["items"].size() == 1);
+        assert(dash_json["items"][0]["name"] == "sub_folder");
+        assert(dash_json["items"][0]["is_directory"] == true);
+        std::cout << "  - GET /api/v1/workspaces/directory-details returned child items.\n";
+
+        // 2.16 GET /api/v1/workspaces/principals
+        auto princ_resp = http_curl("GET", base_url + "/api/v1/workspaces/principals", auth_header);
+        assert(princ_resp.status_code == 200);
+        auto princ_json = nlohmann::json::parse(princ_resp.body);
+        assert(princ_json.contains("users"));
+        assert(princ_json.contains("teams"));
+        assert(princ_json["users"].is_array());
+        std::cout << "  - GET /api/v1/workspaces/principals returned assignable principals.\n";
+
+        // 2.17 GET /api/v1/workspaces/permissions
+        auto perm_resp = http_curl("GET", base_url + "/api/v1/workspaces/permissions?target_type=DIRECTORY&directory_path=empty_folder", auth_header);
+        assert(perm_resp.status_code == 200);
+        auto perm_json = nlohmann::json::parse(perm_resp.body);
+        assert(perm_json["can_manage"] == true);
+        assert(perm_json.contains("owner"));
+        assert(perm_json.contains("explicit_grants"));
+        assert(perm_json.contains("inherited_grants"));
+        std::cout << "  - GET /api/v1/workspaces/permissions returned ACL structure and owner.\n";
+
+        // 2.18 POST and DELETE /api/v1/workspaces/permissions
+        std::string reader_user_id;
+        for (const auto& u : princ_json["users"]) {
+            if (u["username"] == "doc_reader") {
+                reader_user_id = u["id"].get<std::string>();
+                break;
+            }
+        }
+        if (!reader_user_id.empty()) {
+            nlohmann::json add_perm = {
+                {"target_type", "DIRECTORY"},
+                {"directory_path", "empty_folder"},
+                {"grantee_type", "USER"},
+                {"grantee_id", reader_user_id},
+                {"access_level", "READ"}
+            };
+            auto add_p_resp = http_curl("POST", base_url + "/api/v1/workspaces/permissions", auth_header, add_perm.dump());
+            assert(add_p_resp.status_code == 200);
+            auto updated_p_json = nlohmann::json::parse(add_p_resp.body);
+            assert(!updated_p_json["explicit_grants"].empty());
+            int64_t grant_id = updated_p_json["explicit_grants"][0]["id"].get<int64_t>();
+
+            auto del_p_resp = http_curl("DELETE", base_url + "/api/v1/workspaces/permissions/" + std::to_string(grant_id), auth_header);
+            assert(del_p_resp.status_code == 200);
+            std::cout << "  - POST & DELETE /api/v1/workspaces/permissions managed ACL grant successfully.\n";
+        }
+
+        // 2.19 Document Bundle & Asset Management
+        nlohmann::json bundle_create = {
+            {"path", "docs/manual.bundle"},
+            {"is_bundle", true},
+            {"content", "# Manual Bundle\nOverview text."}
+        };
+        auto bundle_resp = http_curl("POST", base_url + "/api/v1/documents", auth_header, bundle_create.dump());
+        assert(bundle_resp.status_code == 201);
+        auto bundle_json = nlohmann::json::parse(bundle_resp.body);
+        std::string bundle_doc_id = bundle_json["id"].get<std::string>();
+        assert(bundle_json["is_bundle"] == true);
+
+        // Upload asset into bundle
+        std::string asset_data = "FAKE_PNG_BINARY_BYTES";
+        std::vector<std::string> upload_headers = auth_header;
+        upload_headers.push_back("Content-Type: image/png");
+        auto up_asset_resp = http_curl("POST", base_url + "/api/v1/documents/" + bundle_doc_id + "/assets?filename=diagram.png", upload_headers, asset_data);
+        assert(up_asset_resp.status_code == 201);
+
+        // List bundle assets
+        auto list_asset_resp = http_curl("GET", base_url + "/api/v1/documents/" + bundle_doc_id + "/assets", auth_header);
+        assert(list_asset_resp.status_code == 200);
+        auto list_asset_json = nlohmann::json::parse(list_asset_resp.body);
+        assert(list_asset_json["is_bundle"] == true);
+        assert(list_asset_json["assets"].is_array());
+        assert(list_asset_json["assets"].size() == 1);
+        assert(list_asset_json["assets"][0]["name"] == "diagram.png");
+        assert(list_asset_json["assets"][0]["is_image"] == true);
+
+        // Delete bundle asset
+        auto del_asset_resp = http_curl("DELETE", base_url + "/api/v1/documents/" + bundle_doc_id + "/assets/diagram.png", auth_header);
+        assert(del_asset_resp.status_code == 200);
+
+        // Verify assets list is now empty
+        auto list_after_resp = http_curl("GET", base_url + "/api/v1/documents/" + bundle_doc_id + "/assets", auth_header);
+        assert(list_after_resp.status_code == 200);
+        auto list_after_json = nlohmann::json::parse(list_after_resp.body);
+        assert(list_after_json["assets"].empty());
+        std::cout << "  - Document bundle asset upload, listing, and deletion verified.\n";
     }
 
     // Stop server

@@ -17,6 +17,7 @@ import {
   Edit2,
   RefreshCw,
   MoreVertical,
+  Shield,
 } from 'lucide-react';
 import {
   fetchWorkspaceTree,
@@ -33,6 +34,7 @@ import { WorkspaceNode } from '../../types/document';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { useUIStore } from '../../stores/uiStore';
 import { updateKnownWorkspaceNodes } from '../../utils/linkValidator';
+import { AccessControlModal } from '../workspace/AccessControlModal';
 
 function isImagePath(path: string): boolean {
   const lower = (path || '').toLowerCase();
@@ -142,6 +144,28 @@ export const FileTree: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [uploadTargetDir, setUploadTargetDir] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [aclTarget, setAclTarget] = useState<{
+    targetType: 'DOCUMENT' | 'DIRECTORY';
+    targetId?: string;
+    directoryPath?: string;
+    title: string;
+  } | null>(null);
+
+  const openDirectoryTab = (dirPath: string) => {
+    const norm = (dirPath || '').replace(/^\/+/, '').replace(/\/+$/, '');
+    const tabId = `dir:${norm}`;
+    const segments = norm.split('/').filter(Boolean);
+    const title = segments.length > 0 ? segments[segments.length - 1] : 'Root';
+
+    openTab({
+      id: tabId,
+      path: norm,
+      title,
+      is_directory: true,
+    });
+    navigate(`/documents/${tabId}`);
+  };
 
   const { data: user } = useQuery({
     queryKey: ['auth-me'],
@@ -577,7 +601,6 @@ export const FileTree: React.FC = () => {
         <div
           style={{ paddingLeft }}
           data-testid={`filetree-folder-${node.name}`}
-          onClick={() => toggleExpand(node.path)}
           onContextMenu={(e) => handleContextMenu(e, node)}
           onDragOver={(e) => handleDragOver(e, node)}
           onDragLeave={(e) => handleDragLeave(e, node)}
@@ -589,17 +612,38 @@ export const FileTree: React.FC = () => {
           }`}
         >
           <div className="flex items-center gap-1.5 min-w-0 flex-1 truncate">
-            {isExpanded ? (
-              <ChevronDown className="w-3.5 h-3.5 text-cme-text-subtle flex-shrink-0" />
-            ) : (
-              <ChevronRight className="w-3.5 h-3.5 text-cme-text-subtle flex-shrink-0" />
-            )}
-            {isExpanded ? (
-              <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-            ) : (
-              <Folder className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-            )}
-            <span className="truncate">{node.name}</span>
+            {/* Split: chevron toggles expand/collapse only */}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleExpand(node.path);
+              }}
+              className="p-0.5 -ml-1 rounded hover:bg-cme-bg-subtle text-cme-text-subtle hover:text-cme-text-base transition-colors flex-shrink-0"
+              title={isExpanded ? 'Collapse folder' : 'Expand folder'}
+              data-testid={`filetree-chevron-${node.name}`}
+            >
+              {isExpanded ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronRight className="w-3.5 h-3.5" />
+              )}
+            </button>
+
+            {/* Clicking folder icon + name opens directory dashboard tab */}
+            <div
+              onClick={() => openDirectoryTab(node.path)}
+              className="flex items-center gap-1.5 min-w-0 flex-1 truncate hover:text-cme-primary"
+              title={`Open ${node.name} dashboard`}
+              data-testid={`filetree-folder-name-${node.name}`}
+            >
+              {isExpanded ? (
+                <FolderOpen className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+              ) : (
+                <Folder className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+              )}
+              <span className="truncate">{node.name}</span>
+            </div>
           </div>
 
           <button
@@ -798,6 +842,25 @@ export const FileTree: React.FC = () => {
               </button>
             </>
           )}
+
+          <div className="my-1 border-t border-cme-border-base" />
+          <button
+            data-testid="filetree-permissions-btn"
+            onClick={() => {
+              const isDir = contextMenu.node.is_directory;
+              setAclTarget({
+                targetType: isDir ? 'DIRECTORY' : 'DOCUMENT',
+                targetId: contextMenu.node.id,
+                directoryPath: isDir ? contextMenu.node.path : undefined,
+                title: contextMenu.node.title || contextMenu.node.name,
+              });
+              setContextMenu(null);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"
+          >
+            <Shield className="w-3.5 h-3.5 text-blue-500" />
+            <span>Permissions</span>
+          </button>
         </div>
       )}
 
@@ -855,6 +918,18 @@ export const FileTree: React.FC = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* Access Control Modal */}
+      {aclTarget && (
+        <AccessControlModal
+          isOpen={Boolean(aclTarget)}
+          onClose={() => setAclTarget(null)}
+          targetType={aclTarget.targetType}
+          targetId={aclTarget.targetId}
+          directoryPath={aclTarget.directoryPath}
+          title={aclTarget.title}
+        />
       )}
     </div>
   );

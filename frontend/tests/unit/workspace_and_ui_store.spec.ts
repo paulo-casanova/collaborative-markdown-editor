@@ -85,4 +85,40 @@ describe('WorkspaceStore & UIStore behavior', () => {
     useUIStore.getState().setSidebarWidth(800);
     expect(useUIStore.getState().sidebarWidth).toBe(600);
   });
+
+  it('supports opening and persisting directory tabs with is_directory flag', () => {
+    useWorkspaceStore.getState().openTab({
+      id: 'dir:engineering/specs',
+      path: 'engineering/specs',
+      title: 'specs',
+      is_directory: true,
+    });
+
+    const tabs = useWorkspaceStore.getState().tabs;
+    expect(tabs.length).toBe(1);
+    expect(tabs[0].id).toBe('dir:engineering/specs');
+    expect(tabs[0].path).toBe('engineering/specs');
+    expect(tabs[0].title).toBe('specs');
+    expect(tabs[0].is_directory).toBe(true);
+
+    // Re-opening the directory tab preserves is_directory
+    useWorkspaceStore.getState().openTab({
+      id: 'dir:engineering/specs',
+      path: 'engineering/specs',
+      title: 'specs',
+    });
+    expect(useWorkspaceStore.getState().tabs[0].is_directory).toBe(true);
+  });
+
+  it('supports bundle documents with is_bundle flag', () => {
+    useWorkspaceStore.getState().openTab({
+      id: 'bundle-uuid-1234',
+      path: 'docs/architecture.bundle',
+      title: 'Architecture',
+      is_bundle: true,
+    });
+
+    const tabs = useWorkspaceStore.getState().tabs;
+    expect(tabs[0].is_bundle).toBe(true);
+  });
 });

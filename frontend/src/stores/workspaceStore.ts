@@ -6,6 +6,7 @@ export interface WorkspaceTab {
   path: string; // relative file path
   title: string;
   is_bundle?: boolean;
+  is_directory?: boolean;
   isPinned?: boolean;
   isDirty?: boolean;
 }
@@ -69,6 +70,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
                 ? existing.title
                 : newTab.title,
             is_bundle: newTab.is_bundle ?? existing.is_bundle,
+            is_directory: newTab.is_directory ?? existing.is_directory,
           };
           set({
             tabs: updatedTabs,

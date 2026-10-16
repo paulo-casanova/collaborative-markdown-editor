@@ -89,10 +89,48 @@ public:
      * @param fs_path Relative storage path of the document (used for directory inheritance).
      * @return Result<AccessLevel> Highest resolved AccessLevel, or DatabaseError.
      */
+struct PrincipalInfo {
+    std::string id;
+    std::string name;
+    std::string display_name;
+    bool is_team{false};
+};
+
+struct GrantInfo {
+    int64_t id{0};
+    std::string grantee_type; // "USER" or "TEAM"
+    std::string grantee_id;
+    std::string grantee_name;
+    AccessLevel access_level{AccessLevel::None};
+    std::string inherited_from; // empty if explicit, else parent directory path
+};
+
+struct PermissionDetails {
+    std::string target_type; // "DOCUMENT" or "DIRECTORY"
+    std::string target_id;
+    std::string target_path;
+    PrincipalInfo owner;
+    std::vector<GrantInfo> explicit_grants;
+    std::vector<GrantInfo> inherited_grants;
+    AccessLevel effective_level{AccessLevel::None};
+    bool can_manage{false};
+};
+
     static Result<AccessLevel> check_permission(
         pqxx::connection& conn,
         const std::string& user_id,
         const std::string& document_id,
+        const std::string& fs_path
+    );
+
+    /**
+     * @brief Resolves detailed explicit and inherited grants, ownership, and provenance for a node.
+     */
+    static Result<PermissionDetails> get_permission_details(
+        pqxx::connection& conn,
+        const std::string& user_id,
+        const std::string& target_type,
+        const std::string& target_id,
         const std::string& fs_path
     );
 };

@@ -1,5 +1,5 @@
 import { apiRequest, TOKEN_STORAGE_KEY } from './client';
-import { DocumentRecord, WorkspaceNode, TrashNode, SearchResult } from '../types/document';
+import { DocumentRecord, WorkspaceNode, TrashNode, SearchResult, DocumentAsset, DirectoryDashboard } from '../types/document';
 
 export function isMarkdownPath(path: string, isBundle?: boolean): boolean {
   if (isBundle) return true;
@@ -273,4 +273,47 @@ export async function fetchDocumentTasks(id: string): Promise<ReviewTask[]> {
   }
 }
 
+export async function fetchDocumentAssets(docId: string): Promise<DocumentAsset[]> {
+  const resp = await apiRequest<{ doc_id: string; is_bundle: boolean; assets: DocumentAsset[] }>(
+    `/api/v1/documents/${docId}/assets`
+  );
+  return resp.assets || [];
+}
+
+export async function uploadDocumentAsset(
+  docId: string,
+  filename: string,
+  fileData: Blob | ArrayBuffer | Uint8Array | string
+): Promise<{ filename: string; path: string }> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const headers = new Headers({
+    'Content-Type': 'application/octet-stream',
+    'X-Asset-Filename': filename,
+  });
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const response = await fetch(`/api/v1/documents/${docId}/assets?filename=${encodeURIComponent(filename)}`, {
+    method: 'POST',
+    headers,
+    body: fileData as BodyInit,
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to upload asset: HTTP ${response.status}`);
+  }
+  return (await response.json()) as { filename: string; path: string };
+}
+
+export async function deleteDocumentAsset(docId: string, filename: string): Promise<void> {
+  await apiRequest(`/api/v1/documents/${docId}/assets/${encodeURIComponent(filename)}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function fetchDirectoryDashboard(path: string): Promise<DirectoryDashboard> {
+  return apiRequest<DirectoryDashboard>(`/api/v1/workspaces/directory-details?path=${encodeURIComponent(path || '')}`);
+}
+
 export * from './reviews';
+

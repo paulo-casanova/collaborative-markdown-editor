@@ -232,6 +232,81 @@ public:
         const auth::UserIdentity& user
     );
 
+    /**
+     * @brief Lists all asset files inside a bundle or associated with a document.
+     */
+    Result<nlohmann::json> list_document_assets(
+        const std::string& doc_id,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Deletes an asset associated with a document.
+     */
+    Result<void> delete_document_asset(
+        const std::string& doc_id,
+        const std::string& filename,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Retrieves detailed child metrics (type, owner, comments, suggestions, tasks) for a directory dashboard.
+     */
+    Result<nlohmann::json> get_directory_dashboard(
+        const std::string& relative_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Resolves explicit and inherited permissions, owner, and provenance for a node.
+     */
+    Result<nlohmann::json> get_node_permissions(
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& dir_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Grants or updates a permission on a document or directory.
+     */
+    Result<nlohmann::json> set_node_permission(
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& dir_path,
+        const std::string& grantee_type,
+        const std::string& grantee_id,
+        const std::string& access_level,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Removes an explicit permission grant.
+     */
+    Result<void> delete_node_permission(
+        int64_t permission_id,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Transfers ownership of a document or directory.
+     */
+    Result<void> transfer_node_ownership(
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& dir_path,
+        const std::string& new_owner_user_id,
+        const std::string& new_owner_team_id,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Lists available users and teams for permission assignment.
+     */
+    Result<nlohmann::json> get_assignable_principals(
+        const auth::UserIdentity& user
+    );
+
 private:
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::PosixStorageBackend> storage_;
