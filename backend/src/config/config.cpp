@@ -12,6 +12,7 @@ namespace {
 void apply_env_overrides(AppConfig& cfg) {
     if (const char* v = std::getenv("CME_SERVER_BIND")) cfg.server.bind = v;
     if (const char* v = std::getenv("CME_SERVER_PORT")) cfg.server.port = std::stoi(v);
+    if (const char* v = std::getenv("CME_SERVER_KEEPALIVE_TIMEOUT_SECONDS")) cfg.server.keepalive_timeout_seconds = std::stoi(v);
     if (const char* v = std::getenv("CME_SERVER_CORS_ALLOWED_ORIGINS")) {
         cfg.server.cors_allowed_origins.clear();
         std::string list_str(v);
@@ -64,6 +65,7 @@ void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
         if (s["reactor_threads"]) cfg.server.reactor_threads = s["reactor_threads"].as<int>();
         if (s["worker_threads"]) cfg.server.worker_threads = s["worker_threads"].as<int>();
         if (s["max_payload_bytes"]) cfg.server.max_payload_bytes = s["max_payload_bytes"].as<uint64_t>();
+        if (s["keepalive_timeout_seconds"]) cfg.server.keepalive_timeout_seconds = s["keepalive_timeout_seconds"].as<int>();
         if (s["cors_allowed_origins"]) {
             cfg.server.cors_allowed_origins.clear();
             if (s["cors_allowed_origins"].IsSequence()) {
@@ -238,6 +240,8 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
             cfg.logging.level = argv[++i];
         } else if (arg == "--verify-integrity") {
             cfg.verify_integrity_only = true;
+        } else if (arg == "--keepalive-timeout" && i + 1 < argc) {
+            cfg.server.keepalive_timeout_seconds = std::stoi(argv[++i]);
         } else if (arg == "--cors-allowed-origins" && i + 1 < argc) {
             cfg.server.cors_allowed_origins.clear();
             std::string list_str(argv[++i]);

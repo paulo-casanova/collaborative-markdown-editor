@@ -104,6 +104,7 @@ int main() {
     cme::config::AppConfig srv_cfg;
     srv_cfg.server.bind = "127.0.0.1";
     srv_cfg.server.port = 18086;
+    srv_cfg.server.keepalive_timeout_seconds = 30;
     srv_cfg.storage.root_path = test_storage.string();
     srv_cfg.database.url = db_url;
     srv_cfg.authz.admin_provider = "file";

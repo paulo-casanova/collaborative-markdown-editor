@@ -21,6 +21,7 @@ struct ServerConfig {
     int reactor_threads{2};
     int worker_threads{8};
     uint64_t max_payload_bytes{33554432}; // 32 MB
+    int keepalive_timeout_seconds{120};   // WebSocket idle & keepalive ping timeout (0 or 8-960 seconds)
     std::vector<std::string> cors_allowed_origins{}; // Empty by default = CORS disabled
 };
 

@@ -3105,10 +3105,21 @@ Result<void> Server::start() {
     // =========================================================================
     // Real-Time Collaborative CRDT & WebSockets Engine (Step 3.2)
     // =========================================================================
+    unsigned short ws_idle_timeout = 120;
+    if (config_.server.keepalive_timeout_seconds == 0) {
+        ws_idle_timeout = 0;
+    } else if (config_.server.keepalive_timeout_seconds < 8) {
+        ws_idle_timeout = 8;
+    } else if (config_.server.keepalive_timeout_seconds > 960) {
+        ws_idle_timeout = 960;
+    } else {
+        ws_idle_timeout = static_cast<unsigned short>(config_.server.keepalive_timeout_seconds);
+    }
+
     app.ws<collab::CollabSocketData>("/ws/collab/:document_id", {
         .compression = uWS::DISABLED,
         .maxPayloadLength = 16 * 1024 * 1024,
-        .idleTimeout = 120,
+        .idleTimeout = ws_idle_timeout,
         .maxBackpressure = 1 * 1024 * 1024,
         .closeOnBackpressureLimit = false,
         .resetIdleTimeoutOnSend = false,
