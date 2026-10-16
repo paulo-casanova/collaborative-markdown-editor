@@ -1,10 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { AlignLeft, Hash } from 'lucide-react';
+import {
+  matchesHeadingTarget,
+  stripHeadingNumberPrefix,
+} from '../../utils/linkValidator';
+import { useUIStore } from '../../stores/uiStore';
 
 export interface OutlineItem {
   id: string;
   text: string;
   level: number;
+  lineNumber?: number;
 }
 
 export function slugify(text: string): string {
@@ -16,23 +22,60 @@ export function slugify(text: string): string {
   return slug || 'heading';
 }
 
-export function extractHeadingsFromMarkdown(markdown: string): OutlineItem[] {
+export function extractHeadingsFromMarkdown(
+  markdown: string,
+  numberHeaders: boolean = false
+): OutlineItem[] {
   if (!markdown) return [];
   const lines = markdown.split('\n');
   const headings: OutlineItem[] = [];
   const slugCounts: Record<string, number> = {};
+  const counters = [0, 0, 0, 0, 0, 0];
+  let inCodeFence = false;
 
-  for (const line of lines) {
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
+    if (/^\s*```/.test(line)) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (inCodeFence) continue;
+
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       const level = match[1].length;
       const rawText = match[2].trim().replace(/[*_`]/g, '');
-      const baseSlug = slugify(rawText);
+      const strippedText = stripHeadingNumberPrefix(rawText) || rawText;
+      const baseSlug = slugify(strippedText);
       const count = slugCounts[baseSlug] || 0;
       slugCounts[baseSlug] = count + 1;
       const id = count === 0 ? baseSlug : `${baseSlug}-${count}`;
 
-      headings.push({ id, text: rawText, level });
+      counters[level - 1] += 1;
+      for (let k = level; k < 6; k++) {
+        counters[k] = 0;
+      }
+      let startIdx = 0;
+      while (startIdx < level - 1 && counters[startIdx] === 0) {
+        startIdx++;
+      }
+      const numParts: number[] = [];
+      for (let k = startIdx; k < level; k++) {
+        numParts.push(counters[k] || 1);
+      }
+      const numberPrefix =
+        numParts.length === 1 ? `${numParts[0]}.` : `${numParts.join('.')}.`;
+
+      const displayText = numberHeaders
+        ? `${numberPrefix} ${strippedText}`
+        : rawText;
+
+      headings.push({
+        id,
+        text: displayText,
+        level,
+        lineNumber: idx + 1,
+      });
     }
   }
 
@@ -54,20 +97,20 @@ export function findHeadingPosition(
     const match = line.text.match(/^(#{1,6})\s+(.*)$/);
     if (match) {
       const rawText = match[2].trim();
-      const strippedText = rawText.replace(/[*_`]/g, '').trim().toLowerCase();
-      const baseSlug = slugify(strippedText);
+      const strippedText = stripHeadingNumberPrefix(rawText.replace(/[*_`]/g, '').trim()).toLowerCase();
+      const baseSlug = slugify(strippedText || rawText);
       const count = slugCounts[baseSlug] || 0;
       slugCounts[baseSlug] = count + 1;
       const fullSlug = count === 0 ? baseSlug : `${baseSlug}-${count}`;
 
       if (
+        matchesHeadingTarget(rawText, rawTarget) ||
         strippedText === cleanTarget ||
         rawText.toLowerCase() === cleanTarget ||
         baseSlug === targetSlug ||
         fullSlug === targetSlug ||
         fullSlug === cleanTarget ||
-        baseSlug === cleanTarget ||
-        slugify(rawText) === targetSlug
+        baseSlug === cleanTarget
       ) {
         return { from: line.from, to: line.to };
       }
@@ -81,6 +124,8 @@ interface DocumentOutlineProps {
   markdown?: string;
   className?: string;
   onSelectHeading?: (id: string) => void;
+  activeHeadingId?: string;
+  cursorLine?: number;
 }
 
 export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
@@ -88,7 +133,10 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
   markdown,
   className = '',
   onSelectHeading,
+  activeHeadingId,
+  cursorLine,
 }) => {
+  const { numberHeaders } = useUIStore();
   const [headings, setHeadings] = useState<OutlineItem[]>([]);
   const [activeId, setActiveId] = useState<string>('');
 
@@ -100,7 +148,7 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
     }
 
     if (markdown !== undefined) {
-      const parsed = extractHeadingsFromMarkdown(markdown);
+      const parsed = extractHeadingsFromMarkdown(markdown, numberHeaders);
       setHeadings(parsed);
       return;
     }
@@ -122,13 +170,32 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
       });
       setHeadings(domHeadings);
     }
-  }, [propHeadings, markdown]);
+  }, [propHeadings, markdown, numberHeaders]);
 
   const isClickScrolling = React.useRef(false);
 
-  // Scroll-Spy: detect which heading is currently in viewport
+  // Update activeId when explicit activeHeadingId or cursorLine changes in Editor mode
   useEffect(() => {
-    if (headings.length === 0) return;
+    if (activeHeadingId) {
+      setActiveId(activeHeadingId);
+      return;
+    }
+    if (cursorLine !== undefined && headings.length > 0) {
+      let current = headings[0].id;
+      for (const item of headings) {
+        if (item.lineNumber !== undefined && item.lineNumber <= cursorLine) {
+          current = item.id;
+        } else if (item.lineNumber !== undefined && item.lineNumber > cursorLine) {
+          break;
+        }
+      }
+      setActiveId(current);
+    }
+  }, [activeHeadingId, cursorLine, headings]);
+
+  // Scroll-Spy: detect which heading is currently in viewport (when not driven by editor cursorLine)
+  useEffect(() => {
+    if (headings.length === 0 || cursorLine !== undefined) return;
 
     const handleScroll = () => {
       if (isClickScrolling.current) return;
@@ -164,7 +231,7 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
         mainEl.removeEventListener('scroll', handleScroll);
       }
     };
-  }, [headings]);
+  }, [headings, cursorLine]);
 
   const handleHeadingClick = (e: React.MouseEvent, id: string) => {
     e.preventDefault();

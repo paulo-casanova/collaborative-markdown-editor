@@ -29,10 +29,27 @@ Duplicate section heading.
 
     const headings = extractHeadingsFromMarkdown(markdown);
     expect(headings).toHaveLength(4);
-    expect(headings[0]).toEqual({ id: 'main-title', text: 'Main Title', level: 1 });
-    expect(headings[1]).toEqual({ id: 'section-one', text: 'Section One', level: 2 });
-    expect(headings[2]).toEqual({ id: 'sub-section', text: 'Sub Section', level: 3 });
-    expect(headings[3]).toEqual({ id: 'section-one-1', text: 'Section One', level: 2 });
+    expect(headings[0]).toEqual({ id: 'main-title', text: 'Main Title', level: 1, lineNumber: 1 });
+    expect(headings[1]).toEqual({ id: 'section-one', text: 'Section One', level: 2, lineNumber: 4 });
+    expect(headings[2]).toEqual({ id: 'sub-section', text: 'Sub Section', level: 3, lineNumber: 7 });
+    expect(headings[3]).toEqual({ id: 'section-one-1', text: 'Section One', level: 2, lineNumber: 10 });
+  });
+
+  it('correctly numbers headers and allows referencing them without numbers', () => {
+    const markdown = `# Introduction
+## Getting Started
+### Setup Details
+## Conclusion`;
+
+    const numbered = extractHeadingsFromMarkdown(markdown, true);
+    expect(numbered[0].text).toBe('1. Introduction');
+    expect(numbered[0].id).toBe('introduction');
+    expect(numbered[1].text).toBe('1.1. Getting Started');
+    expect(numbered[1].id).toBe('getting-started');
+    expect(numbered[2].text).toBe('1.1.1. Setup Details');
+    expect(numbered[2].id).toBe('setup-details');
+    expect(numbered[3].text).toBe('1.2. Conclusion');
+    expect(numbered[3].id).toBe('conclusion');
   });
 
   it('findHeadingPosition locates headings by exact text, leading hash, or slug', () => {

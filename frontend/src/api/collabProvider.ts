@@ -237,10 +237,24 @@ export class CmeCollabProvider {
                 };
               }
               // Update peer presence
+              const isNewPeer = !this.awareness.states.has(clientId);
+              const prevClock = this.awareness.meta.get(clientId)?.clock ?? 0;
               this.awareness.states.set(clientId, state);
-              this.awareness.meta.set(clientId, { clock: 0, lastUpdated: Math.floor(Date.now() / 1000) });
-              this.awareness.emit('change', [{ added: [], updated: [clientId], removed: [] }, this]);
-              this.awareness.emit('update', [{ added: [], updated: [clientId], removed: [] }, this]);
+              this.awareness.meta.set(clientId, { clock: prevClock + 1, lastUpdated: Date.now() });
+              this.awareness.emit('change', [
+                { added: isNewPeer ? [clientId] : [], updated: isNewPeer ? [] : [clientId], removed: [] },
+                this,
+              ]);
+              this.awareness.emit('update', [
+                { added: isNewPeer ? [clientId] : [], updated: isNewPeer ? [] : [clientId], removed: [] },
+                this,
+              ]);
+              if (isNewPeer) {
+                const localState = this.awareness.getLocalState();
+                if (localState) {
+                  this.broadcastAwareness(localState);
+                }
+              }
             }
           }
         } catch {
@@ -311,10 +325,21 @@ export class CmeCollabProvider {
     }
   };
 
-  private handleLocalAwarenessChange = (_changes: any, origin: any) => {
-    if (origin !== this) {
-      const state = this.awareness.getLocalState();
-      this.broadcastAwareness(state);
+  private handleLocalAwarenessChange = (
+    changes: { added: number[]; updated: number[]; removed: number[] },
+    origin: any
+  ) => {
+    if (origin !== this && origin !== 'timeout') {
+      const localClientId = this.ydoc.clientID;
+      if (
+        !changes ||
+        changes.added.includes(localClientId) ||
+        changes.updated.includes(localClientId) ||
+        changes.removed.includes(localClientId)
+      ) {
+        const state = this.awareness.getLocalState();
+        this.broadcastAwareness(state);
+      }
     }
   };
 
@@ -351,8 +376,19 @@ export class CmeCollabProvider {
     this.pingInterval = setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.send(new Uint8Array([0x03]).buffer);
+        // Keep active peer awareness states fresh and broadcast local awareness so idle cursors never expire
+        const now = Date.now();
+        this.awareness.meta.forEach((meta, clientId) => {
+          if (this.awareness.states.has(clientId)) {
+            this.awareness.meta.set(clientId, { clock: meta.clock, lastUpdated: now });
+          }
+        });
+        const localState = this.awareness.getLocalState();
+        if (localState) {
+          this.broadcastAwareness(localState);
+        }
       }
-    }, 30000);
+    }, 15000);
   }
 
   private stopPingHeartbeat() {

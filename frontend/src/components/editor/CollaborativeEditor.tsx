@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { EditorView, ViewPlugin, keymap } from '@codemirror/view';
-import { EditorState, Extension } from '@codemirror/state';
+import { Annotation, EditorState, Extension, Text } from '@codemirror/state';
 import { markdown, insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
 import {
   defaultKeymap,
@@ -12,7 +12,10 @@ import {
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import * as Y from 'yjs';
 
-import { createLivePreviewPlugin } from './codemirror/livePreviewPlugin';
+import {
+  createLivePreviewPlugin,
+  forceLivePreviewRebuild,
+} from './codemirror/livePreviewPlugin';
 import { cmeEditorTheme } from './codemirror/theme';
 import { CodeMirrorEditorAdapter } from './codemirror/editorAdapter';
 import { EditorToolbar } from './EditorToolbar';
@@ -22,6 +25,140 @@ import { NewSuggestionModal } from '../review/NewSuggestionModal';
 import { NewCommentModal } from '../review/NewCommentModal';
 import { normalizeContentToMarkdown } from '../../utils/htmlToMarkdown';
 import { useThemeStore } from '../../stores/themeStore';
+import { useUIStore } from '../../stores/uiStore';
+import { subscribeLinkValidation } from '../../utils/linkValidator';
+
+const autoRenumberAnnotation = Annotation.define<boolean>();
+
+/**
+ * Computes minimal changes to keep contiguous ordered lists sequentially numbered (1., 2., 3., ...)
+ * when items are added, removed, or reordered.
+ */
+export function computeOrderedListRenumberingChanges(
+  doc: Text
+): Array<{ from: number; to: number; insert: string }> {
+  const changes: Array<{ from: number; to: number; insert: string }> = [];
+  const counters = new Map<number, number>();
+  let inCodeFence = false;
+
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    const text = line.text;
+
+    if (/^\s*```/.test(text)) {
+      inCodeFence = !inCodeFence;
+      counters.clear();
+      continue;
+    }
+    if (inCodeFence) continue;
+
+    const olMatch = /^(\s*)(\d+)\.(\s+.*)$/.exec(text);
+    if (olMatch) {
+      const indent = olMatch[1].length;
+      const numStr = olMatch[2];
+      // Clear deeper indentation counters
+      for (const k of Array.from(counters.keys())) {
+        if (k > indent) {
+          counters.delete(k);
+        }
+      }
+      const expected = (counters.get(indent) || 0) + 1;
+      counters.set(indent, expected);
+
+      const expectedStr = String(expected);
+      if (numStr !== expectedStr) {
+        changes.push({
+          from: line.from + indent,
+          to: line.from + indent + numStr.length,
+          insert: expectedStr,
+        });
+      }
+      continue;
+    }
+
+    // Check if nested unordered list or indented continuation line
+    const ulOrContMatch = /^(\s+)(?:[-*+]\s+|\S)/.exec(text);
+    if (ulOrContMatch && counters.size > 0) {
+      const indent = ulOrContMatch[1].length;
+      for (const k of Array.from(counters.keys())) {
+        if (k >= indent) {
+          counters.delete(k);
+        }
+      }
+      continue;
+    }
+
+    // Any other line breaks the ordered list sequence
+    counters.clear();
+  }
+
+  return changes;
+}
+
+/**
+ * Computes minimal changes to number or renumber markdown headings (1., 1.1., 2., ...)
+ * or strip numbers when automatic header numbering is disabled.
+ */
+export function computeHeaderNumberingChanges(
+  doc: Text,
+  enableNumbering: boolean
+): Array<{ from: number; to: number; insert: string }> {
+  const changes: Array<{ from: number; to: number; insert: string }> = [];
+  const counters = [0, 0, 0, 0, 0, 0];
+  let inCodeFence = false;
+
+  for (let i = 1; i <= doc.lines; i++) {
+    const line = doc.line(i);
+    const text = line.text;
+
+    if (/^\s*```/.test(text)) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (inCodeFence) continue;
+
+    const hMatch = /^(#{1,6}\s+)(\d+(?:\.\d+)*\.?\s+)?(.*)$/.exec(text);
+    if (hMatch) {
+      const hashesAndSpace = hMatch[1];
+      const existingNumPrefix = hMatch[2] || '';
+      const restTitle = hMatch[3];
+      if (!restTitle.trim()) continue;
+
+      const level = hashesAndSpace.trim().length;
+      counters[level - 1] += 1;
+      for (let k = level; k < 6; k++) {
+        counters[k] = 0;
+      }
+
+      let startIdx = 0;
+      while (startIdx < level - 1 && counters[startIdx] === 0) {
+        startIdx++;
+      }
+      const numParts: number[] = [];
+      for (let k = startIdx; k < level; k++) {
+        numParts.push(counters[k] || 1);
+      }
+      const expectedPrefix =
+        numParts.length === 1 ? `${numParts[0]}. ` : `${numParts.join('.')}. `;
+
+      if (enableNumbering) {
+        if (existingNumPrefix !== expectedPrefix) {
+          const from = line.from + hashesAndSpace.length;
+          const to = from + existingNumPrefix.length;
+          changes.push({ from, to, insert: expectedPrefix });
+        }
+      } else {
+        if (existingNumPrefix.length > 0) {
+          const from = line.from + hashesAndSpace.length;
+          const to = from + existingNumPrefix.length;
+          changes.push({ from, to, insert: '' });
+        }
+      }
+    }
+  }
+
+  return changes;
+}
 
 interface CollaborativeEditorProps {
   initialContent?: string;
@@ -31,6 +168,7 @@ interface CollaborativeEditorProps {
     color: string;
   };
   onChange?: (content: string) => void;
+  onCursorLineChange?: (line: number) => void;
   editable?: boolean;
   onEditorReady?: (editor: any) => void;
   autoFocus?: boolean | 'start' | 'end' | 'all';
@@ -77,16 +215,21 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   provider,
   user,
   onChange,
+  onCursorLineChange,
   editable = true,
   onEditorReady,
   autoFocus = false,
 }) => {
   const { resolvedTheme } = useThemeStore();
+  const { numberHeaders } = useUIStore();
   const isDark = resolvedTheme === 'dark';
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<CodeMirrorEditorAdapter | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onCursorLineChangeRef = useRef(onCursorLineChange);
+  onCursorLineChangeRef.current = onCursorLineChange;
+  const prevNumberHeadersRef = useRef<boolean>(numberHeaders);
   const [editor, setEditor] = useState<CodeMirrorEditorAdapter | null>(null);
 
   const rawInitialText = useMemo(() => {
@@ -103,6 +246,39 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       provider.awareness.setLocalStateField('user', profile);
     }
   }, [user, provider]);
+
+  // Subscribe to link validation updates (e.g. when workspace tree finishes loading)
+  useEffect(() => {
+    return subscribeLinkValidation(() => {
+      const view = adapterRef.current?.getView?.();
+      if (view) {
+        view.dispatch({ effects: forceLivePreviewRebuild.of(true) });
+      }
+    });
+  }, []);
+
+  // When numberHeaders is toggled, update headings and refresh live preview
+  useEffect(() => {
+    const view = adapterRef.current?.getView?.();
+    if (!view) return;
+
+    const wasEnabled = prevNumberHeadersRef.current;
+    prevNumberHeadersRef.current = numberHeaders;
+
+    if (editable && (numberHeaders || wasEnabled !== numberHeaders)) {
+      const changes = computeHeaderNumberingChanges(view.state.doc, numberHeaders);
+      if (changes.length > 0) {
+        view.dispatch({
+          changes,
+          annotations: autoRenumberAnnotation.of(true),
+          effects: forceLivePreviewRebuild.of(true),
+        });
+        return;
+      }
+    }
+
+    view.dispatch({ effects: forceLivePreviewRebuild.of(true) });
+  }, [numberHeaders, editable]);
 
   // Mount CodeMirror 6 EditorView
   useEffect(() => {
@@ -168,11 +344,56 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         role: 'textbox',
       }),
       EditorView.updateListener.of((update) => {
-        if (update.selectionSet) {
+        if (update.selectionSet || update.docChanged) {
           adapterRef.current?.notifySelectionUpdate();
+          if (onCursorLineChangeRef.current) {
+            const headPos = update.state.selection.main.head;
+            const lineNum = update.state.doc.lineAt(headPos).number;
+            onCursorLineChangeRef.current(lineNum);
+          }
         }
-        if (update.docChanged && onChangeRef.current) {
-          onChangeRef.current(update.state.doc.toString());
+        if (update.docChanged) {
+          if (onChangeRef.current) {
+            onChangeRef.current(update.state.doc.toString());
+          }
+
+          // Automatically renumber ordered lists (and headers when enabled) on local edits
+          const isAutoRenumber = update.transactions.some((tr) =>
+            Boolean(tr.annotation(autoRenumberAnnotation))
+          );
+          const isLocalEdit = update.transactions.some((tr) =>
+            tr.isUserEvent('input') ||
+            tr.isUserEvent('delete') ||
+            tr.isUserEvent('move') ||
+            !tr.annotation(autoRenumberAnnotation)
+          );
+
+          if (!isAutoRenumber && isLocalEdit && editable) {
+            const listChanges = computeOrderedListRenumberingChanges(update.state.doc);
+            const headerChanges = useUIStore.getState().numberHeaders
+              ? computeHeaderNumberingChanges(update.state.doc, true)
+              : [];
+            const combined = [...listChanges, ...headerChanges].sort((a, b) => a.from - b.from);
+            if (combined.length > 0) {
+              queueMicrotask(() => {
+                if (!adapterRef.current) return;
+                const currentView = adapterRef.current.getView();
+                const freshList = computeOrderedListRenumberingChanges(currentView.state.doc);
+                const freshHeaders = useUIStore.getState().numberHeaders
+                  ? computeHeaderNumberingChanges(currentView.state.doc, true)
+                  : [];
+                const freshCombined = [...freshList, ...freshHeaders].sort(
+                  (a, b) => a.from - b.from
+                );
+                if (freshCombined.length > 0) {
+                  currentView.dispatch({
+                    changes: freshCombined,
+                    annotations: autoRenumberAnnotation.of(true),
+                  });
+                }
+              });
+            }
+          }
         }
         if (provider && (update.selectionSet || update.docChanged)) {
           const ytext = provider.ydoc.getText('content');
@@ -221,6 +442,11 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       const pos = autoFocus === 'start' ? 0 : view.state.doc.length;
       view.dispatch({ selection: { anchor: pos } });
       view.focus();
+    }
+
+    if (onCursorLineChangeRef.current) {
+      const headPos = view.state.selection.main.head;
+      onCursorLineChangeRef.current(view.state.doc.lineAt(headPos).number);
     }
 
     setEditor(adapter);

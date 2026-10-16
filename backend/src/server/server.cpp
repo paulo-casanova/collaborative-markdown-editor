@@ -692,6 +692,124 @@ Result<void> Server::start() {
         });
     });
 
+    // POST /api/v1/workspaces/files?path=<relative_path>
+    app.post("/api/v1/workspaces/files", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        std::string path_query = url_decode(req->getQuery("path"));
+        std::string path_header = std::string(req->getHeader("x-file-path"));
+        std::string target_path = !path_query.empty() ? path_query : path_header;
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, target_path, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            if (target_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "File path is required via ?path= query or X-File-Path header"}});
+                return;
+            }
+
+            auto upload_res = document_service_->upload_workspace_file(target_path, *body, *auth_res.value());
+            if (!upload_res.has_value()) {
+                if (upload_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (upload_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid path specification"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to upload workspace file"}});
+                }
+                return;
+            }
+
+            send_json(res, "201 Created", upload_res.value().to_json(false));
+        });
+    });
+
+    // GET /api/v1/workspaces/files?path=<relative_path>
+    app.get("/api/v1/workspaces/files", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string token_query = url_decode(req->getQuery("token"));
+        if (auth_hdr.empty() && !token_query.empty()) {
+            auth_hdr = "Bearer " + token_query;
+        }
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string path_param = url_decode(req->getQuery("path"));
+        if (path_param.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Query parameter 'path' is required"}});
+            return;
+        }
+
+        auto file_res = document_service_->read_workspace_file(path_param, *auth_res.value());
+        if (!file_res.has_value()) {
+            if (file_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "File not found"}});
+            } else if (file_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to read file"}});
+            }
+            return;
+        }
+
+        std::string lower_p = path_param;
+        for (auto& c : lower_p) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        std::string content_type = "application/octet-stream";
+        if (lower_p.ends_with(".png")) content_type = "image/png";
+        else if (lower_p.ends_with(".jpg") || lower_p.ends_with(".jpeg")) content_type = "image/jpeg";
+        else if (lower_p.ends_with(".gif")) content_type = "image/gif";
+        else if (lower_p.ends_with(".svg")) content_type = "image/svg+xml";
+        else if (lower_p.ends_with(".webp")) content_type = "image/webp";
+        else if (lower_p.ends_with(".ico")) content_type = "image/x-icon";
+        else if (lower_p.ends_with(".bmp")) content_type = "image/bmp";
+        else if (lower_p.ends_with(".pdf")) content_type = "application/pdf";
+        else if (lower_p.ends_with(".txt") || lower_p.ends_with(".log") || lower_p.ends_with(".md")) content_type = "text/plain; charset=utf-8";
+        else if (lower_p.ends_with(".csv")) content_type = "text/csv; charset=utf-8";
+        else if (lower_p.ends_with(".json")) content_type = "application/json; charset=utf-8";
+        else if (lower_p.ends_with(".html") || lower_p.ends_with(".htm")) content_type = "text/html; charset=utf-8";
+        else if (lower_p.ends_with(".xml")) content_type = "application/xml; charset=utf-8";
+        else if (lower_p.ends_with(".mp4")) content_type = "video/mp4";
+        else if (lower_p.ends_with(".webm")) content_type = "video/webm";
+        else if (lower_p.ends_with(".mp3")) content_type = "audio/mpeg";
+        else if (lower_p.ends_with(".wav")) content_type = "audio/wav";
+
+        res->writeStatus("200 OK");
+        write_cors_headers(res);
+        res->writeHeader("Content-Type", content_type);
+        res->writeHeader("Content-Disposition", "inline");
+        res->end(file_res.value());
+    });
+
     // GET /api/v1/documents/by-path/html
     app.get("/api/v1/documents/by-path/html", [this](auto *res, auto *req) {
         std::string auth_hdr = std::string(req->getHeader("authorization"));

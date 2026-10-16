@@ -13,6 +13,7 @@ import {
   Sparkles,
   Copy,
   Check,
+  Hash,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -22,11 +23,19 @@ import {
   fetchDocumentComments,
   fetchDocumentSuggestions,
   fetchDocumentTasks,
+  getWorkspaceFileUrl,
+  isMarkdownPath,
 } from '../api/documents';
 import { useUIStore } from '../stores/uiStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { DocumentOutline, extractHeadingsFromMarkdown, slugify } from '../components/navigation/DocumentOutline';
 import { renderMermaidSvg } from '../components/editor/utils/mermaidRenderer';
+import {
+  validateLinkTarget,
+  isExternalUrl,
+  stripHeadingNumberPrefix,
+  subscribeLinkValidation,
+} from '../utils/linkValidator';
 
 type FontMode = 'sans' | 'serif' | 'mono';
 type WidthMode = 'standard' | 'full';
@@ -39,12 +48,19 @@ export const ReaderPage: React.FC = () => {
   const pathParam = searchParams.get('path');
   const rawTarget = pathParam || wildcard || (idParam !== 'by-path' ? idParam : '') || '';
 
-  const { setBreadcrumbs, setViewMode } = useUIStore();
+  const { setBreadcrumbs, setViewMode, numberHeaders, toggleNumberHeaders } = useUIStore();
   const { openTab } = useWorkspaceStore();
   const [showReviews, setShowReviews] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
   const [widthMode, setWidthMode] = useState<WidthMode>('standard');
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
+  const [linkValVer, setLinkValVer] = useState(0);
+
+  useEffect(() => {
+    return subscribeLinkValidation(() => {
+      setLinkValVer((v) => v + 1);
+    });
+  }, []);
 
   // Document query supporting both UUID and relative path
   const {
@@ -122,7 +138,6 @@ export const ReaderPage: React.FC = () => {
   }, [document, openTab, setBreadcrumbs]);
 
   // Auto-scroll to heading anchor if present in URL on load
-  // Auto-scroll to heading anchor if present in URL on load
   useEffect(() => {
     if (!document?.content || isLoading) return;
     const hash = window.location.hash.replace(/^#/, '');
@@ -154,8 +169,8 @@ export const ReaderPage: React.FC = () => {
   // Headings extracted for Table of Contents
   const headings = useMemo(() => {
     if (!document?.content) return [];
-    return extractHeadingsFromMarkdown(document.content);
-  }, [document?.content]);
+    return extractHeadingsFromMarkdown(document.content, numberHeaders);
+  }, [document?.content, numberHeaders]);
 
   // Render markdown content into rich blocks with IDs on headings
   const renderedContent = useMemo(() => {
@@ -168,9 +183,12 @@ export const ReaderPage: React.FC = () => {
         setTimeout(() => setCopiedCodeId(null), 2000);
       },
       copiedCodeId,
-      document.id || document.path || ''
+      document.id || document.path || '',
+      document.content || '',
+      document.path || '',
+      numberHeaders
     );
-  }, [document?.id, document?.path, document?.content, copiedCodeId]);
+  }, [document?.id, document?.path, document?.content, copiedCodeId, numberHeaders, linkValVer]);
 
   if (isLoading) {
     return (
@@ -232,6 +250,21 @@ export const ReaderPage: React.FC = () => {
 
           {/* Right Toolbar Controls */}
           <div className="flex items-center gap-2">
+            {/* Number Headers Toggle */}
+            <button
+              onClick={() => toggleNumberHeaders()}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                numberHeaders
+                  ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
+                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+              }`}
+              data-testid="reader-header-numbering-toggle"
+              title="Automatically number headings"
+            >
+              <Hash className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Number Headers</span>
+            </button>
+
             {/* Font Style Switcher */}
             <div className="hidden md:flex items-center border border-cme-border-base rounded-lg p-0.5 bg-cme-bg-surface text-xs">
               <button
@@ -480,12 +513,16 @@ export function renderMarkdown(
   content: string,
   onCopyCode: (code: string, id: string) => void,
   copiedCodeId: string | null,
-  currentDocTarget: string = ''
+  currentDocTarget: string = '',
+  currentDocMarkdown: string = '',
+  currentDocPath: string = '',
+  numberHeaders: boolean = false
 ): React.ReactNode[] {
   const lines = content.split('\n');
   const elements: React.ReactNode[] = [];
   let i = 0;
   const slugCounts: Record<string, number> = {};
+  const counters: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
 
   while (i < lines.length) {
     const line = lines[i];
@@ -611,21 +648,54 @@ export function renderMarkdown(
     if (headingMatch) {
       const level = headingMatch[1].length;
       const rawText = headingMatch[2].trim();
-      const baseSlug = slugify(rawText.replace(/[*_`]/g, ''));
+      const strippedText = stripHeadingNumberPrefix(rawText) || rawText;
+      const baseSlug = slugify(strippedText.replace(/[*_`]/g, ''));
       const count = slugCounts[baseSlug] || 0;
       slugCounts[baseSlug] = count + 1;
       const id = count === 0 ? baseSlug : `${baseSlug}-${count}`;
 
-      const headingContent = renderInlineFormatted(rawText, currentDocTarget);
+      counters[level - 1] += 1;
+      for (let k = level; k < 6; k++) {
+        counters[k] = 0;
+      }
+      let startIdx = 0;
+      while (startIdx < level - 1 && counters[startIdx] === 0) {
+        startIdx++;
+      }
+      const numParts: number[] = [];
+      for (let k = startIdx; k < level; k++) {
+        numParts.push(counters[k] || 1);
+      }
+      const numberPrefix =
+        numParts.length === 1 ? `${numParts[0]}.` : `${numParts.join('.')}.`;
+
+      const displayText = numberHeaders ? strippedText : rawText;
+      const headingContent = renderInlineFormatted(
+        displayText,
+        currentDocTarget,
+        currentDocMarkdown,
+        currentDocPath,
+        false
+      );
+
+      const numberBadge = numberHeaders ? (
+        <span
+          className="cme-heading-number select-none mr-2 text-cme-primary/70 font-mono text-[0.88em]"
+          data-testid="reader-heading-number"
+        >
+          {numberPrefix}
+        </span>
+      ) : null;
 
       if (level === 1) {
         elements.push(
           <h1
             key={`h-${i}`}
             id={id}
-            className="text-2xl md:text-3xl font-bold tracking-tight mt-8 mb-4 pt-4 border-b border-cme-border-base pb-2 scroll-mt-20"
+            className="text-2xl md:text-3xl font-bold tracking-tight mt-8 mb-4 pt-4 border-b border-cme-border-base pb-2 scroll-mt-20 flex items-center"
           >
-            {headingContent}
+            {numberBadge}
+            <span>{headingContent}</span>
           </h1>
         );
       } else if (level === 2) {
@@ -633,9 +703,10 @@ export function renderMarkdown(
           <h2
             key={`h-${i}`}
             id={id}
-            className="text-xl md:text-2xl font-bold tracking-tight mt-6 mb-3 scroll-mt-20"
+            className="text-xl md:text-2xl font-bold tracking-tight mt-6 mb-3 scroll-mt-20 flex items-center"
           >
-            {headingContent}
+            {numberBadge}
+            <span>{headingContent}</span>
           </h2>
         );
       } else if (level === 3) {
@@ -643,9 +714,10 @@ export function renderMarkdown(
           <h3
             key={`h-${i}`}
             id={id}
-            className="text-lg md:text-xl font-semibold mt-5 mb-2 scroll-mt-20"
+            className="text-lg md:text-xl font-semibold mt-5 mb-2 scroll-mt-20 flex items-center"
           >
-            {headingContent}
+            {numberBadge}
+            <span>{headingContent}</span>
           </h3>
         );
       } else {
@@ -653,9 +725,10 @@ export function renderMarkdown(
           <h4
             key={`h-${i}`}
             id={id}
-            className="text-base font-semibold mt-4 mb-2 scroll-mt-20 text-cme-text-muted"
+            className="text-base font-semibold mt-4 mb-2 scroll-mt-20 text-cme-text-muted flex items-center"
           >
-            {headingContent}
+            {numberBadge}
+            <span>{headingContent}</span>
           </h4>
         );
       }
@@ -675,7 +748,13 @@ export function renderMarkdown(
           key={`quote-${i}`}
           className="my-3 pl-4 border-l-4 border-cme-primary italic text-cme-text-muted bg-cme-primary/5 py-1 rounded-r-lg"
         >
-          {quoteLines.join(' ')}
+          {renderInlineFormatted(
+            quoteLines.join(' '),
+            currentDocTarget,
+            currentDocMarkdown,
+            currentDocPath,
+            true
+          )}
         </blockquote>
       );
       continue;
@@ -745,7 +824,7 @@ export function renderMarkdown(
                       className="px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0"
                       style={{ textAlign: alignments[colIdx] || 'left' }}
                     >
-                      {renderInlineFormatted(header, currentDocTarget)}
+                      {renderInlineFormatted(header, currentDocTarget, currentDocMarkdown, currentDocPath, false)}
                     </th>
                   ))}
                 </tr>
@@ -766,7 +845,7 @@ export function renderMarkdown(
                         className="px-4 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0"
                         style={{ textAlign: alignments[colIdx] || 'left' }}
                       >
-                        {renderInlineFormatted(rowCells[colIdx] || '', currentDocTarget)}
+                        {renderInlineFormatted(rowCells[colIdx] || '', currentDocTarget, currentDocMarkdown, currentDocPath, false)}
                       </td>
                     ))}
                   </tr>
@@ -808,7 +887,7 @@ export function renderMarkdown(
               className="rounded text-cme-primary border-cme-border-base focus:ring-0"
             />
             <span className={checked ? 'line-through text-cme-text-muted' : ''}>
-              {renderInlineFormatted(match[2], currentDocTarget)}
+              {renderInlineFormatted(match[2], currentDocTarget, currentDocMarkdown, currentDocPath, false)}
             </span>
           </div>
         );
@@ -817,13 +896,25 @@ export function renderMarkdown(
       }
     }
 
+    // Ordered List (\d+\.)
+    const olMatch = line.match(/^(\d+)\.\s+(.+)$/);
+    if (olMatch) {
+      elements.push(
+        <li key={`ol-${i}`} className="ml-5 list-decimal text-sm my-0.5" value={parseInt(olMatch[1], 10)}>
+          {renderInlineFormatted(olMatch[2], currentDocTarget, currentDocMarkdown, currentDocPath, false)}
+        </li>
+      );
+      i++;
+      continue;
+    }
+
     // Unordered List - or *
     if (line.match(/^[-*]\s+(.+)$/)) {
       const match = line.match(/^[-*]\s+(.+)$/);
       if (match) {
         elements.push(
           <li key={`li-${i}`} className="ml-4 list-disc text-sm my-0.5">
-            {renderInlineFormatted(match[1], currentDocTarget)}
+            {renderInlineFormatted(match[1], currentDocTarget, currentDocMarkdown, currentDocPath, false)}
           </li>
         );
         i++;
@@ -840,7 +931,7 @@ export function renderMarkdown(
     // Normal Paragraph
     elements.push(
       <p key={`p-${i}`} className="my-2 text-sm leading-relaxed">
-        {renderInlineFormatted(line, currentDocTarget)}
+        {renderInlineFormatted(line, currentDocTarget, currentDocMarkdown, currentDocPath, false)}
       </p>
     );
     i++;
@@ -849,25 +940,171 @@ export function renderMarkdown(
   return elements;
 }
 
-// Inline formatting helper: Bold, Italic, Strikethrough, Inline Code, Inline Math ($...$), and WikiLinks ([[target]])
-function renderInlineFormatted(text: string, currentDocTarget: string = ''): React.ReactNode {
+// Inline formatting helper: Bold, Italic, Strikethrough, Inline Code, Inline Math ($...$), Display Math ($$...$$), WikiLinks ([[target]]), Standard Markdown Links ([label](target)), and Embedded Images (![alt](src))
+function renderInlineFormatted(
+  text: string,
+  currentDocTarget: string = '',
+  currentDocMarkdown: string = '',
+  currentDocPath: string = '',
+  inQuote: boolean = false
+): React.ReactNode {
   if (!text) return null;
 
-  // Split on [[target|alias]], inline math $...$, inline code `...`, strikethrough ~~...~~, bold **...**, italic *...*
-  const parts = text.split(/(\[\[[^\]]+\]\]|\$(?!\s)[^$\n]+(?<!\s)\$|`[^`]+`|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g);
+  // Split on:
+  // 1. Inline code: `...`
+  // 2. Embedded images: ![alt](url)
+  // 3. WikiLinks: [[target]] or [[target|label]]
+  // 4. Standard Markdown Links: [label](target)
+  // 5. Display Math: $$...$$
+  // 6. Inline Math: $...$
+  // 7. Strikethrough: ~~...~~
+  // 8. Bold: **...**
+  // 9. Italic: *...*
+  const parts = text.split(
+    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|\[\[[^\]]+\]\]|\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g
+  );
+
+  let currentOffset = 0;
 
   return parts.map((part, idx) => {
-    // WikiLinks [[page]] or [[page|alias]]
-    if (part.startsWith('[[') && part.endsWith(']]')) {
-      const inner = part.slice(2, -2);
-      const [target, alias] = inner.split('|');
-      const cleanTarget = target.trim();
+    const matchOffset = text.indexOf(part, currentOffset);
+    if (matchOffset !== -1) {
+      currentOffset = matchOffset + part.length;
+    }
+
+    // Helper to check if match at matchOffset is enclosed by quotes on this line
+    const isMathInQuote = (): boolean => {
+      if (inQuote) return true;
+      if (matchOffset === -1) return false;
+      const beforeChar = matchOffset > 0 ? text[matchOffset - 1] : '';
+      const afterChar = matchOffset + part.length < text.length ? text[matchOffset + part.length] : '';
+      if ((beforeChar === '"' && afterChar === '"') || (beforeChar === "'" && afterChar === "'")) {
+        return true;
+      }
+      const prefix = text.slice(0, matchOffset);
+      const suffix = text.slice(matchOffset + part.length);
+      const doubleQuotesBefore = (prefix.match(/"/g) || []).length;
+      const doubleQuotesAfter = (suffix.match(/"/g) || []).length;
+      if (doubleQuotesBefore % 2 === 1 && doubleQuotesAfter >= 1) {
+        return true;
+      }
+      const singleQuotesBefore = (prefix.match(/'/g) || []).length;
+      const singleQuotesAfter = (suffix.match(/'/g) || []).length;
+      if (singleQuotesBefore % 2 === 1 && singleQuotesAfter >= 1) {
+        return true;
+      }
+      return false;
+    };
+
+    // 1. Inline Code `...` - check first so `$math$` inside code is never parsed as math
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 1) {
+      return (
+        <code
+          key={idx}
+          className="px-1.5 py-0.5 rounded bg-cme-bg-subtle font-mono text-xs text-cme-primary border border-cme-border-base"
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+
+    // 2. Embedded images: ![alt](src)
+    if (part.startsWith('![') && part.includes('](') && part.endsWith(')')) {
+      const imgMatch = part.match(/^!\[([^\]]*)\]\(([^)\n]+)\)$/);
+      if (imgMatch) {
+        const alt = imgMatch[1].trim();
+        const rawSrc = imgMatch[2].trim().split(/\s+/)[0];
+        const resolvedSrc = isExternalUrl(rawSrc) ? rawSrc : getWorkspaceFileUrl(rawSrc);
+        return (
+          <a
+            key={idx}
+            href={resolvedSrc}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block my-1 rounded border border-cme-border-base bg-cme-bg-surface overflow-hidden align-middle hover:border-cme-primary transition-colors"
+            title={`${alt || rawSrc} (Click to open)`}
+          >
+            <img
+              src={resolvedSrc}
+              alt={alt || rawSrc}
+              className="max-h-48 max-w-xs object-contain inline-block align-middle"
+            />
+          </a>
+        );
+      }
+    }
+
+    // 3. WikiLinks [[target]] or [[target|label]]
+    // 4. Standard Markdown Links [label](target)
+    const isWiki = part.startsWith('[[') && part.endsWith(']]');
+    const mdMatch = !isWiki ? part.match(/^\[([^\]]+)\]\(([^)\n]+)\)$/) : null;
+
+    if (isWiki || mdMatch) {
+      let cleanTarget = '';
+      let label = '';
+      if (isWiki) {
+        const inner = part.slice(2, -2);
+        const [target, alias] = inner.split('|');
+        cleanTarget = (target || '').trim();
+        label = (alias || '').trim();
+      } else if (mdMatch) {
+        label = mdMatch[1].trim();
+        cleanTarget = mdMatch[2].trim().split(/\s+/)[0];
+      }
+
+      const external = isExternalUrl(cleanTarget);
       const hashIndex = cleanTarget.indexOf('#');
-      const targetDoc = hashIndex >= 0 ? cleanTarget.slice(0, hashIndex).trim() : cleanTarget;
-      const rawAnchor = hashIndex >= 0 ? cleanTarget.slice(hashIndex + 1).trim() : '';
-      const isSameDoc = cleanTarget.startsWith('#') || targetDoc === '';
-      const anchorSlug = rawAnchor ? slugify(rawAnchor) : '';
-      const label = (alias || (isSameDoc ? (rawAnchor ? `#${rawAnchor}` : cleanTarget) : cleanTarget)).trim();
+      const targetDoc = !external && hashIndex >= 0 ? cleanTarget.slice(0, hashIndex).trim() : cleanTarget;
+      const rawAnchor = !external && hashIndex >= 0 ? cleanTarget.slice(hashIndex + 1).trim() : '';
+      const isSameDoc = !external && (cleanTarget.startsWith('#') || targetDoc === '');
+      const strippedAnchor = stripHeadingNumberPrefix(rawAnchor);
+      const anchorSlug = rawAnchor ? slugify(strippedAnchor || rawAnchor) : '';
+      const isNonMarkdownAsset = !external && !isSameDoc && !isMarkdownPath(targetDoc);
+
+      const displayLabel = label || (isSameDoc ? (rawAnchor ? `#${rawAnchor}` : cleanTarget) : cleanTarget);
+
+      // Validate link target
+      const validation = validateLinkTarget(cleanTarget, currentDocMarkdown, currentDocPath);
+      const isValid = validation.valid;
+      const invalidReason = validation.reason || 'Target file or heading does not exist';
+
+      if (!isValid) {
+        return (
+          <span
+            key={idx}
+            className="broken-link-span inline-flex items-center gap-1 font-mono text-xs px-1.5 py-0.5 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+            data-testid="broken-link-item"
+            title={`Broken link: ${invalidReason}`}
+          >
+            <span
+              className="broken-link-sign text-rose-600 dark:text-rose-400 font-bold"
+              data-testid="broken-link-indicator"
+              title={invalidReason}
+            >
+              ⚠
+            </span>
+            <span className="font-medium underline decoration-rose-500/60 underline-offset-2">
+              {displayLabel}
+            </span>
+          </span>
+        );
+      }
+
+      if (external) {
+        return (
+          <a
+            key={idx}
+            href={cleanTarget}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
+            title={`External link: ${cleanTarget} (Click to open)`}
+          >
+            <span>{displayLabel}</span>
+            <span className="text-[10px] opacity-70">↗</span>
+          </a>
+        );
+      }
 
       if (isSameDoc) {
         const hashHref = `#${anchorSlug}`;
@@ -876,7 +1113,7 @@ function renderInlineFormatted(text: string, currentDocTarget: string = ''): Rea
             key={idx}
             href={hashHref}
             className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
-            title={`Heading link: [[${cleanTarget}]] (Click to jump to heading, Ctrl+Click to edit)`}
+            title={`Heading link: ${cleanTarget} (Click to jump to heading, Ctrl+Click to edit)`}
             onClick={(e) => {
               if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
@@ -895,7 +1132,25 @@ function renderInlineFormatted(text: string, currentDocTarget: string = ''): Rea
               }
             }}
           >
-            <span>{label}</span>
+            <span>{displayLabel}</span>
+            <span className="text-[10px] opacity-70">↓</span>
+          </a>
+        );
+      }
+
+      if (isNonMarkdownAsset) {
+        const assetUrl = getWorkspaceFileUrl(targetDoc);
+        return (
+          <a
+            key={idx}
+            href={assetUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
+            title={`Open file: ${cleanTarget} in new tab`}
+          >
+            <span>{displayLabel}</span>
+            <span className="text-[10px] opacity-70">↗</span>
           </a>
         );
       }
@@ -906,7 +1161,7 @@ function renderInlineFormatted(text: string, currentDocTarget: string = ''): Rea
           key={idx}
           to={docLink}
           className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
-          title={`Wiki link: [[${cleanTarget}]] (Click to view, Ctrl+Click to edit)`}
+          title={`Link: ${cleanTarget} (Click to view, Ctrl+Click to edit)`}
           onClick={(e) => {
             if (e.ctrlKey || e.metaKey) {
               e.preventDefault();
@@ -918,14 +1173,55 @@ function renderInlineFormatted(text: string, currentDocTarget: string = ''): Rea
             }
           }}
         >
-          <span>{label}</span>
+          <span>{displayLabel}</span>
+          <span className="text-[10px] opacity-70">↗</span>
         </Link>
       );
     }
 
-    // Inline Math $...$
+    // 5. Display Math $$...$$ on a line
+    if (part.startsWith('$$') && part.endsWith('$$') && part.length > 4) {
+      if (isMathInQuote()) {
+        return (
+          <code
+            key={idx}
+            className="cme-live-code font-mono text-xs px-1.5 py-0.5 rounded bg-cme-bg-subtle border border-cme-border-base font-normal not-italic text-cme-text-base"
+          >
+            {part}
+          </code>
+        );
+      }
+      const latex = part.slice(2, -2);
+      try {
+        const html = katex.renderToString(latex, { displayMode: true, throwOnError: false });
+        return (
+          <span
+            key={idx}
+            className="katex-display-inline"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        );
+      } catch {
+        return <code key={idx} className="font-mono text-xs">{part}</code>;
+      }
+    }
+
+    // 6. Inline Math $...$
     if (part.startsWith('$') && part.endsWith('$') && part.length > 2) {
       const latex = part.slice(1, -1);
+      if (/^\d+(?:\.\d+)?$/.test(latex)) {
+        return <span key={idx}>{part}</span>;
+      }
+      if (isMathInQuote()) {
+        return (
+          <code
+            key={idx}
+            className="cme-live-code font-mono text-xs px-1.5 py-0.5 rounded bg-cme-bg-subtle border border-cme-border-base font-normal not-italic text-cme-text-base"
+          >
+            {part}
+          </code>
+        );
+      }
       try {
         const html = katex.renderToString(latex, { displayMode: false, throwOnError: false });
         return (
@@ -940,35 +1236,49 @@ function renderInlineFormatted(text: string, currentDocTarget: string = ''): Rea
       }
     }
 
-    // Inline Code `...`
-    if (part.startsWith('`') && part.endsWith('`') && part.length > 1) {
-      return (
-        <code
-          key={idx}
-          className="px-1.5 py-0.5 rounded bg-cme-bg-subtle font-mono text-xs text-cme-primary border border-cme-border-base"
-        >
-          {part.slice(1, -1)}
-        </code>
-      );
-    }
-
-    // Strikethrough ~~...~~
+    // 7. Strikethrough ~~...~~
     if (part.startsWith('~~') && part.endsWith('~~') && part.length > 4) {
       return (
         <del key={idx} className="line-through text-cme-text-muted">
-          {renderInlineFormatted(part.slice(2, -2), currentDocTarget)}
+          {renderInlineFormatted(
+            part.slice(2, -2),
+            currentDocTarget,
+            currentDocMarkdown,
+            currentDocPath,
+            inQuote
+          )}
         </del>
       );
     }
 
-    // Bold **...**
+    // 8. Bold **...**
     if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
-      return <strong key={idx}>{renderInlineFormatted(part.slice(2, -2), currentDocTarget)}</strong>;
+      return (
+        <strong key={idx}>
+          {renderInlineFormatted(
+            part.slice(2, -2),
+            currentDocTarget,
+            currentDocMarkdown,
+            currentDocPath,
+            inQuote
+          )}
+        </strong>
+      );
     }
 
-    // Italic *...*
+    // 9. Italic *...*
     if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
-      return <em key={idx}>{renderInlineFormatted(part.slice(1, -1), currentDocTarget)}</em>;
+      return (
+        <em key={idx}>
+          {renderInlineFormatted(
+            part.slice(1, -1),
+            currentDocTarget,
+            currentDocMarkdown,
+            currentDocPath,
+            inQuote
+          )}
+        </em>
+      );
     }
 
     return part;

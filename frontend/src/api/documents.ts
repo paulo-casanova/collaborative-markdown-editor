@@ -1,5 +1,49 @@
-import { apiRequest } from './client';
+import { apiRequest, TOKEN_STORAGE_KEY } from './client';
 import { DocumentRecord, WorkspaceNode, TrashNode, SearchResult } from '../types/document';
+
+export function isMarkdownPath(path: string, isBundle?: boolean): boolean {
+  if (isBundle) return true;
+  const lower = (path || '').toLowerCase();
+  if (lower.endsWith('.md') || lower.endsWith('.markdown') || lower.endsWith('.bundle')) {
+    return true;
+  }
+  // If path has no file extension at all, treat as markdown document
+  const lastSlash = lower.lastIndexOf('/');
+  const filename = lastSlash >= 0 ? lower.slice(lastSlash + 1) : lower;
+  return !filename.includes('.');
+}
+
+export function getWorkspaceFileUrl(path: string): string {
+  const cleanPath = path.replace(/^\/+/, '');
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const base = `/api/v1/workspaces/files?path=${encodeURIComponent(cleanPath)}`;
+  return token ? `${base}&token=${encodeURIComponent(token)}` : base;
+}
+
+export async function uploadWorkspaceFile(
+  path: string,
+  fileData: Blob | ArrayBuffer | Uint8Array | string
+): Promise<DocumentRecord> {
+  const cleanPath = path.replace(/^\/+/, '');
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const headers = new Headers({
+    'Content-Type': 'application/octet-stream',
+    'X-File-Path': cleanPath,
+  });
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  const response = await fetch(`/api/v1/workspaces/files?path=${encodeURIComponent(cleanPath)}`, {
+    method: 'POST',
+    headers,
+    body: fileData as BodyInit,
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to upload file: HTTP ${response.status}`);
+  }
+  return (await response.json()) as DocumentRecord;
+}
 
 export async function fetchWorkspaceTree(): Promise<WorkspaceNode[]> {
   const data = await apiRequest<{ tree: WorkspaceNode[] }>('/api/v1/workspaces/tree');

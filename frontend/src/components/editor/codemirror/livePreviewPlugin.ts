@@ -3,7 +3,13 @@ import {
   Decoration,
   DecorationSet,
 } from '@codemirror/view';
-import { RangeSetBuilder, StateField, EditorState, Extension } from '@codemirror/state';
+import {
+  RangeSetBuilder,
+  StateField,
+  StateEffect,
+  EditorState,
+  Extension,
+} from '@codemirror/state';
 import {
   MathBlockWidget,
   MermaidBlockWidget,
@@ -13,8 +19,17 @@ import {
   CodeBlockWidget,
   InlineMathWidget,
   TableBlockWidget,
+  HeadingNumberWidget,
+  ImageEmbedWidget,
 } from './livePreviewWidgets';
 import { slugify } from '../../navigation/DocumentOutline';
+import {
+  validateLinkTarget,
+  stripHeadingNumberPrefix,
+} from '../../../utils/linkValidator';
+import { useUIStore } from '../../../stores/uiStore';
+
+export const forceLivePreviewRebuild = StateEffect.define<boolean>();
 
 interface DecoItem {
   from: number;
@@ -28,7 +43,8 @@ export function createLivePreviewPlugin(isDark: boolean = false): Extension {
       return buildLivePreviewDecorations(state, isDark);
     },
     update(decorations, tr) {
-      if (tr.docChanged || tr.selection) {
+      const forced = tr.effects.some((e) => e.is(forceLivePreviewRebuild));
+      if (tr.docChanged || tr.selection || forced) {
         return buildLivePreviewDecorations(tr.state, isDark);
       }
       return decorations.map(tr.changes);
@@ -37,7 +53,10 @@ export function createLivePreviewPlugin(isDark: boolean = false): Extension {
   });
 }
 
-export function buildLivePreviewDecorations(state: EditorState, isDark: boolean = false): DecorationSet {
+export function buildLivePreviewDecorations(
+  state: EditorState,
+  isDark: boolean = false
+): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
   const sel = state.selection.main;
@@ -45,14 +64,22 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
   const cursorTo = sel.to;
 
   const docText = doc.toString();
+  const numberHeaders = useUIStore.getState().numberHeaders;
   const items: DecoItem[] = [];
   const headingSlugCounts: Record<string, number> = {};
+  const headingCounters = [0, 0, 0, 0, 0, 0];
 
   // Track replaced ranges to prevent overlapping replacement decorations
   const replacedRanges: { from: number; to: number }[] = [];
+  // Track fenced code blocks & inline code spans so math/links/formatting inside code are never parsed
+  const codeOrFenceRanges: { from: number; to: number }[] = [];
 
   const isOverlappingReplaced = (from: number, to: number) => {
     return replacedRanges.some((r) => Math.max(from, r.from) < Math.min(to, r.to));
+  };
+
+  const isInsideCodeOrFence = (from: number, to: number) => {
+    return codeOrFenceRanges.some((r) => Math.max(from, r.from) < Math.min(to, r.to));
   };
 
   const addReplace = (from: number, to: number, deco: Decoration) => {
@@ -63,33 +90,15 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
     }
   };
 
-  // 1. Multiline Blocks: Display Math ($$...$$)
-  const mathRegex = /\$\$([\s\S]*?)\$\$/g;
   let match: RegExpExecArray | null;
-  while ((match = mathRegex.exec(docText)) !== null) {
-    const from = match.index;
-    const to = from + match[0].length;
-    const latex = match[1].trim();
 
-    const cursorInside = cursorTo >= from && cursorFrom <= to;
-    if (!cursorInside && latex.length > 0) {
-      addReplace(
-        from,
-        to,
-        Decoration.replace({
-          widget: new MathBlockWidget(latex, from, to),
-          block: true,
-        })
-      );
-    }
-  }
-
-  // 2. Multiline Blocks: Mermaid Diagrams (```mermaid ... ```)
+  // 1. Multiline Blocks: Mermaid Diagrams (```mermaid ... ```)
   const mermaidRegex = /```mermaid\n([\s\S]*?)\n```/g;
   while ((match = mermaidRegex.exec(docText)) !== null) {
     const from = match.index;
     const to = from + match[0].length;
     const source = match[1].trim();
+    codeOrFenceRanges.push({ from, to });
 
     const cursorInside = cursorTo >= from && cursorFrom <= to;
     if (!cursorInside && source.length > 0) {
@@ -104,14 +113,15 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
     }
   }
 
-  // 3. Multiline Blocks: Fenced Code Blocks (```lang ... ```)
-  const codeRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)\n```/g;
-  while ((match = codeRegex.exec(docText)) !== null) {
+  // 2. Multiline Blocks: Fenced Code Blocks (```lang ... ```)
+  const codeBlockRegex = /```([a-zA-Z0-9_-]*)\n([\s\S]*?)\n```/g;
+  while ((match = codeBlockRegex.exec(docText)) !== null) {
     const lang = match[1].trim();
     if (lang.toLowerCase() === 'mermaid') continue;
     const from = match.index;
     const to = from + match[0].length;
     const code = match[2];
+    codeOrFenceRanges.push({ from, to });
 
     const cursorInside = cursorTo >= from && cursorFrom <= to;
     if (!cursorInside && code.length > 0) {
@@ -126,13 +136,115 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
     }
   }
 
-  // 3.5 Multiline Blocks: GFM Markdown Tables
+  // Pre-scan inline backtick code spans (`...`) on non-fenced lines so display math & links inside backticks are ignored
   const lineCount = doc.lines;
+  for (let i = 1; i <= lineCount; i++) {
+    const line = doc.line(i);
+    if (isInsideCodeOrFence(line.from, line.to)) continue;
+    const inlineBacktickRegex = /(?<!`)`([^`\n]+)`(?!`)/g;
+    let cMatch: RegExpExecArray | null;
+    while ((cMatch = inlineBacktickRegex.exec(line.text)) !== null) {
+      const cFrom = line.from + cMatch.index;
+      const cTo = cFrom + cMatch[0].length;
+      codeOrFenceRanges.push({ from: cFrom, to: cTo });
+    }
+  }
+
+  // Helper to check if a range [from, to] is inside a blockquote line (> ...) or surrounded by quotes ("..." or '...')
+  const isRangeInQuote = (from: number, to: number): boolean => {
+    const startLine = doc.lineAt(from);
+    const endLine = doc.lineAt(to);
+    for (let l = startLine.number; l <= endLine.number; l++) {
+      if (/^\s*>/.test(doc.line(l).text)) {
+        return true;
+      }
+    }
+    // Check if wrapped in "..." or '...' on the same line
+    if (startLine.number === endLine.number) {
+      const lineText = startLine.text;
+      const relFrom = from - startLine.from;
+      const relTo = to - startLine.from;
+      const beforeChar = relFrom > 0 ? lineText[relFrom - 1] : '';
+      const afterChar = relTo < lineText.length ? lineText[relTo] : '';
+      if ((beforeChar === '"' && afterChar === '"') || (beforeChar === "'" && afterChar === "'")) {
+        return true;
+      }
+      // Also check if inside an enclosing quoted segment on the line
+      const prefix = lineText.slice(0, relFrom);
+      const suffix = lineText.slice(relTo);
+      const doubleQuotesBefore = (prefix.match(/"/g) || []).length;
+      const doubleQuotesAfter = (suffix.match(/"/g) || []).length;
+      if (doubleQuotesBefore % 2 === 1 && doubleQuotesAfter >= 1) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // 3. Multiline Blocks: Display Math ($$...$$)
+  const mathRegex = /\$\$([\s\S]*?)\$\$/g;
+  while ((match = mathRegex.exec(docText)) !== null) {
+    const from = match.index;
+    const to = from + match[0].length;
+    const latex = match[1].trim();
+
+    if (isInsideCodeOrFence(from, to)) {
+      continue;
+    }
+
+    // Math blocks inside quotes should not be formatted as KaTeX: show as monospace
+    if (isRangeInQuote(from, to)) {
+      const startLine = doc.lineAt(from);
+      const endLine = doc.lineAt(to);
+      if (startLine.number === endLine.number) {
+        items.push({
+          from,
+          to,
+          deco: Decoration.mark({ class: 'cme-live-code font-mono' }),
+        });
+      }
+      continue;
+    }
+
+    const cursorInside = cursorTo >= from && cursorFrom <= to;
+    if (!cursorInside && latex.length > 0) {
+      // Single-line $$...$$ inside text vs multiline block
+      const startLine = doc.lineAt(from);
+      const endLine = doc.lineAt(to);
+      const isFullLines =
+        from === startLine.from && to === endLine.to;
+      if (isFullLines) {
+        addReplace(
+          from,
+          to,
+          Decoration.replace({
+            widget: new MathBlockWidget(latex, from, to),
+            block: true,
+          })
+        );
+      } else {
+        addReplace(
+          from,
+          to,
+          Decoration.replace({
+            widget: new InlineMathWidget(latex, from, to),
+          })
+        );
+      }
+    }
+  }
+
+  // 3.5 Multiline Blocks: GFM Markdown Tables
   let tableScanIdx = 1;
   while (tableScanIdx <= lineCount) {
     const scanLine = doc.line(tableScanIdx);
     const scanText = scanLine.text.trim();
-    if (scanText.includes('|') && tableScanIdx < lineCount && !isOverlappingReplaced(scanLine.from, scanLine.to)) {
+    if (
+      scanText.includes('|') &&
+      tableScanIdx < lineCount &&
+      !isOverlappingReplaced(scanLine.from, scanLine.to) &&
+      !isInsideCodeOrFence(scanLine.from, scanLine.to)
+    ) {
       const nextLine = doc.line(tableScanIdx + 1);
       const nextText = nextLine.text.trim();
       const isDelimiter = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(nextText);
@@ -180,9 +292,15 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
     const lineTo = line.to;
     const lineText = line.text;
 
-    // If line is part of an already replaced block, skip line-level decorations
-    if (isOverlappingReplaced(lineFrom, lineTo)) {
-      continue;
+    // If line is part of an already replaced block or fenced code block, skip line-level decorations
+    if (isOverlappingReplaced(lineFrom, lineTo) || isInsideCodeOrFence(lineFrom, lineTo)) {
+      // Wait: only skip if the whole line is inside a fenced block (not just an inline code span on the line)
+      const inFence = codeOrFenceRanges.some(
+        (r) => r.from <= lineFrom && r.to >= lineTo && (doc.lineAt(r.from).number !== doc.lineAt(r.to).number)
+      );
+      if (isOverlappingReplaced(lineFrom, lineTo) || inFence) {
+        continue;
+      }
     }
 
     const cursorOnLine = cursorTo >= lineFrom && cursorFrom <= lineTo;
@@ -208,10 +326,28 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
       const level = headingMatch[1].length;
       const prefixLen = level + 1; // e.g. "## " = 3 chars
       const rawHeadingText = headingMatch[2].trim();
-      const baseSlug = slugify(rawHeadingText.replace(/[*_`]/g, ''));
+      const strippedHeadingText = stripHeadingNumberPrefix(rawHeadingText) || rawHeadingText;
+      const baseSlug = slugify(strippedHeadingText.replace(/[*_`]/g, ''));
       const count = headingSlugCounts[baseSlug] || 0;
       headingSlugCounts[baseSlug] = count + 1;
       const headingId = count === 0 ? baseSlug : `${baseSlug}-${count}`;
+
+      // Update hierarchical heading counters
+      headingCounters[level - 1] += 1;
+      for (let k = level; k < 6; k++) {
+        headingCounters[k] = 0;
+      }
+      let startIdx = 0;
+      while (startIdx < level - 1 && headingCounters[startIdx] === 0) {
+        startIdx++;
+      }
+      const numParts: number[] = [];
+      for (let k = startIdx; k < level; k++) {
+        numParts.push(headingCounters[k] || 1);
+      }
+      const numberPrefix =
+        numParts.length === 1 ? `${numParts[0]}.` : `${numParts.join('.')}.`;
+      const alreadyNumbered = /^\d+(?:\.\d+)*\.?\s+/.test(rawHeadingText);
 
       items.push({
         from: lineFrom,
@@ -232,6 +368,16 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
 
       if (!cursorOnLine) {
         addReplace(lineFrom, lineFrom + prefixLen, Decoration.replace({}));
+        if (numberHeaders && !alreadyNumbered) {
+          items.push({
+            from: lineFrom + prefixLen,
+            to: lineFrom + prefixLen,
+            deco: Decoration.widget({
+              widget: new HeadingNumberWidget(numberPrefix),
+              side: 1,
+            }),
+          });
+        }
         items.push({
           from: lineFrom + prefixLen,
           to: lineTo,
@@ -243,6 +389,16 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
           to: lineFrom + prefixLen,
           deco: Decoration.mark({ class: 'cme-syntax-marker' }),
         });
+        if (numberHeaders && !alreadyNumbered) {
+          items.push({
+            from: lineFrom + prefixLen,
+            to: lineFrom + prefixLen,
+            deco: Decoration.widget({
+              widget: new HeadingNumberWidget(numberPrefix),
+              side: 1,
+            }),
+          });
+        }
         items.push({
           from: lineFrom + prefixLen,
           to: lineTo,
@@ -253,25 +409,52 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
     }
 
     // 4c. Blockquote: > text
-    const quoteMatch = /^>\s+(.*)$/.exec(lineText);
+    const quoteMatch = /^(\s*>\s*)(.*)$/.exec(lineText);
+    const isBlockquoteLine = Boolean(quoteMatch);
     if (quoteMatch) {
+      const markerLen = quoteMatch[1].length;
       if (!cursorOnLine) {
-        addReplace(lineFrom, lineFrom + 2, Decoration.replace({}));
-        items.push({
-          from: lineFrom + 2,
-          to: lineTo,
-          deco: Decoration.mark({ class: 'cme-live-blockquote' }),
-        });
+        addReplace(lineFrom, lineFrom + markerLen, Decoration.replace({}));
+        if (lineFrom + markerLen < lineTo) {
+          items.push({
+            from: lineFrom + markerLen,
+            to: lineTo,
+            deco: Decoration.mark({ class: 'cme-live-blockquote' }),
+          });
+        }
       } else {
         items.push({
           from: lineFrom,
-          to: lineFrom + 2,
+          to: lineFrom + markerLen,
           deco: Decoration.mark({ class: 'cme-syntax-marker' }),
         });
       }
     }
 
-    // 4d. Task list checkbox: - [ ] or - [x]
+    // 4d. Inline code: `code` (processed BEFORE links, bold/italic, and inline math)
+    const codeRegex = /(?<!`)`([^`\n]+)`(?!`)/g;
+    let cMatch: RegExpExecArray | null;
+    while ((cMatch = codeRegex.exec(lineText)) !== null) {
+      const cFrom = lineFrom + cMatch.index;
+      const cTo = cFrom + cMatch[0].length;
+
+      if (isOverlappingReplaced(cFrom, cTo)) continue;
+
+      const cursorInCode = cursorTo >= cFrom && cursorFrom <= cTo;
+      if (!cursorInCode) {
+        addReplace(cFrom, cFrom + 1, Decoration.replace({}));
+        items.push({
+          from: cFrom + 1,
+          to: cTo - 1,
+          deco: Decoration.mark({ class: 'cme-live-code' }),
+        });
+        addReplace(cTo - 1, cTo, Decoration.replace({}));
+      }
+      // Reserve the entire inline code span so inner syntax is never formatted as math/links/bold
+      replacedRanges.push({ from: cFrom, to: cTo });
+    }
+
+    // 4e. Task list checkbox: - [ ] or - [x]
     const taskMatch = /^(\s*[-*]\s+)\[([ xX])\]\s+/.exec(lineText);
     if (taskMatch) {
       const prefixLen = taskMatch[1].length;
@@ -291,28 +474,93 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
       }
     }
 
-    // 4e. Wiki Links: [[target|label]] or [[target]]
-    const wikiRegex = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
-    let wMatch: RegExpExecArray | null;
-    while ((wMatch = wikiRegex.exec(lineText)) !== null) {
-      const wFrom = lineFrom + wMatch.index;
-      const wTo = wFrom + wMatch[0].length;
-      const target = wMatch[1];
-      const label = wMatch[2] || target;
+    // 4f. Embedded Images: ![alt](src)
+    const imgRegex = /!\[([^\]]*)\]\(([^)\n]+)\)/g;
+    let imgMatch: RegExpExecArray | null;
+    while ((imgMatch = imgRegex.exec(lineText)) !== null) {
+      const imgFrom = lineFrom + imgMatch.index;
+      const imgTo = imgFrom + imgMatch[0].length;
+      if (isOverlappingReplaced(imgFrom, imgTo)) continue;
 
-      const cursorInWiki = cursorTo >= wFrom && cursorFrom <= wTo;
-      if (!cursorInWiki) {
+      const alt = imgMatch[1].trim();
+      const rawSrc = imgMatch[2].trim().split(/\s+/)[0];
+      const cursorInImg = cursorTo >= imgFrom && cursorFrom <= imgTo;
+      if (!cursorInImg && rawSrc) {
         addReplace(
-          wFrom,
-          wTo,
+          imgFrom,
+          imgTo,
           Decoration.replace({
-            widget: new WikiLinkWidget(target, label, wFrom, wTo),
+            widget: new ImageEmbedWidget(alt, rawSrc, imgFrom, imgTo),
           })
         );
       }
     }
 
-    // 4f. Inline formatting: Bold **text**
+    // 4g. Wiki Links: [[target|label]] or [[target]]
+    const wikiRegex = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+    let wMatch: RegExpExecArray | null;
+    while ((wMatch = wikiRegex.exec(lineText)) !== null) {
+      const wFrom = lineFrom + wMatch.index;
+      const wTo = wFrom + wMatch[0].length;
+      if (isOverlappingReplaced(wFrom, wTo)) continue;
+
+      const target = wMatch[1];
+      const label = wMatch[2] || target;
+
+      const cursorInWiki = cursorTo >= wFrom && cursorFrom <= wTo;
+      if (!cursorInWiki) {
+        const validation = validateLinkTarget(target, docText);
+        addReplace(
+          wFrom,
+          wTo,
+          Decoration.replace({
+            widget: new WikiLinkWidget(
+              target,
+              label,
+              wFrom,
+              wTo,
+              validation.valid,
+              false,
+              validation.reason || ''
+            ),
+          })
+        );
+      }
+    }
+
+    // 4h. Standard Markdown Links: [label](target) (excluding images ![alt](src))
+    const mdLinkRegex = /(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)/g;
+    let mdMatch: RegExpExecArray | null;
+    while ((mdMatch = mdLinkRegex.exec(lineText)) !== null) {
+      const mFrom = lineFrom + mdMatch.index;
+      const mTo = mFrom + mdMatch[0].length;
+      if (isOverlappingReplaced(mFrom, mTo)) continue;
+
+      const label = mdMatch[1].trim();
+      const rawTarget = mdMatch[2].trim().split(/\s+/)[0];
+
+      const cursorInLink = cursorTo >= mFrom && cursorFrom <= mTo;
+      if (!cursorInLink && rawTarget) {
+        const validation = validateLinkTarget(rawTarget, docText);
+        addReplace(
+          mFrom,
+          mTo,
+          Decoration.replace({
+            widget: new WikiLinkWidget(
+              rawTarget,
+              label,
+              mFrom,
+              mTo,
+              validation.valid,
+              true,
+              validation.reason || ''
+            ),
+          })
+        );
+      }
+    }
+
+    // 4i. Inline formatting: Bold **text**
     const boldRegex = /\*\*([^\*\n]+)\*\*/g;
     let bMatch: RegExpExecArray | null;
     while ((bMatch = boldRegex.exec(lineText)) !== null) {
@@ -344,7 +592,7 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
       }
     }
 
-    // 4g. Inline formatting: Italic *text* (when not bold)
+    // 4j. Inline formatting: Italic *text* (when not bold)
     const italicRegex = /(?<!\*)\*([^\*\n]+)\*(?!\*)/g;
     let iMatch: RegExpExecArray | null;
     while ((iMatch = italicRegex.exec(lineText)) !== null) {
@@ -365,7 +613,7 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
       }
     }
 
-    // 4h. Inline formatting: Strikethrough ~~text~~
+    // 4k. Inline formatting: Strikethrough ~~text~~
     const strikeRegex = /~~([^~\n]+)~~/g;
     let sMatch: RegExpExecArray | null;
     while ((sMatch = strikeRegex.exec(lineText)) !== null) {
@@ -386,28 +634,7 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
       }
     }
 
-    // 4i. Inline code: `code`
-    const codeRegex = /(?<!`)`([^`\n]+)`(?!`)/g;
-    let cMatch: RegExpExecArray | null;
-    while ((cMatch = codeRegex.exec(lineText)) !== null) {
-      const cFrom = lineFrom + cMatch.index;
-      const cTo = cFrom + cMatch[0].length;
-
-      if (isOverlappingReplaced(cFrom, cTo)) continue;
-
-      const cursorInCode = cursorTo >= cFrom && cursorFrom <= cTo;
-      if (!cursorInCode) {
-        addReplace(cFrom, cFrom + 1, Decoration.replace({}));
-        items.push({
-          from: cFrom + 1,
-          to: cTo - 1,
-          deco: Decoration.mark({ class: 'cme-live-code' }),
-        });
-        addReplace(cTo - 1, cTo, Decoration.replace({}));
-      }
-    }
-
-    // 4j. Inline math: $formula$
+    // 4l. Inline math: $formula$
     const inlineMathRegex = /(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)/g;
     let mMatch: RegExpExecArray | null;
     while ((mMatch = inlineMathRegex.exec(lineText)) !== null) {
@@ -420,6 +647,16 @@ export function buildLivePreviewDecorations(state: EditorState, isDark: boolean 
       const mTo = mFrom + mMatch[0].length;
 
       if (isOverlappingReplaced(mFrom, mTo)) continue;
+
+      // Math blocks inside quotes (> blockquote or "..." / '...') should show as monospace, not rendered
+      if (isBlockquoteLine || isRangeInQuote(mFrom, mTo)) {
+        items.push({
+          from: mFrom,
+          to: mTo,
+          deco: Decoration.mark({ class: 'cme-live-code font-mono' }),
+        });
+        continue;
+      }
 
       const cursorInMath = cursorTo >= mFrom && cursorFrom <= mTo;
       if (!cursorInMath) {

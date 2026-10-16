@@ -163,6 +163,23 @@ public:
     );
 
     /**
+     * @brief Uploads an arbitrary file (image, PDF, markdown, etc.) directly into workspace storage.
+     */
+    Result<DocumentRecord> upload_workspace_file(
+        const std::string& relative_path,
+        std::string_view data,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Reads an arbitrary file directly from workspace storage by relative path.
+     */
+    Result<std::string> read_workspace_file(
+        const std::string& relative_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
      * @brief Generates the hierarchical workspace tree filtered by user READ permissions.
      */
     Result<nlohmann::json> get_workspace_tree(const auth::UserIdentity& user);

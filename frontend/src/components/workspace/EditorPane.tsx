@@ -11,6 +11,7 @@ import {
   AlignLeft,
   MessageSquare,
   Edit2,
+  Hash,
 } from 'lucide-react';
 import { fetchDocument, moveDocument } from '../../api/documents';
 import { fetchCurrentUser } from '../../api/auth';
@@ -23,6 +24,7 @@ import { CmeCollabProvider, CollabConnectionStatus, ReviewEventPayload } from '.
 import { DocumentOutline, findHeadingPosition, slugify } from '../navigation/DocumentOutline';
 import { ReviewSidebar } from '../review/ReviewSidebar';
 import { reconcileAnchor } from '../../review/textAnchoring';
+import { updateCachedDocumentHeadings } from '../../utils/linkValidator';
 
 interface EditorPaneProps {
   documentId: string;
@@ -37,7 +39,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   onClosePane,
   isPrimary = true,
 }) => {
-  const { setBreadcrumbs, setSyncStatus, setViewMode } = useUIStore();
+  const { setBreadcrumbs, setSyncStatus, setViewMode, numberHeaders, toggleNumberHeaders } = useUIStore();
   const { updateTabMetadata, closeTab, outlineWidth, setOutlineWidth } = useWorkspaceStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -45,9 +47,11 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const [isResizingOutline, setIsResizingOutline] = useState<boolean>(false);
   const [editorInstance, setEditorInstance] = useState<any>(null);
   const [liveContent, setLiveContent] = useState<string | undefined>(undefined);
+  const [cursorLine, setCursorLine] = useState<number>(1);
 
   useEffect(() => {
     setLiveContent(undefined);
+    setCursorLine(1);
   }, [documentId]);
 
   const handleOutlineResizeStart = useCallback(
@@ -365,6 +369,20 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
+              onClick={() => toggleNumberHeaders()}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                numberHeaders
+                  ? 'bg-cme-primary text-white border-cme-primary'
+                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+              }`}
+              title="Automatically Number Headers"
+              data-testid="editor-header-numbering-toggle"
+            >
+              <Hash className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Number Headers</span>
+            </button>
+
+            <button
               onClick={() => setShowOutline(!showOutline)}
               className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
                 showOutline
@@ -466,7 +484,13 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             initialContent={
               document.content || `# ${document.title || 'Document'}\n\nStart writing markdown here...`
             }
-            onChange={setLiveContent}
+            onChange={(content) => {
+              setLiveContent(content);
+              if (document?.path) {
+                updateCachedDocumentHeadings(document.path, content);
+              }
+            }}
+            onCursorLineChange={setCursorLine}
             onEditorReady={handleEditorReady}
             autoFocus={isPrimary ? 'end' : false}
           />
@@ -504,6 +528,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             <div className="flex-1 overflow-y-auto p-1">
               <DocumentOutline
                 markdown={liveContent !== undefined ? liveContent : document.content}
+                cursorLine={cursorLine}
                 onSelectHeading={(id) => {
                   scrollToHeading(id);
                 }}

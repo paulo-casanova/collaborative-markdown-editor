@@ -7,6 +7,7 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  Hash,
   List,
   ListOrdered,
   CheckSquare,
@@ -23,6 +24,7 @@ import {
   GitPullRequest,
 } from 'lucide-react';
 import { useReviewStore } from '../../stores/reviewStore';
+import { useUIStore } from '../../stores/uiStore';
 import { createDualAnchor } from '../../review/textAnchoring';
 import { CmeCollabProvider } from '../../api/collabProvider';
 
@@ -32,6 +34,7 @@ interface EditorToolbarProps {
 }
 
 export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }) => {
+  const { numberHeaders, toggleNumberHeaders } = useUIStore();
   const {
     isSidebarOpen,
     toggleSidebar,
@@ -176,6 +179,15 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }
         title="Heading 3"
       >
         <Heading3 className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => toggleNumberHeaders()}
+        className={btnClass(numberHeaders)}
+        title="Automatically Number Headers"
+        data-testid="toggle-header-numbering-btn"
+      >
+        <Hash className="w-3.5 h-3.5" />
       </button>
 
       {divider}

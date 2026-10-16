@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -7,9 +7,12 @@ import {
   Folder,
   FolderOpen,
   FileText,
+  File as FileIcon,
+  Image as ImageIcon,
   Package,
   Plus,
   FolderPlus,
+  Upload,
   Trash2,
   Edit2,
   RefreshCw,
@@ -21,11 +24,29 @@ import {
   createDirectory,
   moveDocument,
   deleteDocument,
+  uploadWorkspaceFile,
+  getWorkspaceFileUrl,
+  isMarkdownPath,
 } from '../../api/documents';
 import { fetchCurrentUser } from '../../api/auth';
 import { WorkspaceNode } from '../../types/document';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { useUIStore } from '../../stores/uiStore';
+import { updateKnownWorkspaceNodes } from '../../utils/linkValidator';
+
+function isImagePath(path: string): boolean {
+  const lower = (path || '').toLowerCase();
+  return (
+    lower.endsWith('.png') ||
+    lower.endsWith('.jpg') ||
+    lower.endsWith('.jpeg') ||
+    lower.endsWith('.gif') ||
+    lower.endsWith('.svg') ||
+    lower.endsWith('.webp') ||
+    lower.endsWith('.bmp') ||
+    lower.endsWith('.ico')
+  );
+}
 
 interface TreeNode extends WorkspaceNode {
   children?: TreeNode[];
@@ -119,6 +140,8 @@ export const FileTree: React.FC = () => {
   >(null);
   const [activeNode, setActiveNode] = useState<WorkspaceNode | null>(null);
   const [inputValue, setInputValue] = useState('');
+  const [uploadTargetDir, setUploadTargetDir] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const { data: user } = useQuery({
     queryKey: ['auth-me'],
@@ -137,9 +160,10 @@ export const FileTree: React.FC = () => {
     retry: 1,
   });
 
-  // Synchronize open tab titles & paths whenever workspace tree nodes load
+  // Synchronize open tab titles & paths and link validator index whenever workspace tree nodes load
   React.useEffect(() => {
     if (!rawNodes || !Array.isArray(rawNodes)) return;
+    updateKnownWorkspaceNodes(rawNodes);
     const currentTabs = useWorkspaceStore.getState().tabs;
     for (const tab of currentTabs) {
       const matchingNode = rawNodes.find((n) => n.id === tab.id);
@@ -176,6 +200,45 @@ export const FileTree: React.FC = () => {
       }
       return next;
     });
+  };
+
+  const uploadFilesToDir = async (files: FileList | File[], targetDir: string) => {
+    const fileArray = Array.from(files);
+    if (fileArray.length === 0) return;
+
+    try {
+      for (const file of fileArray) {
+        const relPath = targetDir ? `${targetDir}/${file.name}` : file.name;
+        const buf = await file.arrayBuffer();
+        await uploadWorkspaceFile(relPath, buf);
+      }
+      if (targetDir) {
+        setExpandedPaths((prev) => {
+          const next = new Set(prev);
+          next.add(targetDir);
+          return next;
+        });
+      }
+      await queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+    } catch (err: any) {
+      alert(`Failed to upload file: ${err.message || 'Unknown error'}`);
+    }
+  };
+
+  const handleFileUploadChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      await uploadFilesToDir(files, uploadTargetDir);
+    }
+    e.target.value = '';
+  };
+
+  const triggerFileUpload = (targetDir: string = '') => {
+    setUploadTargetDir(targetDir);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
   };
 
   const createDocMutation = useMutation({
@@ -325,8 +388,14 @@ export const FileTree: React.FC = () => {
 
   const handleDrop = (e: React.DragEvent, targetNode: WorkspaceNode) => {
     e.preventDefault();
+    e.stopPropagation();
     setDragOverPath(null);
     if (!targetNode.is_directory || targetNode.is_bundle) return;
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      void uploadFilesToDir(e.dataTransfer.files, targetNode.path);
+      return;
+    }
 
     try {
       const dataStr = e.dataTransfer.getData('application/json');
@@ -385,7 +454,10 @@ export const FileTree: React.FC = () => {
       }
       const newPath = dir ? `${dir}/${newName}` : newName;
       const dotIndex = newName.lastIndexOf('.');
-      const titleCandidate = dotIndex > 0 ? newName.substring(0, dotIndex) : newName;
+      const titleCandidate =
+        isMarkdownPath(newPath, activeNode.is_bundle) && dotIndex > 0
+          ? newName.substring(0, dotIndex)
+          : newName;
       moveDocMutation.mutate({
         id: activeNode.id,
         newPath,
@@ -397,10 +469,54 @@ export const FileTree: React.FC = () => {
   const renderNode = (node: TreeNode, depth: number = 0) => {
     const isDoc = !node.is_directory || node.is_bundle;
     const isExpanded = expandedPaths.has(node.path);
-    const paddingLeft = `${depth * 14 + 8}px`;
+    // Folders have a 14px chevron + 6px gap (20px) before their folder icon.
+    // Offset documents by +20px (28px at depth 0, 48px at depth 1, etc.) so child file icons
+    // sit 20px to the right of their parent directory's folder icon.
+    const paddingLeft = isDoc ? `${depth * 20 + 28}px` : `${depth * 20 + 8}px`;
     const isDragTarget = dragOverPath === node.path;
 
     if (isDoc) {
+      const isMarkdown = isMarkdownPath(node.path, node.is_bundle);
+      const isImage = !isMarkdown && isImagePath(node.path);
+
+      if (!isMarkdown) {
+        const fileUrl = getWorkspaceFileUrl(node.path);
+        return (
+          <div
+            key={node.path}
+            draggable={Boolean(node.id)}
+            onDragStart={(e) => handleDragStart(e, node)}
+            onContextMenu={(e) => handleContextMenu(e, node)}
+            style={{ paddingLeft }}
+            data-testid={`filetree-item-${node.name}`}
+            className="group flex items-center justify-between py-1.5 pr-2 text-xs rounded-lg transition-colors cursor-pointer select-none text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover"
+          >
+            <a
+              href={fileUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 min-w-0 flex-1 truncate"
+              title={`${node.name} (Opens in new tab)`}
+            >
+              {isImage ? (
+                <ImageIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+              ) : (
+                <FileIcon className="w-3.5 h-3.5 text-sky-500 flex-shrink-0" />
+              )}
+              <span className="truncate">{node.name}</span>
+            </a>
+
+            <button
+              onClick={(e) => handleContextMenu(e, node)}
+              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted transition-opacity"
+              title="Options"
+            >
+              <MoreVertical className="w-3 h-3" />
+            </button>
+          </div>
+        );
+      }
+
       const docLink = node.id
         ? `${baseDocRoute}/${node.id}`
         : `${baseDocRoute}/by-path?path=${encodeURIComponent(node.path)}`;
@@ -415,6 +531,7 @@ export const FileTree: React.FC = () => {
           onDragStart={(e) => handleDragStart(e, node)}
           onContextMenu={(e) => handleContextMenu(e, node)}
           style={{ paddingLeft }}
+          data-testid={`filetree-item-${node.name}`}
           className={`group flex items-center justify-between py-1.5 pr-2 text-xs rounded-lg transition-colors cursor-pointer select-none ${
             isActive
               ? 'bg-cme-primary/10 text-cme-primary font-medium'
@@ -459,6 +576,7 @@ export const FileTree: React.FC = () => {
       <div key={node.path} className="space-y-0.5">
         <div
           style={{ paddingLeft }}
+          data-testid={`filetree-folder-${node.name}`}
           onClick={() => toggleExpand(node.path)}
           onContextMenu={(e) => handleContextMenu(e, node)}
           onDragOver={(e) => handleDragOver(e, node)}
@@ -507,6 +625,14 @@ export const FileTree: React.FC = () => {
 
   return (
     <div className="flex flex-col h-full">
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={handleFileUploadChange}
+        data-testid="filetree-upload-input"
+      />
       {/* FileTree Header & Quick Actions */}
       <div className="flex items-center justify-between px-2 py-1 mb-1 border-b border-cme-border-base/50">
         <span className="text-[11px] font-bold uppercase tracking-wider text-cme-text-subtle">
@@ -538,6 +664,14 @@ export const FileTree: React.FC = () => {
             <FolderPlus className="w-3.5 h-3.5" />
           </button>
           <button
+            onClick={() => triggerFileUpload('')}
+            className="p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+            title="Upload File / Image"
+            data-testid="filetree-upload-btn"
+          >
+            <Upload className="w-3.5 h-3.5" />
+          </button>
+          <button
             onClick={() => refetch()}
             disabled={isRefetching}
             className={`p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors ${
@@ -554,6 +688,17 @@ export const FileTree: React.FC = () => {
       <div
         className="flex-1 overflow-y-auto space-y-0.5 pr-1"
         data-testid="file-tree-container"
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+          }
+        }}
+        onDrop={(e) => {
+          if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+            e.preventDefault();
+            void uploadFilesToDir(e.dataTransfer.files, '');
+          }
+        }}
       >
         {isLoading ? (
           <div className="py-6 text-center text-xs text-cme-text-muted animate-pulse">
@@ -600,6 +745,18 @@ export const FileTree: React.FC = () => {
               >
                 <FolderPlus className="w-3.5 h-3.5 text-amber-500" />
                 <span>New Folder</span>
+              </button>
+              <button
+                data-testid="filetree-context-upload-btn"
+                onClick={() => {
+                  const target = contextMenu.node.path;
+                  setContextMenu(null);
+                  triggerFileUpload(target);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"
+              >
+                <Upload className="w-3.5 h-3.5 text-emerald-500" />
+                <span>Upload File / Image</span>
               </button>
               <div className="my-1 border-t border-cme-border-base" />
             </>

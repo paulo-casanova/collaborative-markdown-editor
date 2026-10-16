@@ -26,6 +26,9 @@ interface UIState {
   setTokensModalOpen: (open: boolean) => void;
   setSearchModalOpen: (open: boolean) => void;
   toggleSearchModal: () => void;
+  numberHeaders: boolean;
+  setNumberHeaders: (enabled: boolean) => void;
+  toggleNumberHeaders: () => void;
 }
 
 const getInitialSidebarWidth = (): number => {
@@ -42,6 +45,17 @@ const getInitialSidebarWidth = (): number => {
   return 256;
 };
 
+const getInitialNumberHeaders = (): boolean => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      return window.localStorage.getItem('cme_number_headers') === 'true';
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return false;
+};
+
 export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: true,
   sidebarWidth: getInitialSidebarWidth(),
@@ -55,6 +69,7 @@ export const useUIStore = create<UIState>((set) => ({
   loginModalOpen: false,
   tokensModalOpen: false,
   searchModalOpen: false,
+  numberHeaders: getInitialNumberHeaders(),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSidebarWidth: (width) => {
@@ -77,4 +92,26 @@ export const useUIStore = create<UIState>((set) => ({
   setTokensModalOpen: (tokensModalOpen) => set({ tokensModalOpen }),
   setSearchModalOpen: (searchModalOpen) => set({ searchModalOpen }),
   toggleSearchModal: () => set((state) => ({ searchModalOpen: !state.searchModalOpen })),
+  setNumberHeaders: (enabled) => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('cme_number_headers', String(enabled));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    set({ numberHeaders: enabled });
+  },
+  toggleNumberHeaders: () =>
+    set((state) => {
+      const next = !state.numberHeaders;
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem('cme_number_headers', String(next));
+        }
+      } catch {
+        // ignore storage errors
+      }
+      return { numberHeaders: next };
+    }),
 }));

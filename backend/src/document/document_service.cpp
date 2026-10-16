@@ -917,6 +917,116 @@ Result<std::string> DocumentService::read_asset(
     }
 }
 
+Result<DocumentRecord> DocumentService::upload_workspace_file(
+    const std::string& relative_path,
+    std::string_view data,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    std::string clean_path = normalize_rel_path(relative_path);
+    if (clean_path.empty() || has_path_traversal(clean_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    // Check permission on path or parent directory
+    std::filesystem::path fp(clean_path);
+    std::string parent_dir = fp.parent_path().string();
+    auto access_res = check_access(user, "", parent_dir);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Edit) {
+        if (!parent_dir.empty()) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+    }
+
+    auto write_res = storage_->write_file(clean_path, data, true);
+    if (!write_res.has_value()) {
+        return std::unexpected(write_res.error());
+    }
+
+    std::string lower_path = to_lower_string(clean_path);
+    bool is_md = lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
+    std::string title = is_md ? derive_title(data, clean_path) : fp.filename().string();
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "INSERT INTO documents (fs_path, title, owner_user_id) "
+            "VALUES ($1, $2, NULLIF($3, '')::uuid) "
+            "ON CONFLICT (fs_path) DO UPDATE "
+            "SET title = EXCLUDED.title, updated_at = NOW() "
+            "RETURNING id, COALESCE(owner_user_id::text, ''), "
+            "          TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "          TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+            clean_path,
+            title,
+            user.user_id
+        );
+        tx.commit();
+
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::DatabaseError);
+        }
+
+        return DocumentRecord{
+            .id = rows[0][0].as<std::string>(),
+            .path = clean_path,
+            .title = title,
+            .content = is_md ? std::string(data) : "",
+            .is_bundle = false,
+            .owner_user_id = rows[0][1].as<std::string>(),
+            .created_at = rows[0][2].as<std::string>(),
+            .updated_at = rows[0][3].as<std::string>()
+        };
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] upload_workspace_file DB upsert failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<std::string> DocumentService::read_workspace_file(
+    const std::string& relative_path,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    std::string clean_path = normalize_rel_path(relative_path);
+    if (clean_path.empty() || has_path_traversal(clean_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    std::string doc_id;
+    auto conn_res = db_pool_->acquire();
+    if (conn_res.has_value()) {
+        try {
+            pqxx::read_transaction tx(conn_res->get());
+            auto rows = tx.exec_params(
+                "SELECT id FROM documents WHERE fs_path = $1;",
+                clean_path
+            );
+            if (!rows.empty()) {
+                doc_id = rows[0][0].as<std::string>();
+            }
+        } catch (...) {}
+    }
+
+    auto access_res = check_access(user, doc_id, clean_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    return storage_->read_file(clean_path);
+}
+
 Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdentity& user) {
     if (!storage_ || !db_pool_) {
         return std::unexpected(ErrorCode::DatabaseError);
@@ -962,12 +1072,11 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
             std::cerr << "[ERROR] get_workspace_tree DB fetch failed: " << e.what() << "\n";
         }
 
-        // Auto-reconcile unindexed documents found on disk
+        // Auto-reconcile unindexed documents & files found on disk
         std::vector<std::string> unindexed_paths;
         for (const auto& node : list_res.value()) {
             if (!node.is_directory || node.is_bundle) {
-                if (node.relative_path.find("/images/") == std::string::npos &&
-                    node.name != "images" &&
+                if (node.relative_path.find(".bundle/") == std::string::npos &&
                     !indexed_docs.contains(node.relative_path)) {
                     unindexed_paths.push_back(node.relative_path);
                 }
@@ -979,10 +1088,17 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
                 pqxx::work wtx(conn_res->get());
                 for (const auto& path : unindexed_paths) {
                     bool is_bundle = storage_->is_bundle(path).value_or(false);
-                    std::string content_file = is_bundle ? (path + "/index.md") : path;
-                    auto content_res = storage_->read_file(content_file);
-                    std::string disk_content = content_res.has_value() ? content_res.value() : "";
-                    std::string title = derive_title(disk_content, path);
+                    std::string lower_path = to_lower_string(path);
+                    bool is_md = is_bundle || lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
+                    std::string title;
+                    if (is_md) {
+                        std::string content_file = is_bundle ? (path + "/index.md") : path;
+                        auto content_res = storage_->read_file(content_file);
+                        std::string disk_content = content_res.has_value() ? content_res.value() : "";
+                        title = derive_title(disk_content, path);
+                    } else {
+                        title = std::filesystem::path(path).filename().string();
+                    }
 
                     auto ins_rows = wtx.exec_params(
                         "INSERT INTO documents (fs_path, title, owner_user_id) "
@@ -1011,9 +1127,8 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
 
     nlohmann::json items = nlohmann::json::array();
     for (const auto& node : list_res.value()) {
-        // Skip internal bundle assets and images subfolders in tree listing
-        if (node.relative_path.find("/images/") != std::string::npos ||
-            node.name == "images") {
+        // Skip internal files/folders inside .bundle directories in tree listing
+        if (node.relative_path.find(".bundle/") != std::string::npos) {
             continue;
         }
 
@@ -1038,7 +1153,9 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
             item["owner_user_id"] = meta.owner_id;
             item["updated_at"] = meta.updated_at;
         } else if (!node.is_directory || node.is_bundle) {
-            item["title"] = derive_title("", node.relative_path);
+            std::string lower_path = to_lower_string(node.relative_path);
+            bool is_md = node.is_bundle || lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
+            item["title"] = is_md ? derive_title("", node.relative_path) : node.name;
         }
 
         items.push_back(std::move(item));

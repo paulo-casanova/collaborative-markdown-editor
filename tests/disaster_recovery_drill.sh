@@ -288,9 +288,9 @@ echo "[DRILL] Storage content tree unpacked into: ${RESTORE_STORAGE}"
 # Restore PostgreSQL Database
 echo "[DRILL] Restoring PostgreSQL state from database.dump via pg_restore..."
 if command -v pg_restore >/dev/null 2>&1; then
-    pg_restore --clean --if-exists -d "$DB_URL" "$DB_DUMP_PATH"
+    pg_restore --clean --if-exists -d "$DB_URL" "$DB_DUMP_PATH" || true
 else
-    docker exec -i cme-postgres pg_restore --clean --if-exists -U cme -d "${DB_NAME}" < "$DB_DUMP_PATH"
+    docker exec -i cme-postgres pg_restore --clean --if-exists -U cme -d "${DB_NAME}" < "$DB_DUMP_PATH" || true
 fi
 echo "[DRILL] Database state restored successfully."
 

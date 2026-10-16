@@ -3,6 +3,8 @@ import katex from 'katex';
 import { renderMermaidSvg } from '../utils/mermaidRenderer';
 import hljs from 'highlight.js';
 import { findHeadingPosition, slugify } from '../../navigation/DocumentOutline';
+import { isExternalUrl } from '../../../utils/linkValidator';
+import { getWorkspaceFileUrl, isMarkdownPath } from '../../../api/documents';
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -228,40 +230,142 @@ export class MermaidBlockWidget extends WidgetType {
   }
 }
 
-export class WikiLinkWidget extends WidgetType {
+export class HeadingNumberWidget extends WidgetType {
+  constructor(public numberPrefix: string) {
+    super();
+  }
+
+  eq(other: HeadingNumberWidget): boolean {
+    return this.numberPrefix === other.numberPrefix;
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement('span');
+    span.className = 'cme-heading-number font-mono text-cme-primary/85 mr-1.5 select-none';
+    span.setAttribute('data-testid', 'heading-number-badge');
+    span.textContent = `${this.numberPrefix} `;
+    return span;
+  }
+}
+
+export class ImageEmbedWidget extends WidgetType {
   constructor(
-    public target: string,
-    public label: string,
+    public alt: string,
+    public src: string,
     public from: number,
     public to: number
   ) {
     super();
   }
 
+  eq(other: ImageEmbedWidget): boolean {
+    return (
+      this.alt === other.alt &&
+      this.src === other.src &&
+      this.from === other.from &&
+      this.to === other.to
+    );
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const wrapper = document.createElement('span');
+    wrapper.className = 'cme-image-embed inline-flex flex-col items-start gap-1 my-1 select-none';
+
+    const cleanSrc = this.src.trim();
+    const resolvedUrl =
+      isExternalUrl(cleanSrc) || cleanSrc.startsWith('/') || cleanSrc.startsWith('data:')
+        ? cleanSrc
+        : getWorkspaceFileUrl(cleanSrc);
+
+    const link = document.createElement('a');
+    link.href = resolvedUrl;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.title = `${this.alt || cleanSrc} (Click to open in new tab)`;
+    link.className = 'inline-block rounded-lg overflow-hidden border border-cme-border-base bg-cme-bg-surface shadow-sm hover:border-cme-primary transition-colors';
+
+    const img = document.createElement('img');
+    img.src = resolvedUrl;
+    img.alt = this.alt || cleanSrc;
+    img.className = 'max-h-64 max-w-full object-contain block';
+    link.appendChild(img);
+    wrapper.appendChild(link);
+
+    wrapper.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      view.dispatch({ selection: { anchor: this.from + 2 } });
+      view.focus();
+    });
+
+    return wrapper;
+  }
+}
+
+export class WikiLinkWidget extends WidgetType {
+  constructor(
+    public target: string,
+    public label: string,
+    public from: number,
+    public to: number,
+    public isValid: boolean = true,
+    public isMarkdownLink: boolean = false,
+    public invalidReason: string = ''
+  ) {
+    super();
+  }
+
   eq(other: WikiLinkWidget): boolean {
-    return this.target === other.target && this.label === other.label;
+    return (
+      this.target === other.target &&
+      this.label === other.label &&
+      this.isValid === other.isValid &&
+      this.isMarkdownLink === other.isMarkdownLink
+    );
   }
 
   toDOM(view: EditorView): HTMLElement {
     const span = document.createElement('span');
-    span.className =
-      'wiki-link-node inline-block align-middle select-none relative my-0 mx-0.5';
+    span.className = `${this.isMarkdownLink ? 'markdown-link-node' : 'wiki-link-node'} inline-block align-middle select-none relative my-0 mx-0.5`;
+    if (!this.isValid) {
+      span.setAttribute('data-broken-link', 'true');
+    }
 
     const cleanTarget = this.target.trim();
+    const external = isExternalUrl(cleanTarget);
     const hashIndex = cleanTarget.indexOf('#');
-    const targetDoc = hashIndex >= 0 ? cleanTarget.slice(0, hashIndex).trim() : cleanTarget;
-    const rawAnchor = hashIndex >= 0 ? cleanTarget.slice(hashIndex + 1).trim() : '';
-    const isSameDoc = cleanTarget.startsWith('#') || targetDoc === '';
+    const targetDoc = !external && hashIndex >= 0 ? cleanTarget.slice(0, hashIndex).trim() : cleanTarget;
+    const rawAnchor = !external && hashIndex >= 0 ? cleanTarget.slice(hashIndex + 1).trim() : '';
+    const isSameDoc = !external && (cleanTarget.startsWith('#') || targetDoc === '');
     const anchorSlug = rawAnchor ? slugify(rawAnchor) : '';
+    const isNonMarkdownAsset = !external && !isSameDoc && !isMarkdownPath(targetDoc);
 
     const pill = document.createElement('span');
-    pill.className =
-      'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md font-mono text-xs cursor-pointer border border-cme-primary/30 bg-cme-primary/5 text-cme-primary hover:bg-cme-primary/15 transition-colors';
-    const displayLabel = this.label || (isSameDoc ? (rawAnchor ? `#${rawAnchor}` : cleanTarget) : cleanTarget);
-    pill.innerHTML = `<span class="font-medium underline decoration-cme-primary/40 underline-offset-2">${escapeHtml(displayLabel)}</span><span class="open-icon opacity-70 hover:opacity-100 hover:text-cme-primary text-[10px] ml-0.5" title="${isSameDoc ? 'Jump to heading' : 'Open file directly'}">${isSameDoc ? '↓' : '↗'}</span>`;
-    pill.title = isSameDoc
-      ? `Heading link: [[${cleanTarget}]] (Click to jump to heading)`
-      : `Wiki link: [[${cleanTarget}]] (Click for reference card, Ctrl+Click or ↗ to open file)`;
+    if (this.isValid) {
+      pill.className =
+        'inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md font-mono text-xs cursor-pointer border border-cme-primary/30 bg-cme-primary/5 text-cme-primary hover:bg-cme-primary/15 transition-colors';
+    } else {
+      pill.className =
+        'broken-link-pill inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md font-mono text-xs cursor-pointer border border-rose-500/50 bg-rose-500/10 text-rose-600 dark:text-rose-400 hover:bg-rose-500/20 transition-colors';
+    }
+
+    const displayLabel =
+      this.label || (isSameDoc ? (rawAnchor ? `#${rawAnchor}` : cleanTarget) : cleanTarget);
+
+    const underlineClass = this.isValid
+      ? 'decoration-cme-primary/40'
+      : 'decoration-rose-500/60';
+    const warningHtml = !this.isValid
+      ? `<span class="broken-link-sign text-rose-600 dark:text-rose-400 font-bold" data-testid="broken-link-indicator" title="${escapeHtml(this.invalidReason || 'Target file or heading does not exist')}">⚠</span>`
+      : '';
+
+    pill.innerHTML = `${warningHtml}<span class="font-medium underline ${underlineClass} underline-offset-2">${escapeHtml(displayLabel)}</span><span class="open-icon opacity-70 hover:opacity-100 text-[10px] ml-0.5" title="${isSameDoc ? 'Jump to heading' : 'Open target'}">${isSameDoc ? '↓' : '↗'}</span>`;
+    pill.title = !this.isValid
+      ? `Broken link: ${this.invalidReason || cleanTarget}`
+      : external
+        ? `External link: ${cleanTarget} (Click to open)`
+        : isSameDoc
+          ? `Heading link: ${cleanTarget} (Click to jump to heading)`
+          : `Link: ${cleanTarget} (Click to open)`;
     span.appendChild(pill);
 
     // Popover
@@ -272,7 +376,7 @@ export class WikiLinkWidget extends WidgetType {
       popover.innerHTML = `
         <div class="space-y-1">
           <label class="font-semibold text-cme-text-muted text-[10px]">Target Heading:</label>
-          <input type="text" readonly class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none" value="#${rawAnchor}" />
+          <input type="text" readonly class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none" value="#${escapeHtml(rawAnchor)}" />
         </div>
         <div class="flex items-center justify-between pt-1 border-t border-cme-border-base">
           <button type="button" class="jump-btn px-2 py-1 rounded text-xs font-medium bg-cme-primary text-white hover:bg-cme-primary/90 transition-colors">Jump to Heading</button>
@@ -281,8 +385,8 @@ export class WikiLinkWidget extends WidgetType {
     } else {
       popover.innerHTML = `
         <div class="space-y-1">
-          <label class="font-semibold text-cme-text-muted text-[10px]">Target Document:</label>
-          <input type="text" class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary" placeholder="e.g. guides/intro.md" value="${this.target}" />
+          <label class="font-semibold text-cme-text-muted text-[10px]">Target:</label>
+          <input type="text" class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary" placeholder="e.g. guides/intro.md" value="${escapeHtml(this.target)}" />
         </div>
         <div class="flex items-center justify-between pt-1 border-t border-cme-border-base">
           <button type="button" class="open-btn px-2 py-1 rounded text-xs font-medium bg-cme-primary text-white hover:bg-cme-primary/90 transition-colors">Open File</button>
@@ -306,6 +410,16 @@ export class WikiLinkWidget extends WidgetType {
     };
 
     const navigateToTarget = () => {
+      if (external) {
+        window.open(cleanTarget, '_blank', 'noopener,noreferrer');
+        popover.classList.add('hidden');
+        return;
+      }
+      if (isNonMarkdownAsset) {
+        window.open(getWorkspaceFileUrl(targetDoc), '_blank', 'noopener,noreferrer');
+        popover.classList.add('hidden');
+        return;
+      }
       if (isSameDoc) {
         jumpToHeading();
         return;
@@ -334,6 +448,10 @@ export class WikiLinkWidget extends WidgetType {
     pill.addEventListener('click', (e) => {
       e.stopPropagation();
       const targetEl = e.target as HTMLElement;
+      if (external || isNonMarkdownAsset) {
+        navigateToTarget();
+        return;
+      }
       if (isSameDoc) {
         const jumped = jumpToHeading();
         if (!jumped) {
@@ -341,7 +459,12 @@ export class WikiLinkWidget extends WidgetType {
         }
         return;
       }
-      if (e.ctrlKey || e.metaKey || targetEl.classList.contains('open-icon')) {
+      if (
+        this.isMarkdownLink ||
+        e.ctrlKey ||
+        e.metaKey ||
+        targetEl.classList.contains('open-icon')
+      ) {
         navigateToTarget();
         return;
       }
