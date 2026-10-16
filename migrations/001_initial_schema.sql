@@ -1,10 +1,8 @@
 -- ==============================================================================
 -- Migration 001: Initial Relational Schema
 -- Collaborative Markdown Editor (CME)
+-- Note: gen_random_uuid() is built-in to PostgreSQL core (>= pg 13).
 -- ==============================================================================
-
--- Enable UUID extension if not already available
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- Migration tracking table
 CREATE TABLE IF NOT EXISTS schema_migrations (
