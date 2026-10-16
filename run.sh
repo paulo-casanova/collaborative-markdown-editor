@@ -14,6 +14,34 @@ DATA_DIR="${CME_STORAGE_ROOT_PATH:-${SCRIPT_DIR}/storage_data}"
 UI_DIR="${CME_UI_DIST_DIR:-${SCRIPT_DIR}/frontend/dist}"
 PORT="${CME_SERVER_PORT:-8080}"
 
+SERVER_PID=""
+CLEANED_UP=0
+
+cleanup() {
+  if [[ "${CLEANED_UP}" -eq 1 ]]; then
+    return
+  fi
+  CLEANED_UP=1
+
+  echo ""
+  echo "[run.sh] Shutting down..."
+
+  if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" 2>/dev/null; then
+    echo "[run.sh] Stopping cme-server (PID ${SERVER_PID})..."
+    kill -TERM "${SERVER_PID}" 2>/dev/null || true
+    wait "${SERVER_PID}" 2>/dev/null || true
+  fi
+
+  if docker ps --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
+    echo "[run.sh] Stopping Docker container '${CONTAINER_NAME}'..."
+    docker stop "${CONTAINER_NAME}" >/dev/null || true
+  fi
+
+  echo "[run.sh] Shutdown complete."
+}
+
+trap cleanup EXIT INT TERM
+
 echo "[run.sh] Checking PostgreSQL status on localhost:${PG_PORT}..."
 if ! pg_isready -h localhost -p "${PG_PORT}" -U "${PG_USER}" >/dev/null 2>&1; then
   if docker ps -a --format '{{.Names}}' | grep -qx "${CONTAINER_NAME}"; then
@@ -54,9 +82,12 @@ fi
 mkdir -p "${DATA_DIR}"
 
 echo "[run.sh] Starting cme-server on port ${PORT} (data-dir: ${DATA_DIR})..."
-exec "${SCRIPT_DIR}/build/bin/cme-server" \
+"${SCRIPT_DIR}/build/bin/cme-server" \
   --db-url "${DB_URL}" \
   --data-dir "${DATA_DIR}" \
   --embedded-ui "${UI_DIR}" \
   --port "${PORT}" \
-  "$@"
+  "$@" &
+SERVER_PID=$!
+
+wait "${SERVER_PID}" || true
