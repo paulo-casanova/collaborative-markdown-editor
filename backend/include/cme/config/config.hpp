@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 #include <cctype>
 #include "cme/common.hpp"
 
@@ -20,6 +21,7 @@ struct ServerConfig {
     int reactor_threads{2};
     int worker_threads{8};
     uint64_t max_payload_bytes{33554432}; // 32 MB
+    std::vector<std::string> cors_allowed_origins{}; // Empty by default = CORS disabled
 };
 
 struct StorageConfig {

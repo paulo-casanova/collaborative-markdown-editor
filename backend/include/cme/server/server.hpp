@@ -128,6 +128,83 @@ public:
 
     [[nodiscard]] bool is_backup_barrier_active() const noexcept { return backup_barrier_active_.load(); }
 
+    /**
+     * @brief Writes CORS response headers according to config_.server.cors_allowed_origins.
+     * If cors_allowed_origins is empty, CORS is disabled and no headers are written.
+     * Note: X-Remote-User and X-Remote-Email are NEVER advertised in CORS headers.
+     */
+    template <typename ResT>
+    void write_cors_headers(ResT* res, std::string_view req_origin = "") const {
+        const auto& allowed = config_.server.cors_allowed_origins;
+        if (allowed.empty()) {
+            return;
+        }
+
+        bool has_wildcard = false;
+        for (const auto& o : allowed) {
+            if (o == "*") {
+                has_wildcard = true;
+                break;
+            }
+        }
+
+        if (has_wildcard) {
+            res->writeHeader("Access-Control-Allow-Origin", "*");
+            res->writeHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Asset-Filename, X-File-Path");
+            res->writeHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+            return;
+        }
+
+        if (!req_origin.empty()) {
+            for (const auto& o : allowed) {
+                if (o == req_origin) {
+                    res->writeHeader("Access-Control-Allow-Origin", req_origin);
+                    res->writeHeader("Access-Control-Allow-Credentials", "true");
+                    res->writeHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Asset-Filename, X-File-Path");
+                    res->writeHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+                    res->writeHeader("Vary", "Origin");
+                    return;
+                }
+            }
+        } else if (allowed.size() == 1) {
+            res->writeHeader("Access-Control-Allow-Origin", allowed[0]);
+            res->writeHeader("Access-Control-Allow-Credentials", "true");
+            res->writeHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Asset-Filename, X-File-Path");
+            res->writeHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+            res->writeHeader("Vary", "Origin");
+        }
+    }
+
+    template <typename ResT>
+    void send_json(
+        ResT* res,
+        std::string_view status,
+        const nlohmann::json& payload,
+        const std::vector<std::pair<std::string, std::string>>& extra_headers = {},
+        std::string_view req_origin = ""
+    ) const {
+        res->writeStatus(status);
+        write_cors_headers(res, req_origin);
+        res->writeHeader("Content-Type", "application/json");
+        for (const auto& [name, val] : extra_headers) {
+            res->writeHeader(name, val);
+        }
+        res->end(payload.dump(2));
+    }
+
+    template <typename ResT>
+    void send_html(
+        ResT* res,
+        std::string_view status,
+        const std::string& html_body,
+        std::string_view req_origin = ""
+    ) const {
+        res->writeStatus(status);
+        write_cors_headers(res, req_origin);
+        res->writeHeader("Content-Type", "text/html; charset=utf-8");
+        res->end(html_body);
+    }
+
 private:
     config::AppConfig config_;
     std::atomic<bool> backup_barrier_active_{false};

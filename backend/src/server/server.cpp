@@ -19,38 +19,6 @@ namespace cme::server {
 
 namespace {
 
-void write_cors_headers(auto* res) {
-    res->writeHeader("Access-Control-Allow-Origin", "*");
-    res->writeHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Remote-User, X-Remote-Email, X-Asset-Filename");
-    res->writeHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-}
-
-void send_json(
-    auto* res,
-    std::string_view status,
-    const nlohmann::json& payload,
-    const std::vector<std::pair<std::string, std::string>>& extra_headers = {}
-) {
-    res->writeStatus(status);
-    write_cors_headers(res);
-    res->writeHeader("Content-Type", "application/json");
-    for (const auto& [name, val] : extra_headers) {
-        res->writeHeader(name, val);
-    }
-    res->end(payload.dump(2));
-}
-
-void send_html(
-    auto* res,
-    std::string_view status,
-    const std::string& html_body
-) {
-    res->writeStatus(status);
-    write_cors_headers(res);
-    res->writeHeader("Content-Type", "text/html; charset=utf-8");
-    res->end(html_body);
-}
-
 std::string url_decode(std::string_view in) {
     std::string out;
     out.reserve(in.size());
@@ -343,10 +311,10 @@ Result<void> Server::start() {
     uws_app_ = &app;
 
     // CORS Preflight handler
-    app.options("/*", [](auto *res, auto *req) {
-        (void)req;
+    app.options("/*", [this](auto *res, auto *req) {
+        std::string origin = std::string(req->getHeader("origin"));
         res->writeStatus("204 No Content");
-        write_cors_headers(res);
+        write_cors_headers(res, origin);
         res->end();
     });
 
@@ -823,7 +791,7 @@ Result<void> Server::start() {
         else if (lower_p.ends_with(".wav")) content_type = "audio/wav";
 
         res->writeStatus("200 OK");
-        write_cors_headers(res);
+        write_cors_headers(res, req->getHeader("origin"));
         res->writeHeader("Content-Type", content_type);
         res->writeHeader("Content-Disposition", "inline");
         res->end(file_res.value());
@@ -1408,7 +1376,7 @@ Result<void> Server::start() {
         }
 
         res->writeStatus("200 OK");
-        write_cors_headers(res);
+        write_cors_headers(res, req->getHeader("origin"));
         res->writeHeader("Content-Type", "text/markdown; charset=utf-8");
         res->end(raw_res.value());
     });
@@ -1595,7 +1563,7 @@ Result<void> Server::start() {
         else if (filename.ends_with(".webp")) content_type = "image/webp";
 
         res->writeStatus("200 OK");
-        write_cors_headers(res);
+        write_cors_headers(res, req->getHeader("origin"));
         res->writeHeader("Content-Type", content_type);
         res->end(asset_res.value());
     });
@@ -3509,7 +3477,7 @@ Result<void> Server::start() {
                 } else if (candidate.has_extension() && candidate.extension() != ".html") {
                     // Explicit static asset requested but not found -> 404
                     res->writeStatus("404 Not Found");
-                    write_cors_headers(res);
+                    write_cors_headers(res, req->getHeader("origin"));
                     res->end("Not Found");
                     return;
                 } else {
@@ -3525,7 +3493,7 @@ Result<void> Server::start() {
 
             if (target_str.rfind(root_str, 0) != 0 || !std::filesystem::exists(canonical_target, ec)) {
                 res->writeStatus("404 Not Found");
-                write_cors_headers(res);
+                write_cors_headers(res, req->getHeader("origin"));
                 res->end("Not Found");
                 return;
             }
@@ -3533,7 +3501,7 @@ Result<void> Server::start() {
             std::ifstream file(canonical_target, std::ios::binary);
             if (!file) {
                 res->writeStatus("404 Not Found");
-                write_cors_headers(res);
+                write_cors_headers(res, req->getHeader("origin"));
                 res->end("Not Found");
                 return;
             }
@@ -3542,7 +3510,7 @@ Result<void> Server::start() {
             std::string_view content_type = get_mime_type(canonical_target);
 
             res->writeStatus("200 OK");
-            write_cors_headers(res);
+            write_cors_headers(res, req->getHeader("origin"));
             res->writeHeader("Content-Type", content_type);
             if (canonical_target.filename() == "index.html") {
                 res->writeHeader("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -3552,7 +3520,7 @@ Result<void> Server::start() {
             res->end(body);
         });
     } else {
-        app.get("/", [](auto *res, auto *req) {
+        app.get("/", [this](auto *res, auto *req) {
             (void)req;
             send_json(res, "200 OK", {
                 {"name", "Collaborative Markdown Editor"},

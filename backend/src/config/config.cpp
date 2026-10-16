@@ -12,6 +12,17 @@ namespace {
 void apply_env_overrides(AppConfig& cfg) {
     if (const char* v = std::getenv("CME_SERVER_BIND")) cfg.server.bind = v;
     if (const char* v = std::getenv("CME_SERVER_PORT")) cfg.server.port = std::stoi(v);
+    if (const char* v = std::getenv("CME_SERVER_CORS_ALLOWED_ORIGINS")) {
+        cfg.server.cors_allowed_origins.clear();
+        std::string list_str(v);
+        std::stringstream ss(list_str);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+            if (!item.empty()) cfg.server.cors_allowed_origins.push_back(item);
+        }
+    }
     if (const char* v = std::getenv("CME_STORAGE_BACKEND")) cfg.storage.backend = v;
     if (const char* v = std::getenv("CME_STORAGE_ROOT_PATH")) cfg.storage.root_path = v;
     if (const char* v = std::getenv("CME_STORAGE_S3_BUCKET")) cfg.storage.s3_bucket = v;
@@ -53,6 +64,23 @@ void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
         if (s["reactor_threads"]) cfg.server.reactor_threads = s["reactor_threads"].as<int>();
         if (s["worker_threads"]) cfg.server.worker_threads = s["worker_threads"].as<int>();
         if (s["max_payload_bytes"]) cfg.server.max_payload_bytes = s["max_payload_bytes"].as<uint64_t>();
+        if (s["cors_allowed_origins"]) {
+            cfg.server.cors_allowed_origins.clear();
+            if (s["cors_allowed_origins"].IsSequence()) {
+                for (const auto& item : s["cors_allowed_origins"]) {
+                    cfg.server.cors_allowed_origins.push_back(item.as<std::string>());
+                }
+            } else if (s["cors_allowed_origins"].IsScalar()) {
+                std::string val = s["cors_allowed_origins"].as<std::string>();
+                std::stringstream ss(val);
+                std::string item;
+                while (std::getline(ss, item, ',')) {
+                    while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+                    while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+                    if (!item.empty()) cfg.server.cors_allowed_origins.push_back(item);
+                }
+            }
+        }
     }
 
     if (root["storage"]) {
@@ -210,6 +238,16 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
             cfg.logging.level = argv[++i];
         } else if (arg == "--verify-integrity") {
             cfg.verify_integrity_only = true;
+        } else if (arg == "--cors-allowed-origins" && i + 1 < argc) {
+            cfg.server.cors_allowed_origins.clear();
+            std::string list_str(argv[++i]);
+            std::stringstream ss(list_str);
+            std::string item;
+            while (std::getline(ss, item, ',')) {
+                while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+                while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+                if (!item.empty()) cfg.server.cors_allowed_origins.push_back(item);
+            }
         }
     }
 

@@ -514,6 +514,93 @@ int main() {
         std::filesystem::remove_all(proxy_server_storage);
     }
 
+    // -------------------------------------------------------------------------
+    // 6. CORS Policy Configuration Verification
+    // -------------------------------------------------------------------------
+    std::cout << "\n[TEST 6] Testing CORS Policies (disabled by default, specific origin, wildcard)...\n";
+    {
+        // 6.1. Server A: Default configuration (cors_allowed_origins empty -> CORS disabled)
+        std::filesystem::path cors_storage_a = std::filesystem::temp_directory_path() / "cme_cors_test_a";
+        std::filesystem::remove_all(cors_storage_a);
+        cme::config::AppConfig cfg_a;
+        cfg_a.server.bind = "127.0.0.1";
+        cfg_a.server.port = 18084;
+        cfg_a.storage.root_path = cors_storage_a.string();
+        cfg_a.database.url = db_url;
+        // cors_allowed_origins is empty by default
+
+        auto srv_a = std::make_shared<cme::server::Server>(cfg_a);
+        std::thread th_a([srv_a]() { auto r = srv_a->start(); (void)r; });
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        // When CORS is disabled, no Access-Control-Allow-Origin header is emitted
+        auto resp_a = http_curl("OPTIONS", "http://127.0.0.1:18084/api/v1/auth/me", {"Origin: https://attacker.com"});
+        assert(resp_a.headers.find("Access-Control-Allow-Origin") == std::string::npos);
+        assert(resp_a.headers.find("X-Remote-User") == std::string::npos);
+
+        auto resp_a_get = http_curl("GET", "http://127.0.0.1:18084/api/v1/auth/me", {"Origin: https://attacker.com"});
+        assert(resp_a_get.headers.find("Access-Control-Allow-Origin") == std::string::npos);
+        assert(resp_a_get.headers.find("X-Remote-User") == std::string::npos);
+        std::cout << "  - Default server (CORS disabled): no Access-Control-Allow-Origin or X-Remote-User headers emitted.\n";
+
+        srv_a->stop();
+        th_a.join();
+        std::filesystem::remove_all(cors_storage_a);
+
+        // 6.2. Server B: Specific origin configured ("https://editor.example.com")
+        std::filesystem::path cors_storage_b = std::filesystem::temp_directory_path() / "cme_cors_test_b";
+        std::filesystem::remove_all(cors_storage_b);
+        cme::config::AppConfig cfg_b;
+        cfg_b.server.bind = "127.0.0.1";
+        cfg_b.server.port = 18084;
+        cfg_b.storage.root_path = cors_storage_b.string();
+        cfg_b.database.url = db_url;
+        cfg_b.server.cors_allowed_origins = {"https://editor.example.com"};
+
+        auto srv_b = std::make_shared<cme::server::Server>(cfg_b);
+        std::thread th_b([srv_b]() { auto r = srv_b->start(); (void)r; });
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        // Matching origin gets Access-Control-Allow-Origin and credentials
+        auto resp_b_ok = http_curl("OPTIONS", "http://127.0.0.1:18084/api/v1/auth/me", {"Origin: https://editor.example.com"});
+        assert(resp_b_ok.headers.find("Access-Control-Allow-Origin: https://editor.example.com") != std::string::npos);
+        assert(resp_b_ok.headers.find("Access-Control-Allow-Credentials: true") != std::string::npos);
+        assert(resp_b_ok.headers.find("X-Remote-User") == std::string::npos); // Strictly absent!
+
+        // Disallowed origin gets NO Access-Control-Allow-Origin header
+        auto resp_b_disallowed = http_curl("OPTIONS", "http://127.0.0.1:18084/api/v1/auth/me", {"Origin: https://evil.com"});
+        assert(resp_b_disallowed.headers.find("Access-Control-Allow-Origin: https://evil.com") == std::string::npos);
+
+        std::cout << "  - Specific origin server: allows designated origin with credentials, rejects unauthorized origins.\n";
+
+        srv_b->stop();
+        th_b.join();
+        std::filesystem::remove_all(cors_storage_b);
+
+        // 6.3. Server C: Explicit wildcard configured ("*")
+        std::filesystem::path cors_storage_c = std::filesystem::temp_directory_path() / "cme_cors_test_c";
+        std::filesystem::remove_all(cors_storage_c);
+        cme::config::AppConfig cfg_c;
+        cfg_c.server.bind = "127.0.0.1";
+        cfg_c.server.port = 18084;
+        cfg_c.storage.root_path = cors_storage_c.string();
+        cfg_c.database.url = db_url;
+        cfg_c.server.cors_allowed_origins = {"*"};
+
+        auto srv_c = std::make_shared<cme::server::Server>(cfg_c);
+        std::thread th_c([srv_c]() { auto r = srv_c->start(); (void)r; });
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        auto resp_c = http_curl("OPTIONS", "http://127.0.0.1:18084/api/v1/auth/me", {"Origin: https://any-site.com"});
+        assert(resp_c.headers.find("Access-Control-Allow-Origin: *") != std::string::npos);
+        assert(resp_c.headers.find("X-Remote-User") == std::string::npos); // Strictly absent even with wildcard!
+        std::cout << "  - Wildcard server: emits '*' but never leaks X-Remote-User or X-Remote-Email.\n";
+
+        srv_c->stop();
+        th_c.join();
+        std::filesystem::remove_all(cors_storage_c);
+    }
+
     // Clean up temporary files
     std::filesystem::remove(admin_cfg);
     std::filesystem::remove_all(server_storage);
