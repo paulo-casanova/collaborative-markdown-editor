@@ -1019,12 +1019,51 @@ Result<std::string> DocumentService::read_workspace_file(
         } catch (...) {}
     }
 
+    auto direct_res = storage_->read_file(clean_path);
+    if (direct_res.has_value()) {
+        auto access_res = check_access(user, doc_id, clean_path);
+        if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+        return direct_res;
+    }
+
+    // Basename fallback: if file was not found directly at clean_path, search workspace for matching basename
+    std::filesystem::path p(clean_path);
+    std::string filename = p.filename().string();
+    if (!filename.empty()) {
+        auto list_res = storage_->list_directory("", true);
+        if (list_res.has_value()) {
+            for (const auto& node : list_res.value()) {
+                if (!node.is_directory && node.name == filename) {
+                    std::string matched_doc_id;
+                    if (conn_res.has_value()) {
+                        try {
+                            pqxx::read_transaction tx(conn_res->get());
+                            auto rows = tx.exec_params(
+                                "SELECT id FROM documents WHERE fs_path = $1;",
+                                node.relative_path
+                            );
+                            if (!rows.empty()) {
+                                matched_doc_id = rows[0][0].as<std::string>();
+                            }
+                        } catch (...) {}
+                    }
+                    auto matched_access = check_access(user, matched_doc_id, node.relative_path);
+                    if (matched_access.has_value() && matched_access.value() >= db::AccessLevel::Read) {
+                        return storage_->read_file(node.relative_path);
+                    }
+                }
+            }
+        }
+    }
+
     auto access_res = check_access(user, doc_id, clean_path);
     if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
         return std::unexpected(ErrorCode::PermissionDenied);
     }
 
-    return storage_->read_file(clean_path);
+    return direct_res;
 }
 
 Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdentity& user) {

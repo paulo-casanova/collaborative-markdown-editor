@@ -253,7 +253,8 @@ export class ImageEmbedWidget extends WidgetType {
     public alt: string,
     public src: string,
     public from: number,
-    public to: number
+    public to: number,
+    public docPath?: string
   ) {
     super();
   }
@@ -263,7 +264,8 @@ export class ImageEmbedWidget extends WidgetType {
       this.alt === other.alt &&
       this.src === other.src &&
       this.from === other.from &&
-      this.to === other.to
+      this.to === other.to &&
+      this.docPath === other.docPath
     );
   }
 
@@ -273,9 +275,9 @@ export class ImageEmbedWidget extends WidgetType {
 
     const cleanSrc = this.src.trim();
     const resolvedUrl =
-      isExternalUrl(cleanSrc) || cleanSrc.startsWith('/') || cleanSrc.startsWith('data:')
+      isExternalUrl(cleanSrc) || cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')
         ? cleanSrc
-        : getWorkspaceFileUrl(cleanSrc);
+        : getWorkspaceFileUrl(cleanSrc, this.docPath);
 
     const link = document.createElement('a');
     link.href = resolvedUrl;
@@ -288,6 +290,22 @@ export class ImageEmbedWidget extends WidgetType {
     img.src = resolvedUrl;
     img.alt = this.alt || cleanSrc;
     img.className = 'max-h-64 max-w-full object-contain block';
+
+    img.onerror = () => {
+      wrapper.innerHTML = '';
+      const badge = document.createElement('span');
+      badge.className =
+        'inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-mono rounded border border-rose-500/40 bg-rose-500/10 text-rose-500 shadow-sm select-none cursor-pointer hover:bg-rose-500/20 transition-colors';
+      badge.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${cleanSrc}</span>`;
+      badge.title = `Image file could not be loaded: ${cleanSrc} (Click to edit)`;
+      badge.onclick = (e) => {
+        e.stopPropagation();
+        view.dispatch({ selection: { anchor: this.from + 2 } });
+        view.focus();
+      };
+      wrapper.appendChild(badge);
+    };
+
     link.appendChild(img);
     wrapper.appendChild(link);
 
@@ -309,7 +327,8 @@ export class WikiLinkWidget extends WidgetType {
     public to: number,
     public isValid: boolean = true,
     public isMarkdownLink: boolean = false,
-    public invalidReason: string = ''
+    public invalidReason: string = '',
+    public docPath?: string
   ) {
     super();
   }
@@ -319,7 +338,8 @@ export class WikiLinkWidget extends WidgetType {
       this.target === other.target &&
       this.label === other.label &&
       this.isValid === other.isValid &&
-      this.isMarkdownLink === other.isMarkdownLink
+      this.isMarkdownLink === other.isMarkdownLink &&
+      this.docPath === other.docPath
     );
   }
 
@@ -416,7 +436,7 @@ export class WikiLinkWidget extends WidgetType {
         return;
       }
       if (isNonMarkdownAsset) {
-        window.open(getWorkspaceFileUrl(targetDoc), '_blank', 'noopener,noreferrer');
+        window.open(getWorkspaceFileUrl(targetDoc, this.docPath), '_blank', 'noopener,noreferrer');
         popover.classList.add('hidden');
         return;
       }

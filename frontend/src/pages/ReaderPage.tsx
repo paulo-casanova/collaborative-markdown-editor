@@ -961,7 +961,7 @@ function renderInlineFormatted(
   // 8. Bold: **...**
   // 9. Italic: *...*
   const parts = text.split(
-    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|\[\[[^\]]+\]\]|\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g
+    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g
   );
 
   let currentOffset = 0;
@@ -1008,13 +1008,49 @@ function renderInlineFormatted(
       );
     }
 
-    // 2. Embedded images: ![alt](src)
+    // 2a. Obsidian Embeds: ![[target]] or ![[target|alt]]
+    if (part.startsWith('![[') && part.endsWith(']]')) {
+      const inner = part.slice(3, -2);
+      const pipeIdx = inner.indexOf('|');
+      const target = (pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner).trim();
+      const alt = (pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : target).trim();
+      const resolvedSrc = isExternalUrl(target) ? target : getWorkspaceFileUrl(target, currentDocPath);
+      return (
+        <a
+          key={idx}
+          href={resolvedSrc}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-block my-1 rounded border border-cme-border-base bg-cme-bg-surface overflow-hidden align-middle hover:border-cme-primary transition-colors"
+          title={`${alt || target} (Click to open)`}
+        >
+          <img
+            src={resolvedSrc}
+            alt={alt || target}
+            className="max-h-48 max-w-xs object-contain inline-block align-middle"
+            onError={(e) => {
+              const el = e.currentTarget;
+              el.style.display = 'none';
+              const parent = el.parentElement;
+              if (parent && !parent.querySelector('.broken-image-fallback')) {
+                const fallback = document.createElement('span');
+                fallback.className = 'broken-image-fallback inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono rounded border border-rose-500/40 bg-rose-500/10 text-rose-500';
+                fallback.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${target}</span>`;
+                parent.appendChild(fallback);
+              }
+            }}
+          />
+        </a>
+      );
+    }
+
+    // 2b. Standard Embedded images: ![alt](src)
     if (part.startsWith('![') && part.includes('](') && part.endsWith(')')) {
       const imgMatch = part.match(/^!\[([^\]]*)\]\(([^)\n]+)\)$/);
       if (imgMatch) {
         const alt = imgMatch[1].trim();
         const rawSrc = imgMatch[2].trim().split(/\s+/)[0];
-        const resolvedSrc = isExternalUrl(rawSrc) ? rawSrc : getWorkspaceFileUrl(rawSrc);
+        const resolvedSrc = isExternalUrl(rawSrc) ? rawSrc : getWorkspaceFileUrl(rawSrc, currentDocPath);
         return (
           <a
             key={idx}
@@ -1028,6 +1064,17 @@ function renderInlineFormatted(
               src={resolvedSrc}
               alt={alt || rawSrc}
               className="max-h-48 max-w-xs object-contain inline-block align-middle"
+              onError={(e) => {
+                const el = e.currentTarget;
+                el.style.display = 'none';
+                const parent = el.parentElement;
+                if (parent && !parent.querySelector('.broken-image-fallback')) {
+                  const fallback = document.createElement('span');
+                  fallback.className = 'broken-image-fallback inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono rounded border border-rose-500/40 bg-rose-500/10 text-rose-500';
+                  fallback.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${rawSrc}</span>`;
+                  parent.appendChild(fallback);
+                }
+              }}
             />
           </a>
         );
@@ -1139,7 +1186,7 @@ function renderInlineFormatted(
       }
 
       if (isNonMarkdownAsset) {
-        const assetUrl = getWorkspaceFileUrl(targetDoc);
+        const assetUrl = getWorkspaceFileUrl(targetDoc, currentDocPath);
         return (
           <a
             key={idx}

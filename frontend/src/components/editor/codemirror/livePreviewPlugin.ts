@@ -37,15 +37,18 @@ interface DecoItem {
   deco: Decoration;
 }
 
-export function createLivePreviewPlugin(isDark: boolean = false): Extension {
+export function createLivePreviewPlugin(
+  isDark: boolean = false,
+  documentPath?: string
+): Extension {
   return StateField.define<DecorationSet>({
     create(state) {
-      return buildLivePreviewDecorations(state, isDark);
+      return buildLivePreviewDecorations(state, isDark, documentPath);
     },
     update(decorations, tr) {
       const forced = tr.effects.some((e) => e.is(forceLivePreviewRebuild));
       if (tr.docChanged || tr.selection || forced) {
-        return buildLivePreviewDecorations(tr.state, isDark);
+        return buildLivePreviewDecorations(tr.state, isDark, documentPath);
       }
       return decorations.map(tr.changes);
     },
@@ -55,7 +58,8 @@ export function createLivePreviewPlugin(isDark: boolean = false): Extension {
 
 export function buildLivePreviewDecorations(
   state: EditorState,
-  isDark: boolean = false
+  isDark: boolean = false,
+  documentPath?: string
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
@@ -490,14 +494,36 @@ export function buildLivePreviewDecorations(
           imgFrom,
           imgTo,
           Decoration.replace({
-            widget: new ImageEmbedWidget(alt, rawSrc, imgFrom, imgTo),
+            widget: new ImageEmbedWidget(alt, rawSrc, imgFrom, imgTo, documentPath),
           })
         );
       }
     }
 
-    // 4g. Wiki Links: [[target|label]] or [[target]]
-    const wikiRegex = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+    // 4g. Obsidian File & Image Embeds: ![[target]] or ![[target|alt]]
+    const embedRegex = /!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
+    let embMatch: RegExpExecArray | null;
+    while ((embMatch = embedRegex.exec(lineText)) !== null) {
+      const embFrom = lineFrom + embMatch.index;
+      const embTo = embFrom + embMatch[0].length;
+      if (isOverlappingReplaced(embFrom, embTo)) continue;
+
+      const rawTarget = embMatch[1].trim();
+      const altOrSize = embMatch[2] ? embMatch[2].trim() : '';
+      const cursorInEmb = cursorTo >= embFrom && cursorFrom <= embTo;
+      if (!cursorInEmb && rawTarget) {
+        addReplace(
+          embFrom,
+          embTo,
+          Decoration.replace({
+            widget: new ImageEmbedWidget(altOrSize || rawTarget, rawTarget, embFrom, embTo, documentPath),
+          })
+        );
+      }
+    }
+
+    // 4h. Wiki Links: [[target|label]] or [[target]] (excluding embeds ![[...]])
+    const wikiRegex = /(?<!\!)\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
     let wMatch: RegExpExecArray | null;
     while ((wMatch = wikiRegex.exec(lineText)) !== null) {
       const wFrom = lineFrom + wMatch.index;
@@ -509,7 +535,7 @@ export function buildLivePreviewDecorations(
 
       const cursorInWiki = cursorTo >= wFrom && cursorFrom <= wTo;
       if (!cursorInWiki) {
-        const validation = validateLinkTarget(target, docText);
+        const validation = validateLinkTarget(target, docText, documentPath);
         addReplace(
           wFrom,
           wTo,
@@ -521,14 +547,15 @@ export function buildLivePreviewDecorations(
               wTo,
               validation.valid,
               false,
-              validation.reason || ''
+              validation.reason || '',
+              documentPath
             ),
           })
         );
       }
     }
 
-    // 4h. Standard Markdown Links: [label](target) (excluding images ![alt](src))
+    // 4i. Standard Markdown Links: [label](target) (excluding images ![alt](src))
     const mdLinkRegex = /(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)/g;
     let mdMatch: RegExpExecArray | null;
     while ((mdMatch = mdLinkRegex.exec(lineText)) !== null) {
@@ -541,7 +568,7 @@ export function buildLivePreviewDecorations(
 
       const cursorInLink = cursorTo >= mFrom && cursorFrom <= mTo;
       if (!cursorInLink && rawTarget) {
-        const validation = validateLinkTarget(rawTarget, docText);
+        const validation = validateLinkTarget(rawTarget, docText, documentPath);
         addReplace(
           mFrom,
           mTo,
@@ -553,7 +580,8 @@ export function buildLivePreviewDecorations(
               mTo,
               validation.valid,
               true,
-              validation.reason || ''
+              validation.reason || '',
+              documentPath
             ),
           })
         );

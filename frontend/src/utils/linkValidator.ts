@@ -1,5 +1,10 @@
 import { WorkspaceNode } from '../types/document';
-import { fetchDocumentByPath, fetchWorkspaceTree } from '../api/documents';
+import {
+  fetchDocumentByPath,
+  fetchWorkspaceTree,
+  updateWorkspaceNodesCache,
+  resolveWorkspaceRelativePath,
+} from '../api/documents';
 
 /**
  * Strips leading hierarchical section numbers from a heading text, e.g.
@@ -160,6 +165,7 @@ export function normalizeWorkspacePath(p: string): string {
 }
 
 export function updateKnownWorkspaceNodes(nodes: WorkspaceNode[]) {
+  updateWorkspaceNodesCache(nodes);
   const next = new Set<string>();
   for (const n of nodes) {
     if (!n.is_directory || n.is_bundle) {
@@ -280,11 +286,17 @@ export function validateLinkTarget(
 
   ensureWorkspaceTreeLoaded();
 
+  const relFile = currentDocPath ? resolveWorkspaceRelativePath(rawFilePart, currentDocPath) : normFile;
+
   const candidates = [
     normFile,
     normFile.toLowerCase(),
     normFile.toLowerCase().endsWith('.md') ? normFile : `${normFile}.md`,
     normFile.toLowerCase().endsWith('.md') ? normFile.toLowerCase() : `${normFile.toLowerCase()}.md`,
+    relFile,
+    relFile.toLowerCase(),
+    relFile.toLowerCase().endsWith('.md') ? relFile : `${relFile}.md`,
+    relFile.toLowerCase().endsWith('.md') ? relFile.toLowerCase() : `${relFile.toLowerCase()}.md`,
   ];
 
   // Check if file exists in workspace tree

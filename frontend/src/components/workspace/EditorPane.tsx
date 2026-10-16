@@ -493,6 +493,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             onCursorLineChange={setCursorLine}
             onEditorReady={handleEditorReady}
             autoFocus={isPrimary ? 'end' : false}
+            documentPath={document?.path}
           />
         </div>
 

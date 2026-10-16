@@ -13,8 +13,84 @@ export function isMarkdownPath(path: string, isBundle?: boolean): boolean {
   return !filename.includes('.');
 }
 
-export function getWorkspaceFileUrl(path: string): string {
-  const cleanPath = path.replace(/^\/+/, '');
+const workspacePathLookup = new Map<string, string>();
+
+export function updateWorkspaceNodesCache(nodes: WorkspaceNode[]) {
+  workspacePathLookup.clear();
+  for (const n of nodes) {
+    if (!n.is_directory || n.is_bundle) {
+      const norm = (n.path || '').replace(/^\/+/, '').replace(/\/+$/, '');
+      if (!norm) continue;
+      workspacePathLookup.set(norm.toLowerCase(), norm);
+      const lastSlash = norm.lastIndexOf('/');
+      const basename = lastSlash >= 0 ? norm.slice(lastSlash + 1) : norm;
+      workspacePathLookup.set(basename.toLowerCase(), norm);
+    }
+  }
+}
+
+export function resolveWorkspaceRelativePath(target: string, currentDocPath?: string): string {
+  let clean = (target || '').trim();
+  if (clean.startsWith('/')) {
+    return clean.replace(/^\/+/, '');
+  }
+  if (!currentDocPath) {
+    return clean;
+  }
+  const lastSlash = currentDocPath.lastIndexOf('/');
+  const docDir = lastSlash >= 0 ? currentDocPath.slice(0, lastSlash) : '';
+  if (!docDir) {
+    return clean;
+  }
+  const parts = `${docDir}/${clean}`.split('/');
+  const resolved: string[] = [];
+  for (const part of parts) {
+    if (!part || part === '.') continue;
+    if (part === '..') {
+      if (resolved.length > 0) resolved.pop();
+    } else {
+      resolved.push(part);
+    }
+  }
+  return resolved.join('/');
+}
+
+export function findWorkspacePath(target: string, currentDocPath?: string): string {
+  const clean = (target || '').trim().replace(/^\/+/, '');
+  if (!clean) return '';
+
+  // 1. If relative to currentDocPath exists in cache
+  if (currentDocPath) {
+    const rel = resolveWorkspaceRelativePath(target, currentDocPath);
+    if (workspacePathLookup.has(rel.toLowerCase())) {
+      return workspacePathLookup.get(rel.toLowerCase())!;
+    }
+  }
+
+  // 2. Direct match in lookup
+  if (workspacePathLookup.has(clean.toLowerCase())) {
+    return workspacePathLookup.get(clean.toLowerCase())!;
+  }
+
+  // 3. Basename match in lookup
+  const lastSlash = clean.lastIndexOf('/');
+  const basename = lastSlash >= 0 ? clean.slice(lastSlash + 1) : clean;
+  if (workspacePathLookup.has(basename.toLowerCase())) {
+    return workspacePathLookup.get(basename.toLowerCase())!;
+  }
+
+  // 4. Default to resolved relative path if currentDocPath provided, else clean
+  return currentDocPath ? resolveWorkspaceRelativePath(target, currentDocPath) : clean;
+}
+
+export function getWorkspaceFileUrl(path: string, currentDocPath?: string): string {
+  if (!path) return '';
+  const trimmed = path.trim();
+  if (/^(https?:\/\/|data:|blob:)/i.test(trimmed)) {
+    return trimmed;
+  }
+  const resolved = findWorkspacePath(trimmed, currentDocPath);
+  const cleanPath = (resolved || trimmed).replace(/^\/+/, '');
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
   const base = `/api/v1/workspaces/files?path=${encodeURIComponent(cleanPath)}`;
   return token ? `${base}&token=${encodeURIComponent(token)}` : base;
@@ -47,7 +123,9 @@ export async function uploadWorkspaceFile(
 
 export async function fetchWorkspaceTree(): Promise<WorkspaceNode[]> {
   const data = await apiRequest<{ tree: WorkspaceNode[] }>('/api/v1/workspaces/tree');
-  return data.tree || [];
+  const nodes = data.tree || [];
+  updateWorkspaceNodesCache(nodes);
+  return nodes;
 }
 
 export async function fetchDocument(id: string): Promise<DocumentRecord> {

@@ -172,6 +172,7 @@ interface CollaborativeEditorProps {
   editable?: boolean;
   onEditorReady?: (editor: any) => void;
   autoFocus?: boolean | 'start' | 'end' | 'all';
+  documentPath?: string;
 }
 
 const remoteCursorClassPlugin = ViewPlugin.fromClass(
@@ -219,6 +220,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   editable = true,
   onEditorReady,
   autoFocus = false,
+  documentPath,
 }) => {
   const { resolvedTheme } = useThemeStore();
   const { numberHeaders } = useUIStore();
@@ -332,7 +334,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
     const extensions: Extension[] = [
       markdown(),
-      createLivePreviewPlugin(isDark),
+      createLivePreviewPlugin(isDark, documentPath),
       cmeEditorTheme,
       remoteCursorClassPlugin,
       EditorView.lineWrapping,

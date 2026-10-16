@@ -5,7 +5,13 @@ import {
   slugifyHeading,
   matchesHeadingTarget,
   validateLinkTarget,
+  updateKnownWorkspaceNodes,
 } from '../../src/utils/linkValidator';
+import {
+  getWorkspaceFileUrl,
+  resolveWorkspaceRelativePath,
+  updateWorkspaceNodesCache,
+} from '../../src/api/documents';
 import {
   computeOrderedListRenumberingChanges,
   computeHeaderNumberingChanges,
@@ -94,5 +100,55 @@ Deep details.`;
     expect(changes[1].insert).toBe('1.1. ');
     expect(changes[2].insert).toBe('1.1.1. ');
     expect(changes[3].insert).toBe('2. ');
+  });
+
+  it('resolves relative workspace paths correctly', () => {
+    expect(resolveWorkspaceRelativePath('uk.jpg', 'specs/Test File Modified.md')).toBe('specs/uk.jpg');
+    expect(resolveWorkspaceRelativePath('./uk.jpg', 'specs/Test File Modified.md')).toBe('specs/uk.jpg');
+    expect(resolveWorkspaceRelativePath('../assets/uk.jpg', 'specs/deep/Test.md')).toBe('specs/assets/uk.jpg');
+    expect(resolveWorkspaceRelativePath('/specs/uk.jpg', 'specs/Test File.md')).toBe('specs/uk.jpg');
+    expect(resolveWorkspaceRelativePath('uk.jpg')).toBe('uk.jpg');
+  });
+
+  it('resolves getWorkspaceFileUrl with currentDocPath and workspace cache', () => {
+    updateWorkspaceNodesCache([
+      {
+        path: 'specs/uk.jpg',
+        name: 'uk.jpg',
+        is_directory: false,
+        size_bytes: 96943,
+        updated_at: '2026-10-16T00:00:00Z',
+      },
+    ]);
+
+    // When relative path from document is used
+    const urlFromDoc = getWorkspaceFileUrl('uk.jpg', 'specs/Test File Modified.md');
+    expect(urlFromDoc).toContain('path=specs%2Fuk.jpg');
+
+    // When leading slash is used
+    const urlWithSlash = getWorkspaceFileUrl('/specs/uk.jpg');
+    expect(urlWithSlash).toContain('path=specs%2Fuk.jpg');
+
+    // When only basename is used, should resolve to cached workspace path
+    const urlFromBasename = getWorkspaceFileUrl('uk.jpg');
+    expect(urlFromBasename).toContain('path=specs%2Fuk.jpg');
+  });
+
+  it('validates relative image and file links via validateLinkTarget', () => {
+    updateKnownWorkspaceNodes([
+      {
+        path: 'specs/uk.jpg',
+        name: 'uk.jpg',
+        is_directory: false,
+        size_bytes: 96943,
+        updated_at: '2026-10-16T00:00:00Z',
+      },
+    ]);
+
+    const res = validateLinkTarget('uk.jpg', undefined, 'specs/Test File Modified.md');
+    expect(res.valid).toBe(true);
+
+    const missingRes = validateLinkTarget('nonexistent.png', undefined, 'specs/Test File Modified.md');
+    expect(missingRes.valid).toBe(false);
   });
 });
