@@ -479,25 +479,25 @@ export const ReaderPage: React.FC = () => {
                       return (
                         <div
                           key={comment.id}
-                          className="rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs"
+                          className="rounded-lg border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs"
                           data-testid="comment-item"
                           data-comment-id={comment.id}
                         >
                           {/* Thread Header */}
-                          <div className="flex items-center justify-between px-3 py-2 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs">
-                            <div className="flex items-center gap-2">
+                          <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
+                            <div className="flex items-center gap-1.5 min-w-0">
                               <span
-                                className="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold text-[10px]"
+                                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0"
                                 style={{ backgroundColor: authorColor }}
                               >
                                 {initials}
                               </span>
-                              <span className="font-medium text-cme-text-base">{authorName}</span>
-                              <span className="text-cme-text-muted text-[11px] font-mono">
-                                {new Date(comment.created_at).toLocaleDateString()}
+                              <span className="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">{authorName}</span>
+                              <span className="text-cme-text-muted text-[10px] whitespace-nowrap">
+                                • {new Date(comment.created_at).toLocaleDateString()}
                               </span>
                               <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+                                className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
                                   isResolved
                                     ? 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
                                     : 'bg-cme-primary/10 text-cme-primary border border-cme-primary/20'
@@ -506,11 +506,11 @@ export const ReaderPage: React.FC = () => {
                                 {isResolved ? 'Resolved' : 'Open'}
                               </span>
                             </div>
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1 flex-shrink-0">
                               <button
                                 type="button"
                                 onClick={() => handleToggleCommentStatus(comment.id, comment.status)}
-                                className="px-2 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-[11px] font-medium transition-colors cursor-pointer"
+                                className="px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer"
                                 data-testid="resolve-comment-btn"
                                 title="Toggle resolved status"
                               >
@@ -519,25 +519,25 @@ export const ReaderPage: React.FC = () => {
                               <button
                                 type="button"
                                 onClick={() => handleDeleteComment(comment.id)}
-                                className="p-1 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 text-[11px] transition-colors cursor-pointer"
+                                className="p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors cursor-pointer"
                                 data-testid="delete-comment-btn"
                                 title="Delete comment"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Trash2 className="w-3 h-3" />
                               </button>
                             </div>
                           </div>
 
                           {/* Anchored Quote if present */}
                           {quoteText && (
-                            <div className="mx-3.5 mt-2.5 text-xs italic text-cme-text-muted border-l-2 border-cme-primary pl-2.5 py-1 bg-cme-primary/5 rounded-r">
+                            <div className="mx-3 mt-2 text-xs italic text-cme-text-muted border-l-2 border-cme-primary pl-2 py-0.5 bg-cme-primary/5 rounded-r">
                               "{quoteText}"
                             </div>
                           )}
 
                           {/* Root Comment Content */}
                           <div
-                            className="px-3.5 py-2.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
+                            className="px-3 py-1.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
                             dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(comment.content || '') }}
                           />
 
@@ -555,16 +555,16 @@ export const ReaderPage: React.FC = () => {
                                 const rColor = rAuthor.avatar_color || '#6366f1';
                                 const rInitials = rName.slice(0, 2).toUpperCase();
                                 return (
-                                  <div key={reply.id} className="px-3.5 py-2 flex items-start gap-2.5 text-xs">
+                                  <div key={reply.id} className="px-3 py-1.5 flex items-start gap-2 text-xs">
                                     <span
-                                      className="inline-flex items-center justify-center w-4 h-4 rounded-full text-white font-bold text-[9px] flex-shrink-0 mt-0.5"
+                                      className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0 mt-0.5"
                                       style={{ backgroundColor: rColor }}
                                     >
                                       {rInitials}
                                     </span>
                                     <div className="flex-1 min-w-0">
                                       <div className="flex items-center gap-1.5 mb-0.5">
-                                        <span className="font-medium text-cme-text-base">{rName}</span>
+                                        <span className="font-medium text-cme-text-base text-[11px]">{rName}</span>
                                         <span className="text-cme-text-muted text-[10px]">
                                           {new Date(reply.created_at).toLocaleDateString()}
                                         </span>
@@ -581,7 +581,7 @@ export const ReaderPage: React.FC = () => {
                           )}
 
                           {/* Inline Reply Form */}
-                          <div className="px-3 py-2 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-2">
+                          <div className="px-2.5 py-1 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-1.5">
                             <input
                               type="text"
                               placeholder="Write a reply..."
@@ -595,14 +595,14 @@ export const ReaderPage: React.FC = () => {
                                   handleReplyComment(comment.id);
                                 }
                               }}
-                              className="reply-input flex-1 px-2.5 py-1 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary"
+                              className="reply-input flex-1 px-2 py-0.5 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary"
                               data-testid="inline-reply-input"
                             />
                             <button
                               type="button"
                               onClick={() => handleReplyComment(comment.id)}
                               disabled={isSubmittingReply[comment.id]}
-                              className="reply-submit-btn px-3 py-1 rounded-md bg-cme-primary hover:bg-cme-primary/90 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50"
+                              className="reply-submit-btn px-2.5 py-0.5 rounded-md bg-cme-primary hover:bg-cme-primary/90 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50"
                               data-testid="inline-reply-submit-btn"
                             >
                               {isSubmittingReply[comment.id] ? '...' : 'Reply'}
@@ -642,25 +642,25 @@ export const ReaderPage: React.FC = () => {
                       return (
                         <div
                           key={sugg.id}
-                          className="rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs"
+                          className="rounded-lg border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs"
                           data-testid="suggestion-item"
                           data-suggestion-id={sugg.id}
                         >
                           {/* Diff Header */}
-                          <div className="flex items-center justify-between px-3 py-2 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs">
-                            <div className="flex items-center gap-2">
+                          <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
+                            <div className="flex items-center gap-1.5 min-w-0">
                               <span
-                                className="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold text-[10px]"
+                                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0"
                                 style={{ backgroundColor: authorColor }}
                               >
                                 {initials}
                               </span>
-                              <span className="font-medium text-cme-text-base">{authorName}</span>
-                              <span className="text-[11px] text-cme-text-muted font-mono">
-                                {new Date(sugg.created_at).toLocaleDateString()}
+                              <span className="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">{authorName}</span>
+                              <span className="text-[10px] text-cme-text-muted whitespace-nowrap">
+                                • {new Date(sugg.created_at).toLocaleDateString()}
                               </span>
                               <span
-                                className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-semibold tracking-wider ${
+                                className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
                                   isAccepted
                                     ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
                                     : isPending
@@ -672,11 +672,11 @@ export const ReaderPage: React.FC = () => {
                               </span>
                             </div>
                             {isPending && (
-                              <div className="flex items-center gap-1.5">
+                              <div className="flex items-center gap-1 flex-shrink-0">
                                 <button
                                   type="button"
                                   onClick={() => handleAcceptSuggestion(sugg.id)}
-                                  className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-xs flex items-center gap-1 transition-all shadow-xs cursor-pointer"
+                                  className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-[11px] leading-tight flex items-center gap-1 transition-all shadow-xs cursor-pointer"
                                   data-testid="accept-suggestion-btn"
                                 >
                                   ✓ Accept
@@ -684,7 +684,7 @@ export const ReaderPage: React.FC = () => {
                                 <button
                                   type="button"
                                   onClick={() => handleRejectSuggestion(sugg.id)}
-                                  className="px-2.5 py-1 rounded-md bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-xs flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer"
+                                  className="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-[11px] leading-tight flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer"
                                   data-testid="reject-suggestion-btn"
                                 >
                                   ✕ Reject
@@ -695,13 +695,13 @@ export const ReaderPage: React.FC = () => {
 
                           {/* Unified Diff Block */}
                           <div className="font-mono text-xs divide-y divide-cme-border-base/30 bg-cme-bg-surface">
-                            <div className="diff-deletion flex items-start gap-2.5 px-3 py-2 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
+                            <div className="diff-deletion flex items-start gap-2 px-2.5 py-1 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
                               <span className="select-none font-bold text-rose-500 flex-shrink-0">-</span>
                               <span className="line-through whitespace-pre-wrap break-all leading-relaxed">
                                 {sugg.original_text}
                               </span>
                             </div>
-                            <div className="diff-addition flex items-start gap-2.5 px-3 py-2 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
+                            <div className="diff-addition flex items-start gap-2 px-2.5 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
                               <span className="select-none font-bold text-emerald-500 flex-shrink-0">+</span>
                               <span className="whitespace-pre-wrap break-all leading-relaxed">
                                 {sugg.suggested_text}

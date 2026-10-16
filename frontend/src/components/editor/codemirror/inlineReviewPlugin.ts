@@ -64,13 +64,13 @@ export class InlineSuggestionWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement('div');
     container.className =
-      'cme-inline-suggestion-widget py-1 my-1.5 select-none font-sans text-xs';
+      'cme-inline-suggestion-widget py-0.5 my-1 select-none font-sans text-xs';
     container.setAttribute('data-testid', 'inline-suggestion-widget');
     container.setAttribute('data-suggestion-id', this.suggestion.id);
 
     const card = document.createElement('div');
     card.className =
-      'rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm transition-all hover:border-cme-border-hover';
+      'rounded-lg border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs transition-all hover:border-cme-border-hover';
 
     const author = this.suggestion.author || {
       username: 'Reviewer',
@@ -99,30 +99,30 @@ export class InlineSuggestionWidget extends WidgetType {
     // Header
     const header = document.createElement('div');
     header.className =
-      'flex items-center justify-between px-3 py-1.5 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs';
+      'flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]';
 
     const authorGroup = document.createElement('div');
-    authorGroup.className = 'flex items-center gap-2';
+    authorGroup.className = 'flex items-center gap-1.5 min-w-0';
     authorGroup.innerHTML = `
-      <span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold text-[10px] select-none" style="background-color: ${escapeHtml(authorColor)}">
+      <span class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] select-none flex-shrink-0" style="background-color: ${escapeHtml(authorColor)}">
         ${escapeHtml(initials)}
       </span>
-      <span class="font-medium text-cme-text-base">${escapeHtml(authorName)}</span>
-      <span class="text-cme-text-muted text-[11px]">${timeAgo(this.suggestion.created_at)}</span>
-      <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${statusBadgeClass}">
+      <span class="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">${escapeHtml(authorName)}</span>
+      <span class="text-cme-text-muted text-[10px] whitespace-nowrap">• ${timeAgo(this.suggestion.created_at)}</span>
+      <span class="px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${statusBadgeClass}">
         ${statusLabel}
       </span>
     `;
     header.appendChild(authorGroup);
 
     const actionButtons = document.createElement('div');
-    actionButtons.className = 'action-buttons flex items-center gap-1.5';
+    actionButtons.className = 'action-buttons flex items-center gap-1 flex-shrink-0';
 
     if (isPending) {
       const acceptBtn = document.createElement('button');
       acceptBtn.type = 'button';
       acceptBtn.className =
-        'accept-btn px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-xs flex items-center gap-1 transition-all shadow-xs cursor-pointer';
+        'accept-btn px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-[11px] leading-tight flex items-center gap-1 transition-all shadow-xs cursor-pointer';
       acceptBtn.setAttribute('data-testid', 'accept-suggestion-btn');
       acceptBtn.textContent = '✓ Accept';
       acceptBtn.addEventListener('click', (e) => {
@@ -148,7 +148,7 @@ export class InlineSuggestionWidget extends WidgetType {
       const rejectBtn = document.createElement('button');
       rejectBtn.type = 'button';
       rejectBtn.className =
-        'reject-btn px-2.5 py-1 rounded-md bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-xs flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer';
+        'reject-btn px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-[11px] leading-tight flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer';
       rejectBtn.setAttribute('data-testid', 'reject-suggestion-btn');
       rejectBtn.textContent = '✕ Reject';
       rejectBtn.addEventListener('click', (e) => {
@@ -221,13 +221,13 @@ export class InlineCommentThreadWidget extends WidgetType {
   toDOM(_view: EditorView): HTMLElement {
     const container = document.createElement('div');
     container.className =
-      'cme-inline-comment-widget py-1 my-1.5 select-none font-sans text-xs';
+      'cme-inline-comment-widget py-0.5 my-1 select-none font-sans text-xs';
     container.setAttribute('data-testid', 'inline-comment-widget');
     container.setAttribute('data-comment-id', this.comment.id);
 
     const card = document.createElement('div');
     card.className =
-      'rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm transition-all hover:border-cme-border-hover';
+      'rounded-lg border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-xs transition-all hover:border-cme-border-hover';
 
     const author = this.comment.author || {
       username: 'Reviewer',
@@ -244,17 +244,17 @@ export class InlineCommentThreadWidget extends WidgetType {
     // Header
     const header = document.createElement('div');
     header.className =
-      'flex items-center justify-between px-3 py-1.5 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs';
+      'flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]';
 
     const authorGroup = document.createElement('div');
-    authorGroup.className = 'flex items-center gap-2';
+    authorGroup.className = 'flex items-center gap-1.5 min-w-0';
     authorGroup.innerHTML = `
-      <span class="inline-flex items-center justify-center w-5 h-5 rounded-full text-white font-bold text-[10px] select-none" style="background-color: ${escapeHtml(authorColor)}">
+      <span class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] select-none flex-shrink-0" style="background-color: ${escapeHtml(authorColor)}">
         ${escapeHtml(initials)}
       </span>
-      <span class="font-medium text-cme-text-base">${escapeHtml(authorName)}</span>
-      <span class="text-cme-text-muted text-[11px]">${timeAgo(this.comment.created_at)}</span>
-      <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider ${
+      <span class="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">${escapeHtml(authorName)}</span>
+      <span class="text-cme-text-muted text-[10px] whitespace-nowrap">• ${timeAgo(this.comment.created_at)}</span>
+      <span class="px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
         isResolved
           ? 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
           : 'bg-cme-primary/10 text-cme-primary border border-cme-primary/20'
@@ -265,12 +265,12 @@ export class InlineCommentThreadWidget extends WidgetType {
     header.appendChild(authorGroup);
 
     const actionButtons = document.createElement('div');
-    actionButtons.className = 'action-buttons flex items-center gap-1';
+    actionButtons.className = 'action-buttons flex items-center gap-1 flex-shrink-0';
 
     const resolveBtn = document.createElement('button');
     resolveBtn.type = 'button';
     resolveBtn.className =
-      'resolve-btn px-2 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover active:scale-95 text-cme-text-muted hover:text-cme-text-base text-[11px] font-medium transition-colors cursor-pointer';
+      'resolve-btn px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover active:scale-95 text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer';
     resolveBtn.setAttribute('data-testid', 'resolve-comment-btn');
     resolveBtn.title = 'Toggle resolved status';
     resolveBtn.textContent = isResolved ? 'Reopen' : '✓ Resolve';
@@ -283,7 +283,7 @@ export class InlineCommentThreadWidget extends WidgetType {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
     deleteBtn.className =
-      'delete-btn px-1.5 py-0.5 rounded hover:bg-rose-500/10 active:scale-95 text-cme-text-muted hover:text-rose-500 text-[11px] transition-colors cursor-pointer';
+      'delete-btn px-1 py-0.5 rounded hover:bg-rose-500/10 active:scale-95 text-cme-text-muted hover:text-rose-500 text-[10px] leading-tight transition-colors cursor-pointer';
     deleteBtn.setAttribute('data-testid', 'delete-comment-btn');
     deleteBtn.title = 'Delete comment';
     deleteBtn.textContent = '🗑';
@@ -299,7 +299,7 @@ export class InlineCommentThreadWidget extends WidgetType {
     // Root Comment Content
     const body = document.createElement('div');
     body.className =
-      'px-3.5 py-2.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed select-text';
+      'px-3 py-1.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed select-text';
     body.innerHTML = parseMarkdownToHtml(this.comment.content || '');
 
     // Threaded Replies
@@ -318,14 +318,14 @@ export class InlineCommentThreadWidget extends WidgetType {
       const rInitials = rName.slice(0, 2).toUpperCase();
 
       const replyRow = document.createElement('div');
-      replyRow.className = 'px-3.5 py-2 flex items-start gap-2.5 text-xs select-text';
+      replyRow.className = 'px-3 py-1.5 flex items-start gap-2 text-xs select-text';
       replyRow.innerHTML = `
-        <span class="inline-flex items-center justify-center w-4 h-4 rounded-full text-white font-bold text-[9px] select-none flex-shrink-0 mt-0.5" style="background-color: ${escapeHtml(rColor)}">
+        <span class="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] select-none flex-shrink-0 mt-0.5" style="background-color: ${escapeHtml(rColor)}">
           ${escapeHtml(rInitials)}
         </span>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-1.5 mb-0.5">
-            <span class="font-medium text-cme-text-base">${escapeHtml(rName)}</span>
+            <span class="font-medium text-cme-text-base text-[11px]">${escapeHtml(rName)}</span>
             <span class="text-cme-text-muted text-[10px]">${timeAgo(reply.created_at)}</span>
           </div>
           <div class="text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed">
@@ -339,19 +339,19 @@ export class InlineCommentThreadWidget extends WidgetType {
     // Inline Reply Input Form
     const replyForm = document.createElement('div');
     replyForm.className =
-      'px-3 py-2 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-2';
+      'px-2.5 py-1 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-1.5';
 
     const replyInput = document.createElement('input');
     replyInput.type = 'text';
     replyInput.placeholder = 'Write an inline reply...';
     replyInput.className =
-      'reply-input flex-1 px-2.5 py-1 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary';
+      'reply-input flex-1 px-2 py-0.5 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary';
     replyInput.setAttribute('data-testid', 'inline-reply-input');
 
     const replySubmit = document.createElement('button');
     replySubmit.type = 'button';
     replySubmit.className =
-      'reply-submit-btn px-3 py-1 rounded-md bg-cme-primary hover:bg-cme-primary/90 active:scale-95 text-white font-medium text-xs transition-all cursor-pointer';
+      'reply-submit-btn px-2.5 py-0.5 rounded-md bg-cme-primary hover:bg-cme-primary/90 active:scale-95 text-white font-medium text-xs transition-all cursor-pointer';
     replySubmit.setAttribute('data-testid', 'inline-reply-submit-btn');
     replySubmit.textContent = 'Reply';
 
