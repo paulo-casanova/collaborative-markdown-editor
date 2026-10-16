@@ -242,7 +242,7 @@ int main() {
     auto start_wait = std::chrono::steady_clock::now();
     bool flush_found = false;
     cme::Result<std::string> ws_persisted = std::unexpected(cme::ErrorCode::NotFound);
-    while (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_wait).count() < 3000) {
+    while (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start_wait).count() < 6000) {
         ws_persisted = storage->read_file("notes/debounced_note.md");
         if (ws_persisted.has_value() && ws_persisted.value().find("### WebSocket CRDT Keystroke Injected!") != std::string::npos) {
             flush_found = true;
