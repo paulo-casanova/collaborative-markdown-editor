@@ -216,8 +216,7 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
       setActiveId(current);
     };
 
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    // Also listen to main content container if scrollable
+    window.addEventListener('scroll', handleScroll, { passive: true, capture: true });
     const mainEl = document.querySelector('main');
     if (mainEl) {
       mainEl.addEventListener('scroll', handleScroll, { passive: true });
@@ -226,7 +225,7 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
     handleScroll();
 
     return () => {
-      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('scroll', handleScroll, { capture: true });
       if (mainEl) {
         mainEl.removeEventListener('scroll', handleScroll);
       }

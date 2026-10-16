@@ -96,11 +96,11 @@ export const AppShell: React.FC = () => {
   }, [navigate]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-cme-bg-base text-cme-text-base">
+    <div className="h-screen flex flex-col bg-cme-bg-base text-cme-text-base overflow-hidden">
       <Header />
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
         <Sidebar />
-        <main className="flex-1 overflow-y-auto bg-cme-bg-base">
+        <main className="flex-1 overflow-y-auto bg-cme-bg-base min-h-0 relative">
           <Outlet />
         </main>
       </div>

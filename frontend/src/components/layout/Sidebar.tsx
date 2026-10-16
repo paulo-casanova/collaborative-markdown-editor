@@ -57,7 +57,7 @@ export const Sidebar: React.FC = () => {
   return (
     <aside
       style={{ width: `${sidebarWidth || 256}px` }}
-      className="relative flex-shrink-0 border-r border-cme-border-base bg-cme-bg-surface flex flex-col h-[calc(100vh-3.5rem)] select-none"
+      className="relative flex-shrink-0 border-r border-cme-border-base bg-cme-bg-surface flex flex-col h-full select-none"
       data-testid="left-sidebar"
     >
       {/* Right-edge Resize Handle */}

@@ -319,7 +319,7 @@ export const ReaderPage: React.FC = () => {
   return (
     <div className="min-h-full bg-cme-bg-base text-cme-text-base pb-24">
       {/* Top Reader Controls Header */}
-      <header className="sticky top-0 z-20 bg-cme-bg-base/90 backdrop-blur border-b border-cme-border-base px-4 md:px-8 py-3">
+      <header className="sticky top-0 z-20 bg-cme-bg-base/95 backdrop-blur-md border-b border-cme-border-base px-4 md:px-8 py-3 shadow-xs">
         <div className={`${containerWidthClass} flex items-center justify-between gap-4`}>
           {/* Left Metadata */}
           <div className="flex items-center gap-3 truncate">
@@ -437,7 +437,7 @@ export const ReaderPage: React.FC = () => {
       {/* Main Reading Area with Right Sticky Table of Contents */}
       <div className={`${containerWidthClass} px-4 md:px-8 pt-8 flex gap-8 items-start`}>
         {/* Document Article Body */}
-        <main className={`flex-1 min-w-0 ${widthClass} transition-all`}>
+        <div className={`flex-1 min-w-0 ${widthClass} transition-all`}>
           <article
             className={`prose dark:prose-invert max-w-none text-cme-text-base ${fontClass} leading-relaxed`}
             data-testid="reader-article"
@@ -854,10 +854,10 @@ export const ReaderPage: React.FC = () => {
               )}
             </section>
           )}
-        </main>
+        </div>
 
         {/* Right Sticky Column: Document Outline (Table of Contents) */}
-        <aside className="w-64 lg:w-72 hidden md:block sticky top-20 flex-shrink-0">
+        <aside className="w-64 lg:w-72 hidden md:block sticky top-20 flex-shrink-0 self-start">
           <div className="border border-cme-border-base rounded-2xl bg-cme-bg-surface overflow-hidden shadow-sm">
             <DocumentOutline headings={headings} markdown={document.content} />
           </div>
