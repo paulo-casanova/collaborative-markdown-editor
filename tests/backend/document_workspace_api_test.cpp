@@ -1,4 +1,5 @@
 #include "cme/document/document_service.hpp"
+#include "cme/storage/posix_storage_backend.hpp"
 #include "cme/auth/crypto_utils.hpp"
 #include "cme/auth/session_manager.hpp"
 #include "cme/db/migration_runner.hpp"

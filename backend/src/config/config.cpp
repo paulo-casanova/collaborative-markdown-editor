@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <iostream>
 #include <cstdlib>
+#include <sstream>
 
 namespace cme::config {
 
@@ -11,10 +12,30 @@ namespace {
 void apply_env_overrides(AppConfig& cfg) {
     if (const char* v = std::getenv("CME_SERVER_BIND")) cfg.server.bind = v;
     if (const char* v = std::getenv("CME_SERVER_PORT")) cfg.server.port = std::stoi(v);
+    if (const char* v = std::getenv("CME_STORAGE_BACKEND")) cfg.storage.backend = v;
     if (const char* v = std::getenv("CME_STORAGE_ROOT_PATH")) cfg.storage.root_path = v;
+    if (const char* v = std::getenv("CME_STORAGE_S3_BUCKET")) cfg.storage.s3_bucket = v;
+    if (const char* v = std::getenv("CME_STORAGE_S3_REGION")) cfg.storage.s3_region = v;
+    if (const char* v = std::getenv("CME_STORAGE_S3_ENDPOINT")) cfg.storage.s3_endpoint = v;
+    if (const char* v = std::getenv("CME_STORAGE_S3_PREFIX")) cfg.storage.s3_prefix = v;
+    if (const char* v = std::getenv("CME_STORAGE_S3_ACCESS_KEY")) cfg.storage.s3_access_key = v;
+    if (const char* v = std::getenv("CME_STORAGE_S3_SECRET_KEY")) cfg.storage.s3_secret_key = v;
     if (const char* v = std::getenv("CME_DATABASE_URL")) cfg.database.url = v;
     if (const char* v = std::getenv("CME_AUTHN_PROVIDER")) cfg.authn.provider = v;
     if (const char* v = std::getenv("CME_AUTHN_DELEGATED_HEADER")) cfg.authn.delegated_header = v;
+    if (const char* v = std::getenv("CME_AUTHN_PROXY_SECRET_HEADER")) cfg.authn.proxy_secret_header = v;
+    if (const char* v = std::getenv("CME_AUTHN_PROXY_SECRET_VALUE")) cfg.authn.proxy_secret_value = v;
+    if (const char* v = std::getenv("CME_AUTHN_REQUIRED_HEADERS")) {
+        std::string list_str(v);
+        std::stringstream ss(list_str);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            auto eq = item.find('=');
+            if (eq != std::string::npos) {
+                cfg.authn.required_headers[item.substr(0, eq)] = item.substr(eq + 1);
+            }
+        }
+    }
     if (const char* v = std::getenv("CME_AUTHZ_ADMIN_PROVIDER")) cfg.authz.admin_provider = v;
     if (const char* v = std::getenv("CME_AUTHZ_ADMIN_COMMAND")) cfg.authz.admin_command = v;
     if (const char* v = std::getenv("CME_LOGGING_LEVEL")) cfg.logging.level = v;
@@ -40,6 +61,13 @@ void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
         if (st["root_path"]) cfg.storage.root_path = st["root_path"].as<std::string>();
         if (st["trash_retention_days"]) cfg.storage.trash_retention_days = st["trash_retention_days"].as<int>();
         if (st["snapshot_interval_seconds"]) cfg.storage.snapshot_interval_seconds = st["snapshot_interval_seconds"].as<int>();
+        if (st["s3_bucket"]) cfg.storage.s3_bucket = st["s3_bucket"].as<std::string>();
+        if (st["s3_region"]) cfg.storage.s3_region = st["s3_region"].as<std::string>();
+        if (st["s3_endpoint"]) cfg.storage.s3_endpoint = st["s3_endpoint"].as<std::string>();
+        if (st["s3_prefix"]) cfg.storage.s3_prefix = st["s3_prefix"].as<std::string>();
+        if (st["s3_access_key"]) cfg.storage.s3_access_key = st["s3_access_key"].as<std::string>();
+        if (st["s3_secret_key"]) cfg.storage.s3_secret_key = st["s3_secret_key"].as<std::string>();
+        if (st["s3_force_path_style"]) cfg.storage.s3_force_path_style = st["s3_force_path_style"].as<bool>();
     }
 
     if (root["database"]) {
@@ -55,6 +83,13 @@ void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
         if (a["delegated_header"]) cfg.authn.delegated_header = a["delegated_header"].as<std::string>();
         if (a["delegated_email_header"]) cfg.authn.delegated_email_header = a["delegated_email_header"].as<std::string>();
         if (a["session_ttl_hours"]) cfg.authn.session_ttl_hours = a["session_ttl_hours"].as<int>();
+        if (a["proxy_secret_header"]) cfg.authn.proxy_secret_header = a["proxy_secret_header"].as<std::string>();
+        if (a["proxy_secret_value"]) cfg.authn.proxy_secret_value = a["proxy_secret_value"].as<std::string>();
+        if (a["required_headers"] && a["required_headers"].IsMap()) {
+            for (auto it = a["required_headers"].begin(); it != a["required_headers"].end(); ++it) {
+                cfg.authn.required_headers[it->first.as<std::string>()] = it->second.as<std::string>();
+            }
+        }
     }
 
     if (root["authz"]) {
@@ -144,10 +179,26 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
             cfg.server.bind = argv[++i];
         } else if ((arg == "--data-dir" || arg == "-d") && i + 1 < argc) {
             cfg.storage.root_path = argv[++i];
+        } else if (arg == "--storage-backend" && i + 1 < argc) {
+            cfg.storage.backend = argv[++i];
+        } else if (arg == "--s3-bucket" && i + 1 < argc) {
+            cfg.storage.s3_bucket = argv[++i];
+        } else if (arg == "--s3-endpoint" && i + 1 < argc) {
+            cfg.storage.s3_endpoint = argv[++i];
         } else if (arg == "--db-url" && i + 1 < argc) {
             cfg.database.url = argv[++i];
         } else if (arg == "--authn" && i + 1 < argc) {
             cfg.authn.provider = argv[++i];
+        } else if (arg == "--proxy-secret-header" && i + 1 < argc) {
+            cfg.authn.proxy_secret_header = argv[++i];
+        } else if (arg == "--proxy-secret-value" && i + 1 < argc) {
+            cfg.authn.proxy_secret_value = argv[++i];
+        } else if (arg == "--required-header" && i + 1 < argc) {
+            std::string h = argv[++i];
+            auto eq = h.find('=');
+            if (eq != std::string::npos) {
+                cfg.authn.required_headers[h.substr(0, eq)] = h.substr(eq + 1);
+            }
         } else if (arg == "--authz" && i + 1 < argc) {
             cfg.authz.admin_provider = argv[++i];
         } else if (arg == "--embedded-ui" && i + 1 < argc) {

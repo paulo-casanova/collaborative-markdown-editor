@@ -28,19 +28,56 @@ DelegatedAuthProvider::DelegatedAuthProvider(
     std::shared_ptr<db::ConnectionPool> pool,
     std::shared_ptr<IAdminProvider> admin_provider,
     std::string delegated_header,
-    std::string delegated_email_header
+    std::string delegated_email_header,
+    std::unordered_map<std::string, std::string> required_headers
 ) : pool_(std::move(pool)),
     admin_provider_(std::move(admin_provider)),
     delegated_header_(std::move(delegated_header)),
-    delegated_email_header_(std::move(delegated_email_header)) {}
+    delegated_email_header_(std::move(delegated_email_header)) {
+    set_required_headers(std::move(required_headers));
+}
+
+void DelegatedAuthProvider::set_required_headers(std::unordered_map<std::string, std::string> headers) {
+    required_headers_.clear();
+    for (auto& [k, v] : headers) {
+        std::string lk = k;
+        for (auto& c : lk) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        required_headers_[lk] = v;
+    }
+}
 
 Result<std::optional<UserIdentity>> DelegatedAuthProvider::authenticate(
     const std::string& remote_user,
-    const std::string& remote_email
+    const std::string& remote_email,
+    std::function<std::string(std::string_view)> header_lookup
 ) {
     std::string username = trim_str(remote_user);
     if (username.empty() || !pool_) {
         return std::nullopt;
+    }
+
+    // Verify required reverse-proxy headers if configured
+    if (!required_headers_.empty()) {
+        if (!header_lookup) {
+            std::cerr << "[WARN] Delegated auth rejected for user '" << username
+                      << "': Proxy verification headers required but no header lookup was provided.\n";
+            return std::nullopt;
+        }
+
+        for (const auto& [req_header, expected_val] : required_headers_) {
+            std::string actual_val = trim_str(header_lookup(req_header));
+            if (actual_val.empty()) {
+                std::cerr << "[WARN] Delegated auth rejected for user '" << username
+                          << "': Missing required proxy verification header '" << req_header << "'.\n";
+                return std::nullopt;
+            }
+
+            if (!constant_time_equals(actual_val, expected_val)) {
+                std::cerr << "[WARN] Delegated auth rejected for user '" << username
+                          << "': Proxy verification header '" << req_header << "' mismatch.\n";
+                return std::nullopt;
+            }
+        }
     }
 
     auto conn_res = pool_->acquire();

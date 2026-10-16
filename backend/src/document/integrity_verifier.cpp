@@ -5,6 +5,7 @@
 
 #include "cme/document/integrity_verifier.hpp"
 #include "cme/db/connection_pool.hpp"
+#include "cme/storage/storage_backend.hpp"
 #include "cme/storage/posix_storage_backend.hpp"
 #include <iostream>
 #include <set>
@@ -42,11 +43,18 @@ int IntegrityVerifier::run(const config::AppConfig& cfg) {
     std::cout << "\n======================================================================\n";
     std::cout << "=== CME Storage & Database Offline Integrity Verification Tool     ===\n";
     std::cout << "======================================================================\n";
+    std::cout << "[INFO] Storage Backend   : " << cfg.storage.backend << "\n";
     std::cout << "[INFO] Storage Root Path : " << cfg.storage.root_path << "\n";
-    std::cout << "[INFO] Database Target    : " << cfg.database.url << "\n\n";
+    std::cout << "[INFO] Database Target   : " << cfg.database.url << "\n\n";
 
-    // 1. Initialize POSIX Storage
-    auto storage = std::make_shared<storage::PosixStorageBackend>(cfg.storage.root_path);
+    // 1. Initialize Storage Backend
+    auto storage_res = storage::create_storage_backend(cfg.storage);
+    if (!storage_res.has_value()) {
+        std::cerr << "[ERROR] Failed to initialize storage backend ('" << cfg.storage.backend
+                  << "'): " << to_string(storage_res.error()) << "\n";
+        return 1;
+    }
+    auto storage = *storage_res;
 
     // 2. Connect to PostgreSQL
     auto pool = db::ConnectionPool::create(cfg.database.url, 2);

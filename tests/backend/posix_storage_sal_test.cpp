@@ -1,4 +1,5 @@
 #include "cme/storage/posix_storage_backend.hpp"
+#include "cme/config/config.hpp"
 #include <cassert>
 #include <iostream>
 #include <thread>
@@ -157,6 +158,34 @@ int main() {
     // 10 thread dirs + 1,000 files = 1,010 entries
     assert(conc_files->size() == 1010);
     std::cout << "  All 1,000 files written and verified without race conditions.\n";
+
+    // 8. Storage Health & Factory Resolution
+    std::cout << "[TEST] 8. Storage Health & Factory Resolution...\n";
+    auto health_res = backend.check_health();
+    assert(health_res.has_value());
+    assert(health_res->status == "writable");
+    assert(health_res->backend_type == "posix");
+    assert(health_res->free_bytes.has_value() && *health_res->free_bytes > 0);
+
+    cme::config::StorageConfig posix_cfg;
+    posix_cfg.backend = "posix";
+    posix_cfg.root_path = (test_root / "factory").string();
+    auto factory_posix = create_storage_backend(posix_cfg);
+    assert(factory_posix.has_value());
+    assert(*factory_posix != nullptr);
+
+    cme::config::StorageConfig s3_cfg;
+    s3_cfg.backend = "s3";
+    s3_cfg.s3_bucket = "my-test-bucket";
+    auto factory_s3 = create_storage_backend(s3_cfg);
+    assert(!factory_s3.has_value());
+    assert(factory_s3.error() == cme::ErrorCode::InvalidArgument);
+
+    cme::config::StorageConfig invalid_cfg;
+    invalid_cfg.backend = "invalid_unknown";
+    auto factory_inv = create_storage_backend(invalid_cfg);
+    assert(!factory_inv.has_value());
+    assert(factory_inv.error() == cme::ErrorCode::InvalidArgument);
 
     // Clean up test sandbox
     std::filesystem::remove_all(test_root);

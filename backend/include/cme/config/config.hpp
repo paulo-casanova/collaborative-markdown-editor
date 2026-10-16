@@ -8,6 +8,8 @@
 #include <string>
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
+#include <cctype>
 #include "cme/common.hpp"
 
 namespace cme::config {
@@ -21,10 +23,19 @@ struct ServerConfig {
 };
 
 struct StorageConfig {
-    std::string backend{"posix"};
+    std::string backend{"posix"}; // "posix", "s3"
     std::string root_path{"/var/lib/cme/storage"};
     int trash_retention_days{30};
     int snapshot_interval_seconds{300};
+
+    // S3 / Object Storage configuration
+    std::string s3_bucket{""};
+    std::string s3_region{"us-east-1"};
+    std::string s3_endpoint{""}; // Custom endpoint for MinIO, LocalStack, Cloudflare R2, Ceph
+    std::string s3_prefix{""};   // Optional key prefix within the bucket
+    std::string s3_access_key{""};
+    std::string s3_secret_key{""};
+    bool s3_force_path_style{true}; // Useful for MinIO / self-hosted S3 endpoints
 };
 
 struct DatabaseConfig {
@@ -38,6 +49,26 @@ struct AuthNConfig {
     std::string delegated_header{"X-Remote-User"};
     std::string delegated_email_header{"X-Remote-Email"};
     int session_ttl_hours{72};
+
+    // Reverse-proxy verification headers for delegated authentication
+    std::string proxy_secret_header{""}; // e.g., "X-Proxy-Secret"
+    std::string proxy_secret_value{""};  // e.g., "shared-secret-123"
+    std::unordered_map<std::string, std::string> required_headers{}; // Arbitrary headers that must exist and match
+
+    [[nodiscard]] std::unordered_map<std::string, std::string> get_effective_required_headers() const {
+        std::unordered_map<std::string, std::string> result;
+        for (const auto& [k, v] : required_headers) {
+            std::string lk = k;
+            for (auto& c : lk) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            result[lk] = v;
+        }
+        if (!proxy_secret_header.empty() && !proxy_secret_value.empty()) {
+            std::string lk = proxy_secret_header;
+            for (auto& c : lk) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            result[lk] = proxy_secret_value;
+        }
+        return result;
+    }
 };
 
 struct AuthZConfig {

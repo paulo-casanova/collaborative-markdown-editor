@@ -91,7 +91,7 @@ size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
 
 DocumentService::DocumentService(
     std::shared_ptr<db::ConnectionPool> db_pool,
-    std::shared_ptr<storage::PosixStorageBackend> storage
+    std::shared_ptr<storage::IStorageBackend> storage
 ) : db_pool_(std::move(db_pool)),
     storage_(std::move(storage)) {}
 

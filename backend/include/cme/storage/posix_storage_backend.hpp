@@ -90,6 +90,8 @@ public:
         const std::string& doc_id
     ) override;
 
+    Result<StorageHealth> check_health() override;
+
     /**
      * @brief Access the configured root path.
      */

@@ -149,13 +149,25 @@ nlohmann::json Server::get_health_status() {
     // Storage health & capacity check
     nlohmann::json storage_status;
     if (storage_) {
-        std::error_code ec;
-        auto space = std::filesystem::space(storage_->content_root(), ec);
-        if (!ec) {
-            storage_status["status"] = "writable";
-            storage_status["free_bytes"] = space.available;
+        auto health_res = storage_->check_health();
+        if (health_res.has_value()) {
+            storage_status["status"] = health_res->status;
+            storage_status["backend"] = health_res->backend_type;
+            if (health_res->free_bytes.has_value()) {
+                storage_status["free_bytes"] = *health_res->free_bytes;
+            }
+            if (health_res->total_bytes.has_value()) {
+                storage_status["total_bytes"] = *health_res->total_bytes;
+            }
+            if (!health_res->message.empty()) {
+                storage_status["message"] = health_res->message;
+            }
+            if (health_res->status == "error") {
+                overall_healthy = false;
+            }
         } else {
             storage_status["status"] = "error";
+            storage_status["error"] = to_string(health_res.error());
             overall_healthy = false;
         }
     } else {
@@ -201,7 +213,8 @@ Result<std::optional<auth::UserIdentity>> Server::authenticate_request(
     std::string_view auth_header,
     std::string_view cookie_header,
     std::string_view remote_user_header,
-    std::string_view remote_email_header
+    std::string_view remote_email_header,
+    std::function<std::string(std::string_view)> header_lookup
 ) {
     // 1. Session token in Authorization: Bearer <token>
     if (auto token = auth::extract_bearer_token(auth_header)) {
@@ -228,7 +241,8 @@ Result<std::optional<auth::UserIdentity>> Server::authenticate_request(
         if (delegated_provider_) {
             return delegated_provider_->authenticate(
                 std::string(remote_user_header),
-                std::string(remote_email_header)
+                std::string(remote_email_header),
+                std::move(header_lookup)
             );
         }
     }
@@ -266,14 +280,15 @@ Result<void> Server::start() {
     start_time_ = std::chrono::system_clock::now();
     is_running_ = true;
 
-    // 1. Initialize POSIX Storage
-    try {
-        storage_ = std::make_shared<storage::PosixStorageBackend>(config_.storage.root_path);
-        std::cout << "[INFO] Storage backend initialized at: " << config_.storage.root_path << "\n";
-    } catch (const std::exception& e) {
-        std::cerr << "[ERROR] Failed to initialize storage backend: " << e.what() << "\n";
-        return std::unexpected(ErrorCode::IoError);
+    // 1. Initialize Storage Backend (pluggable from config)
+    auto storage_res = storage::create_storage_backend(config_.storage);
+    if (!storage_res.has_value()) {
+        std::cerr << "[ERROR] Failed to initialize storage backend ('" << config_.storage.backend
+                  << "'): " << to_string(storage_res.error()) << "\n";
+        return std::unexpected(storage_res.error());
     }
+    storage_ = *storage_res;
+    std::cout << "[INFO] Storage backend ('" << config_.storage.backend << "') initialized.\n";
 
     // 2. Initialize Database Connection Pool
     try {
@@ -295,7 +310,8 @@ Result<void> Server::start() {
         db_pool_,
         admin_provider_,
         config_.authn.delegated_header,
-        config_.authn.delegated_email_header
+        config_.authn.delegated_email_header,
+        config_.authn.get_effective_required_headers()
     );
     challenge_provider_ = std::make_shared<auth::ChallengeAuthProvider>(db_pool_, admin_provider_);
 
@@ -454,7 +470,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {
                 {"error", "Unauthorized"},
@@ -496,6 +512,7 @@ Result<void> Server::start() {
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
         std::string ip = std::string(res->getRemoteAddressAsText());
         std::string user_agent = std::string(req->getHeader("user-agent"));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
@@ -504,7 +521,7 @@ Result<void> Server::start() {
             *aborted = true;
         });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, ip, user_agent](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, ip, user_agent, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) {
                 return;
@@ -534,7 +551,7 @@ Result<void> Server::start() {
 
             // 2. If no credentials in body, try headers / existing session
             if (!user.has_value()) {
-                auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+                auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
                 if (auth_res.has_value() && auth_res.value().has_value()) {
                     user = *auth_res.value();
                 }
@@ -583,7 +600,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -619,7 +636,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -645,16 +662,17 @@ Result<void> Server::start() {
         for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -688,7 +706,7 @@ Result<void> Server::start() {
                 return;
             }
 
-            send_json(res, "201 Created", {{"path", dir_res.value()}, {"is_directory", true}});
+            send_json(res, "201 Created", nlohmann::json{{"path", dir_res.value()}, {"is_directory", true}});
         });
     });
 
@@ -706,16 +724,17 @@ Result<void> Server::start() {
         std::string path_query = url_decode(req->getQuery("path"));
         std::string path_header = std::string(req->getHeader("x-file-path"));
         std::string target_path = !path_query.empty() ? path_query : path_header;
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, target_path, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, target_path, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -757,7 +776,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -860,7 +879,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -893,7 +912,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -933,16 +952,17 @@ Result<void> Server::start() {
         for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -1004,7 +1024,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1044,16 +1064,17 @@ Result<void> Server::start() {
         for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -1109,7 +1130,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1135,7 +1156,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1198,7 +1219,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1241,16 +1262,17 @@ Result<void> Server::start() {
         for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -1314,7 +1336,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1367,7 +1389,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1403,16 +1425,17 @@ Result<void> Server::start() {
         for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -1477,16 +1500,17 @@ Result<void> Server::start() {
         for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, doc_id, fn_query, fn_header, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, doc_id, fn_query, fn_header, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -1526,7 +1550,7 @@ Result<void> Server::start() {
                 return;
             }
 
-            send_json(res, "201 Created", {
+            send_json(res, "201 Created", nlohmann::json{
                 {"filename", filename},
                 {"path", upload_res.value()}
             });
@@ -1546,7 +1570,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1588,7 +1612,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1623,7 +1647,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1656,7 +1680,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1689,16 +1713,17 @@ Result<void> Server::start() {
         for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -1752,16 +1777,17 @@ Result<void> Server::start() {
         for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
 
         auto body = std::make_shared<std::string>();
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -1815,7 +1841,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1847,7 +1873,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1876,7 +1902,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1907,7 +1933,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1935,7 +1961,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1967,7 +1993,7 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return;
@@ -1995,6 +2021,7 @@ Result<void> Server::start() {
             std::string cookie_hdr;
             std::string remote_user_hdr;
             std::string remote_email_hdr;
+            std::function<std::string(std::string_view)> lookup;
         };
         std::string del_header_name = config_.authn.delegated_header;
         std::string del_email_name = config_.authn.delegated_email_header;
@@ -2004,12 +2031,13 @@ Result<void> Server::start() {
             .auth_hdr = std::string(req->getHeader("authorization")),
             .cookie_hdr = std::string(req->getHeader("cookie")),
             .remote_user_hdr = std::string(req->getHeader(del_header_name)),
-            .remote_email_hdr = std::string(req->getHeader(del_email_name))
+            .remote_email_hdr = std::string(req->getHeader(del_email_name)),
+            .lookup = make_header_lookup(req)
         };
     };
 
     auto verify_admin_access = [this](const auto& ctx, auto* res) -> std::optional<auth::UserIdentity> {
-        auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+        auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return std::nullopt;
@@ -2541,7 +2569,7 @@ Result<void> Server::start() {
 
     auto authenticate_user = [this, get_auth_context](auto* req, auto* res) -> std::optional<auth::UserIdentity> {
         auto ctx = get_auth_context(req);
-        auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+        auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
             return std::nullopt;
@@ -2585,7 +2613,7 @@ Result<void> Server::start() {
         res->onData([this, res, body, aborted, doc_id, ctx](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
-            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -2632,7 +2660,7 @@ Result<void> Server::start() {
         res->onData([this, res, body, aborted, comment_id, ctx](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
-            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -2677,7 +2705,7 @@ Result<void> Server::start() {
         res->onData([this, res, body, aborted, comment_id, ctx](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
-            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -2719,7 +2747,7 @@ Result<void> Server::start() {
         res->onData([this, res, body, aborted, comment_id, ctx](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
-            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -2825,7 +2853,7 @@ Result<void> Server::start() {
         res->onData([this, res, body, aborted, doc_id, ctx](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
-            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -2960,7 +2988,7 @@ Result<void> Server::start() {
         res->onData([this, res, body, aborted, doc_id, ctx](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
-            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -3013,7 +3041,7 @@ Result<void> Server::start() {
         res->onData([this, res, body, aborted, task_id, ctx](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
-            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr);
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
                 return;
@@ -3180,7 +3208,7 @@ Result<void> Server::start() {
                 }
             }
 
-            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr);
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
             if (!auth_res.has_value() || !auth_res.value().has_value()) {
                 res->writeStatus("401 Unauthorized");
                 res->writeHeader("Content-Type", "application/json");

@@ -15,7 +15,7 @@
 #include "cme/auth/user_identity.hpp"
 #include "cme/db/connection_pool.hpp"
 #include "cme/db/permission_engine.hpp"
-#include "cme/storage/posix_storage_backend.hpp"
+#include "cme/storage/storage_backend.hpp"
 #include "cme/renderer/markdown_renderer.hpp"
 
 namespace cme::document {
@@ -73,10 +73,10 @@ class DocumentService {
 public:
     DocumentService(
         std::shared_ptr<db::ConnectionPool> db_pool,
-        std::shared_ptr<storage::PosixStorageBackend> storage
+        std::shared_ptr<storage::IStorageBackend> storage
     );
 
-    [[nodiscard]] std::shared_ptr<storage::PosixStorageBackend> storage() const noexcept { return storage_; }
+    [[nodiscard]] std::shared_ptr<storage::IStorageBackend> storage() const noexcept { return storage_; }
 
     /**
      * @brief Creates a new document or document bundle.
@@ -313,7 +313,7 @@ public:
 
 private:
     std::shared_ptr<db::ConnectionPool> db_pool_;
-    std::shared_ptr<storage::PosixStorageBackend> storage_;
+    std::shared_ptr<storage::IStorageBackend> storage_;
 
     Result<db::AccessLevel> check_access(
         const auth::UserIdentity& user,

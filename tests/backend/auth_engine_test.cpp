@@ -262,6 +262,64 @@ int main() {
         assert(admin_jit.has_value() && admin_jit.value().has_value());
         assert(admin_jit.value()->username == "alice_admin");
         assert(admin_jit.value()->is_system_admin);
+
+        // 3. DelegatedAuthProvider with required reverse-proxy verification headers
+        std::unordered_map<std::string, std::string> req_headers = {
+            {"x-proxy-secret", "super_secret_proxy_key_999"},
+            {"x-forwarded-host", "cme.example.com"}
+        };
+        cme::auth::DelegatedAuthProvider proxy_secured_provider(
+            pool,
+            admin_prov,
+            "x-remote-user",
+            "x-remote-email",
+            req_headers
+        );
+
+        // 3.1. Successful authentication when all proxy verification headers match
+        auto lookup_ok = [](std::string_view h) -> std::string {
+            if (h == "x-proxy-secret") return "super_secret_proxy_key_999";
+            if (h == "x-forwarded-host") return "cme.example.com";
+            return "";
+        };
+        auto sec_ok = proxy_secured_provider.authenticate("dave_proxy", "dave@example.com", lookup_ok);
+        assert(sec_ok.has_value() && sec_ok.value().has_value());
+        assert(sec_ok.value()->username == "dave_proxy");
+
+        // 3.2. Authentication rejected when required proxy header is missing
+        auto lookup_missing = [](std::string_view h) -> std::string {
+            if (h == "x-proxy-secret") return "super_secret_proxy_key_999";
+            return ""; // x-forwarded-host is missing
+        };
+        auto sec_missing = proxy_secured_provider.authenticate("dave_proxy", "dave@example.com", lookup_missing);
+        assert(sec_missing.has_value() && !sec_missing.value().has_value()); // nullopt -> 401
+
+        // 3.3. Authentication rejected when proxy header value mismatches
+        auto lookup_wrong = [](std::string_view h) -> std::string {
+            if (h == "x-proxy-secret") return "wrong_secret_attacker";
+            if (h == "x-forwarded-host") return "cme.example.com";
+            return "";
+        };
+        auto sec_wrong = proxy_secured_provider.authenticate("dave_proxy", "dave@example.com", lookup_wrong);
+        assert(sec_wrong.has_value() && !sec_wrong.value().has_value()); // nullopt -> 401
+
+        // 3.4. Authentication rejected when no header lookup is provided at all
+        auto sec_no_lookup = proxy_secured_provider.authenticate("dave_proxy", "dave@example.com", nullptr);
+        assert(sec_no_lookup.has_value() && !sec_no_lookup.value().has_value()); // nullopt -> 401
+
+        // 3.5. Case-insensitivity in header name matching
+        auto lookup_case = [](std::string_view h) -> std::string {
+            std::string lower(h);
+            for (auto& c : lower) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (lower == "x-proxy-secret") return "super_secret_proxy_key_999";
+            if (lower == "x-forwarded-host") return "cme.example.com";
+            return "";
+        };
+        auto sec_case = proxy_secured_provider.authenticate("dave_proxy", "dave@example.com", lookup_case);
+        assert(sec_case.has_value() && sec_case.value().has_value());
+        assert(sec_case.value()->username == "dave_proxy");
+
+        std::cout << "  - DelegatedAuthProvider proxy header verification (match, missing, mismatch, null-lookup) validated.\n";
         std::cout << "  - DelegatedAuthProvider (JIT user provisioning + admin resolution) validated.\n";
     }
 
@@ -391,6 +449,70 @@ int main() {
     std::cout << "\n[TEST] Stopping server...\n";
     server->stop();
     server_thread.join();
+
+    // -------------------------------------------------------------------------
+    // 5. HTTP Server with Reverse-Proxy Verification Headers
+    // -------------------------------------------------------------------------
+    std::cout << "\n[TEST 5] Testing Server Delegated Auth with Reverse-Proxy Verification Headers...\n";
+    {
+        std::filesystem::path proxy_server_storage = std::filesystem::temp_directory_path() / "cme_auth_proxy_storage";
+        std::filesystem::remove_all(proxy_server_storage);
+
+        cme::config::AppConfig proxy_srv_cfg;
+        proxy_srv_cfg.server.bind = "127.0.0.1";
+        proxy_srv_cfg.server.port = 18083;
+        proxy_srv_cfg.storage.root_path = proxy_server_storage.string();
+        proxy_srv_cfg.database.url = db_url;
+        proxy_srv_cfg.authn.proxy_secret_header = "X-Proxy-Secret";
+        proxy_srv_cfg.authn.proxy_secret_value = "cluster_internal_secret_42";
+
+        auto proxy_server = std::make_shared<cme::server::Server>(proxy_srv_cfg);
+        std::thread proxy_server_thread([proxy_server]() {
+            auto res = proxy_server->start();
+            (void)res;
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        std::string proxy_base_url = "http://127.0.0.1:18083";
+
+        // 5.1. Request with matching proxy secret header succeeds (HTTP 200)
+        {
+            auto resp = http_curl("GET", proxy_base_url + "/api/v1/auth/me", {
+                "X-Remote-User: proxy_verified_user",
+                "X-Remote-Email: proxy_user@example.com",
+                "X-Proxy-Secret: cluster_internal_secret_42"
+            });
+            assert(resp.status_code == 200);
+            auto json = nlohmann::json::parse(resp.body);
+            assert(json["user"]["username"] == "proxy_verified_user");
+            std::cout << "  - GET /api/v1/auth/me with matching X-Proxy-Secret returned HTTP 200.\n";
+        }
+
+        // 5.2. Request with missing proxy secret header is rejected (HTTP 401)
+        {
+            auto resp = http_curl("GET", proxy_base_url + "/api/v1/auth/me", {
+                "X-Remote-User: proxy_verified_user",
+                "X-Remote-Email: proxy_user@example.com"
+            });
+            assert(resp.status_code == 401);
+            std::cout << "  - GET /api/v1/auth/me without required X-Proxy-Secret rejected with HTTP 401.\n";
+        }
+
+        // 5.3. Request with mismatched proxy secret header is rejected (HTTP 401)
+        {
+            auto resp = http_curl("GET", proxy_base_url + "/api/v1/auth/me", {
+                "X-Remote-User: proxy_verified_user",
+                "X-Remote-Email: proxy_user@example.com",
+                "X-Proxy-Secret: forged_secret_by_attacker"
+            });
+            assert(resp.status_code == 401);
+            std::cout << "  - GET /api/v1/auth/me with mismatched X-Proxy-Secret rejected with HTTP 401.\n";
+        }
+
+        proxy_server->stop();
+        proxy_server_thread.join();
+        std::filesystem::remove_all(proxy_server_storage);
+    }
 
     // Clean up temporary files
     std::filesystem::remove(admin_cfg);

@@ -9,9 +9,27 @@
 #include <string_view>
 #include <vector>
 #include <chrono>
+#include <optional>
+#include <memory>
 #include "cme/common.hpp"
 
+namespace cme::config {
+struct StorageConfig;
+}
+
 namespace cme::storage {
+
+/**
+ * @struct StorageHealth
+ * @brief Operational health, accessibility, and capacity information for the storage backend.
+ */
+struct StorageHealth {
+    std::string status{"writable"};     ///< "writable", "degraded", "error", or "unconfigured"
+    std::string backend_type{"posix"};  ///< "posix", "s3", etc.
+    std::optional<uint64_t> free_bytes{std::nullopt};
+    std::optional<uint64_t> total_bytes{std::nullopt};
+    std::string message{""};
+};
 
 /**
  * @struct NodeInfo
@@ -177,6 +195,19 @@ public:
     virtual Result<void> delete_crdt_state(
         const std::string& doc_id
     ) = 0;
+
+    /**
+     * @brief Checks the operational health and accessibility of the storage backend.
+     * @return Result<StorageHealth> Health status and metrics, or ErrorCode.
+     */
+    virtual Result<StorageHealth> check_health() = 0;
 };
+
+/**
+ * @brief Factory function constructing an IStorageBackend based on StorageConfig settings.
+ * @param config Active storage configuration options.
+ * @return Result<std::shared_ptr<IStorageBackend>> Instantiated backend or ErrorCode.
+ */
+Result<std::shared_ptr<IStorageBackend>> create_storage_backend(const config::StorageConfig& config);
 
 } // namespace cme::storage

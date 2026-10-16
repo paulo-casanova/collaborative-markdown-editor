@@ -60,4 +60,12 @@ namespace cme::auth {
     std::string_view cookie_name = "cme_session"
 );
 
+/**
+ * @brief Constant-time string comparison to prevent timing side-channel attacks on secret tokens.
+ * @param a First string view to compare.
+ * @param b Second string view to compare.
+ * @return True if strings are equal in length and content, false otherwise.
+ */
+[[nodiscard]] bool constant_time_equals(std::string_view a, std::string_view b) noexcept;
+
 } // namespace cme::auth

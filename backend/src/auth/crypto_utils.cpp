@@ -1,6 +1,7 @@
 #include "cme/auth/crypto_utils.hpp"
 #include <openssl/rand.h>
 #include <openssl/evp.h>
+#include <openssl/crypto.h>
 #include <crypt.h>
 #include <sstream>
 #include <iomanip>
@@ -166,6 +167,16 @@ std::optional<std::string> extract_cookie_token(
     }
 
     return std::nullopt;
+}
+
+bool constant_time_equals(std::string_view a, std::string_view b) noexcept {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    if (a.empty()) {
+        return true;
+    }
+    return CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
 }
 
 } // namespace cme::auth

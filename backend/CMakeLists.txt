@@ -46,6 +46,7 @@ add_library(cme_core
     src/db/migration_runner.cpp
     src/db/permission_engine.cpp
     src/storage/posix_storage_backend.cpp
+    src/storage/storage_backend.cpp
     src/auth/crypto_utils.cpp
     src/auth/admin_provider.cpp
     src/auth/session_manager.cpp

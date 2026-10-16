@@ -8,7 +8,7 @@
 #include "cme/config/config.hpp"
 #include "cme/db/connection_pool.hpp"
 #include "cme/db/permission_engine.hpp"
-#include "cme/storage/posix_storage_backend.hpp"
+#include "cme/storage/storage_backend.hpp"
 #include "cme/auth/user_identity.hpp"
 #include "cme/auth/admin_provider.hpp"
 #include "cme/auth/session_manager.hpp"
@@ -25,6 +25,9 @@
 #include <chrono>
 #include <string_view>
 #include <optional>
+#include <functional>
+#include <unordered_map>
+#include <cctype>
 
 namespace usockets {
 struct us_listen_socket_t;
@@ -72,7 +75,8 @@ public:
         std::string_view auth_header,
         std::string_view cookie_header,
         std::string_view remote_user_header,
-        std::string_view remote_email_header
+        std::string_view remote_email_header,
+        std::function<std::string(std::string_view)> header_lookup = nullptr
     );
 
     /**
@@ -97,7 +101,7 @@ public:
 
     [[nodiscard]] const config::AppConfig& config() const noexcept { return config_; }
     [[nodiscard]] std::shared_ptr<db::ConnectionPool> db_pool() const noexcept { return db_pool_; }
-    [[nodiscard]] std::shared_ptr<storage::PosixStorageBackend> storage() const noexcept { return storage_; }
+    [[nodiscard]] std::shared_ptr<storage::IStorageBackend> storage() const noexcept { return storage_; }
     [[nodiscard]] std::shared_ptr<auth::IAdminProvider> admin_provider() const noexcept { return admin_provider_; }
     [[nodiscard]] std::shared_ptr<auth::SessionManager> session_manager() const noexcept { return session_manager_; }
     [[nodiscard]] std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider() const noexcept { return delegated_provider_; }
@@ -129,7 +133,7 @@ private:
     std::atomic<bool> backup_barrier_active_{false};
     collab::PersistenceConfig persistence_config_{};
     std::shared_ptr<db::ConnectionPool> db_pool_;
-    std::shared_ptr<storage::PosixStorageBackend> storage_;
+    std::shared_ptr<storage::IStorageBackend> storage_;
     std::shared_ptr<auth::IAdminProvider> admin_provider_;
     std::shared_ptr<auth::SessionManager> session_manager_;
     std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider_;
@@ -146,6 +150,28 @@ private:
     void* us_listen_socket_{nullptr};
     void* uws_loop_{nullptr};
     void* uws_app_{nullptr};
+
+    template <typename ReqT>
+    static std::function<std::string(std::string_view)> make_header_lookup(ReqT* req) {
+        if (!req) {
+            return [](std::string_view) -> std::string { return {}; };
+        }
+        std::unordered_map<std::string, std::string> headers;
+        for (auto [key, val] : *req) {
+            std::string lk(key);
+            for (auto& c : lk) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            headers.try_emplace(std::move(lk), std::string(val));
+        }
+        return [headers = std::move(headers)](std::string_view h) -> std::string {
+            std::string lh(h);
+            for (auto& c : lh) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            auto it = headers.find(lh);
+            if (it != headers.end()) {
+                return it->second;
+            }
+            return {};
+        };
+    }
 };
 
 } // namespace cme::server

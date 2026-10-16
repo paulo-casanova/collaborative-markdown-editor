@@ -9,6 +9,8 @@
 #include <string_view>
 #include <optional>
 #include <memory>
+#include <unordered_map>
+#include <functional>
 #include "cme/common.hpp"
 #include "cme/auth/user_identity.hpp"
 #include "cme/auth/admin_provider.hpp"
@@ -41,30 +43,37 @@ public:
         std::shared_ptr<db::ConnectionPool> pool,
         std::shared_ptr<IAdminProvider> admin_provider = nullptr,
         std::string delegated_header = "x-remote-user",
-        std::string delegated_email_header = "x-remote-email"
+        std::string delegated_email_header = "x-remote-email",
+        std::unordered_map<std::string, std::string> required_headers = {}
     );
 
     [[nodiscard]] std::string_view name() const noexcept override { return "delegated"; }
 
     /**
-     * @brief Authenticates a request via remote user and optional remote email header values.
+     * @brief Authenticates a request via remote user and optional remote email header values,
+     * verifying any configured proxy validation headers.
      * @param remote_user Value of X-Remote-User header.
      * @param remote_email Value of X-Remote-Email header (optional).
-     * @return Result<std::optional<UserIdentity>> User identity, or nullopt if header empty.
+     * @param header_lookup Callback to query request header values by lowercase name.
+     * @return Result<std::optional<UserIdentity>> User identity, or nullopt if unauthenticated.
      */
     Result<std::optional<UserIdentity>> authenticate(
         const std::string& remote_user,
-        const std::string& remote_email = ""
+        const std::string& remote_email = "",
+        std::function<std::string(std::string_view)> header_lookup = nullptr
     );
 
     [[nodiscard]] const std::string& delegated_header() const noexcept { return delegated_header_; }
     [[nodiscard]] const std::string& delegated_email_header() const noexcept { return delegated_email_header_; }
+    [[nodiscard]] const std::unordered_map<std::string, std::string>& required_headers() const noexcept { return required_headers_; }
+    void set_required_headers(std::unordered_map<std::string, std::string> headers);
 
 private:
     std::shared_ptr<db::ConnectionPool> pool_;
     std::shared_ptr<IAdminProvider> admin_provider_;
     std::string delegated_header_;
     std::string delegated_email_header_;
+    std::unordered_map<std::string, std::string> required_headers_;
 };
 
 /**

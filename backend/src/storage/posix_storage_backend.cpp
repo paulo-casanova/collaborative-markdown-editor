@@ -600,4 +600,22 @@ Result<void> PosixStorageBackend::delete_crdt_state(
     return {};
 }
 
+Result<StorageHealth> PosixStorageBackend::check_health() {
+    StorageHealth health;
+    health.backend_type = "posix";
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::error_code ec;
+    auto space = std::filesystem::space(content_root_, ec);
+    if (!ec) {
+        health.status = "writable";
+        health.free_bytes = space.available;
+        health.total_bytes = space.capacity;
+    } else {
+        health.status = "error";
+        health.message = ec.message();
+    }
+    return health;
+}
+
 } // namespace cme::storage
