@@ -16,6 +16,8 @@ import {
   computeOrderedListRenumberingChanges,
   computeHeaderNumberingChanges,
 } from '../../src/components/editor/CollaborativeEditor';
+import { parsePillSyntax, resolvePillStyle } from '../../src/utils/pillUtils';
+import { parseMarkdownToHtml } from '../../src/utils/markdownToHtml';
 
 describe('Link Validator and Header Numbering Utils', () => {
   it('strips hierarchical heading numbers while keeping non-section digits intact', () => {
@@ -151,4 +153,66 @@ Deep details.`;
     const missingRes = validateLinkTarget('nonexistent.png', undefined, 'specs/Test File Modified.md');
     expect(missingRes.valid).toBe(false);
   });
+
+  it('parses custom pills syntax [pill:color|label], [pill:label], [status:done], and [priority:p0]', () => {
+    // Standard colored pill
+    const p1 = parsePillSyntax('[pill:green|Approved]');
+    expect(p1).not.toBeNull();
+    expect(p1?.color).toBe('green');
+    expect(p1?.label).toBe('Approved');
+    expect(p1?.isCustomHex).toBe(false);
+
+    // Default neutral pill
+    const p2 = parsePillSyntax('[pill:Draft]');
+    expect(p2).not.toBeNull();
+    expect(p2?.color).toBe('slate');
+    expect(p2?.label).toBe('Draft');
+
+    // Custom hex color pill
+    const p3 = parsePillSyntax('[pill:#7c3aed|Enterprise VIP]');
+    expect(p3).not.toBeNull();
+    expect(p3?.color).toBe('#7c3aed');
+    expect(p3?.label).toBe('Enterprise VIP');
+    expect(p3?.isCustomHex).toBe(true);
+
+    // Semantic status shortcut
+    const pStatus = parsePillSyntax('[status:in-progress]');
+    expect(pStatus?.color).toBe('amber');
+    expect(pStatus?.label).toBe('In Progress');
+
+    // Semantic priority shortcut
+    const pPriority = parsePillSyntax('[priority:p0]');
+    expect(pPriority?.color).toBe('rose');
+    expect(pPriority?.label).toBe('P0');
+
+    // Invalid non-pill text
+    expect(parsePillSyntax('not a pill')).toBeNull();
+    expect(parsePillSyntax('[link](http://example.com)')).toBeNull();
+  });
+
+  it('resolves pill color styles and theme tokens accurately', () => {
+    const green = resolvePillStyle('green');
+    expect(green.bgClass).toContain('bg-emerald-500');
+    expect(green.dotColor).toBe('#10b981');
+
+    const amber = resolvePillStyle('amber');
+    expect(amber.bgClass).toContain('bg-amber-500');
+    expect(amber.dotColor).toBe('#f59e0b');
+
+    const rose = resolvePillStyle('rose');
+    expect(rose.bgClass).toContain('bg-rose-500');
+    expect(rose.dotColor).toBe('#f43f5e');
+
+    const slate = resolvePillStyle('slate');
+    expect(slate.bgClass).toContain('bg-cme-bg-subtle');
+  });
+
+  it('converts markdown containing custom pills to semantic HTML', () => {
+    const md = 'Status: [pill:green|Approved] and [pill:amber|In Progress] and [status:done]';
+    const html = parseMarkdownToHtml(md);
+    expect(html).toContain('<span class="cme-pill cme-pill-green" data-color="green">Approved</span>');
+    expect(html).toContain('<span class="cme-pill cme-pill-amber" data-color="amber">In Progress</span>');
+    expect(html).toContain('<span class="cme-pill cme-pill-green" data-color="green">Done</span>');
+  });
 });
+

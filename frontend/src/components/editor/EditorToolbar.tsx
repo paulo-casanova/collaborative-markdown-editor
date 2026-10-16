@@ -24,6 +24,7 @@ import {
   GitPullRequest,
   Eye,
   EyeOff,
+  Tag,
 } from 'lucide-react';
 import { useReviewStore } from '../../stores/reviewStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -360,6 +361,30 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider }
         title="Insert Table"
       >
         <TableIcon className="w-3.5 h-3.5" />
+      </button>
+
+      {/* Pill / Badge */}
+      <button
+        type="button"
+        onClick={() => {
+          const selected = editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to) || 'Approved';
+          const input = prompt(
+            'Insert Pill / Badge ([pill:color|label]):\nEnter color and label (e.g. green|Approved, amber|In Progress, rose|Blocked, or Draft):',
+            `green|${selected}`
+          );
+          if (input !== null && input.trim()) {
+            const trimmed = input.trim();
+            const pillSyntax = trimmed.startsWith('[') && trimmed.endsWith(']')
+              ? trimmed
+              : `[pill:${trimmed}]`;
+            editor.chain().focus().insertContent(pillSyntax).run();
+          }
+        }}
+        className={btnClass(false)}
+        title="Insert Pill / Badge ([pill:color|label])"
+        data-testid="toolbar-pill-btn"
+      >
+        <Tag className="w-3.5 h-3.5" />
       </button>
 
       {divider}

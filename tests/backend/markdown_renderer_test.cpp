@@ -209,6 +209,28 @@ int main() {
     }
 
     // =========================================================================
+    // 4b. UNIT TEST: Custom Pills & Status Badges ([pill:color|label], [status:done])
+    // =========================================================================
+    {
+        std::cout << "  -> Testing custom pills and badges rendering...\n";
+        std::string md = 
+            "Document status: [pill:green|Approved] and [pill:amber|In Progress].\n\n"
+            "Blocker: [pill:rose|Critical Bug #42]. Default: [pill:Draft].\n\n"
+            "Semantic shortcuts: [status:done] and [priority:p0].\n";
+
+        cme::renderer::RenderOptions opts{.standalone = false};
+        std::string html = cme::renderer::MarkdownRenderer::render_to_html(md, opts);
+
+        assert(html.find("<span class=\"cme-pill cme-pill-green\" data-color=\"green\">Approved</span>") != std::string::npos);
+        assert(html.find("<span class=\"cme-pill cme-pill-amber\" data-color=\"amber\">In Progress</span>") != std::string::npos);
+        assert(html.find("<span class=\"cme-pill cme-pill-rose\" data-color=\"rose\">Critical Bug #42</span>") != std::string::npos);
+        assert(html.find("<span class=\"cme-pill cme-pill-slate\" data-color=\"slate\">Draft</span>") != std::string::npos);
+        assert(html.find("<span class=\"cme-pill cme-pill-green\" data-color=\"green\">Done</span>") != std::string::npos);
+        assert(html.find("<span class=\"cme-pill cme-pill-rose\" data-color=\"rose\">P0</span>") != std::string::npos);
+        std::cout << "     [PASS] Custom pills and badges rendered into semantic spans.\n";
+    }
+
+    // =========================================================================
     // 5. UNIT TEST: Review Subsystem Annotations Overlay
     // =========================================================================
     {

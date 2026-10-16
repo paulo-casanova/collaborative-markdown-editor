@@ -21,7 +21,9 @@ import {
   TableBlockWidget,
   HeadingNumberWidget,
   ImageEmbedWidget,
+  PillWidget,
 } from './livePreviewWidgets';
+import { parsePillSyntax } from '../../../utils/pillUtils';
 import { slugify } from '../../navigation/DocumentOutline';
 import {
   validateLinkTarget,
@@ -550,6 +552,29 @@ export function buildLivePreviewDecorations(
               validation.reason || '',
               documentPath
             ),
+          })
+        );
+      }
+    }
+
+    // 4h2. Custom Pills & Badges: [pill:color|label], [pill:label], [status:...], [priority:...]
+    const pillRegex = /(?<!!)\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)\|)?([^\]\n]+)\]/g;
+    let pMatch: RegExpExecArray | null;
+    while ((pMatch = pillRegex.exec(lineText)) !== null) {
+      const pFrom = lineFrom + pMatch.index;
+      const pTo = pFrom + pMatch[0].length;
+      if (isOverlappingReplaced(pFrom, pTo)) continue;
+
+      const parsed = parsePillSyntax(pMatch[0]);
+      if (!parsed) continue;
+
+      const cursorInPill = cursorTo >= pFrom && cursorFrom <= pTo;
+      if (!cursorInPill) {
+        addReplace(
+          pFrom,
+          pTo,
+          Decoration.replace({
+            widget: new PillWidget(parsed.color, parsed.label, pFrom, pTo, pMatch[0]),
           })
         );
       }

@@ -27,6 +27,25 @@ function inlineFormat(text: string): string {
   res = res.replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '<a class="wiki-link" data-target="$1">$2</a>');
   res = res.replace(/\[\[([^\]]+)\]\]/g, '<a class="wiki-link" data-target="$1">$1</a>');
 
+  // Custom Pills & Badges: [pill:color|label], [pill:label], [status:...], [priority:...]
+  res = res.replace(/(?<!!)\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)\|)?([^\]\n]+)\]/g, (_match, prefix, color, rawLabel) => {
+    let c = (color || 'slate').toLowerCase();
+    let label = rawLabel.trim();
+    if (prefix === 'status') {
+      const norm = label.toLowerCase();
+      if (norm === 'done' || norm === 'completed') { c = 'green'; label = 'Done'; }
+      else if (norm === 'in-progress' || norm === 'in progress') { c = 'amber'; label = 'In Progress'; }
+      else if (norm === 'blocked') { c = 'rose'; label = 'Blocked'; }
+      else { c = 'blue'; }
+    } else if (prefix === 'priority') {
+      const norm = label.toLowerCase();
+      if (norm === 'p0' || norm === 'high') { c = 'rose'; label = label.toUpperCase(); }
+      else if (norm === 'p1' || norm === 'medium') { c = 'amber'; label = label.toUpperCase(); }
+      else { c = 'blue'; label = label.toUpperCase(); }
+    }
+    return `<span class="cme-pill cme-pill-${escapeHtml(c)}" data-color="${escapeHtml(c)}">${escapeHtml(label)}</span>`;
+  });
+
   // Bold & Italic
   res = res.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
   res = res.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');

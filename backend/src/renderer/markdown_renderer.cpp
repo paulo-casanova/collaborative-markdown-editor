@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <cctype>
 #include <algorithm>
+#include <regex>
 #include "md4c.h"
 
 namespace cme::renderer {
@@ -705,6 +706,28 @@ std::string wrap_standalone(
        << "      padding: 0.1rem 0.3rem;\n"
        << "      border-radius: 3px;\n"
        << "    }\n"
+       << "    .cme-pill {\n"
+       << "      display: inline-flex;\n"
+       << "      align-items: center;\n"
+       << "      gap: 0.35rem;\n"
+       << "      padding: 0.1rem 0.55rem;\n"
+       << "      border-radius: 9999px;\n"
+       << "      font-size: 0.75rem;\n"
+       << "      font-weight: 500;\n"
+       << "      border: 1px solid var(--border-color);\n"
+       << "      background-color: var(--code-bg);\n"
+       << "      color: var(--text-color);\n"
+       << "      line-height: 1.3;\n"
+       << "      margin: 0 0.2rem;\n"
+       << "      vertical-align: baseline;\n"
+       << "    }\n"
+       << "    .cme-pill-green, .cme-pill-emerald { background-color: rgba(16, 185, 129, 0.15); color: #059669; border-color: rgba(16, 185, 129, 0.3); }\n"
+       << "    .cme-pill-amber, .cme-pill-yellow { background-color: rgba(245, 158, 11, 0.15); color: #d97706; border-color: rgba(245, 158, 11, 0.3); }\n"
+       << "    .cme-pill-red, .cme-pill-rose { background-color: rgba(244, 63, 94, 0.15); color: #e11d48; border-color: rgba(244, 63, 94, 0.3); }\n"
+       << "    .cme-pill-blue, .cme-pill-sky { background-color: rgba(14, 165, 233, 0.15); color: #0284c7; border-color: rgba(14, 165, 233, 0.3); }\n"
+       << "    .cme-pill-purple, .cme-pill-violet { background-color: rgba(168, 85, 247, 0.15); color: #9333ea; border-color: rgba(168, 85, 247, 0.3); }\n"
+       << "    .cme-pill-pink { background-color: rgba(236, 72, 153, 0.15); color: #db2777; border-color: rgba(236, 72, 153, 0.3); }\n"
+       << "    .cme-pill-slate, .cme-pill-gray { background-color: rgba(148, 163, 184, 0.15); color: #475569; border-color: rgba(148, 163, 184, 0.3); }\n"
        << "  </style>\n"
        << "  <script defer src=\"https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js\"></script>\n"
        << "  <script defer src=\"https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js\" onload=\"if (window.renderMathInElement) renderMathInElement(document.body);\"></script>\n"
@@ -723,6 +746,43 @@ std::string wrap_standalone(
        << "</body>\n"
        << "</html>\n";
     return ss.str();
+}
+
+std::string render_pills_in_html(std::string_view html) {
+    static const std::regex pill_rx(R"(\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)\|)?([^\]\n]+)\])");
+    std::string text(html);
+    std::string result;
+    std::string::const_iterator search_start(text.cbegin());
+    std::smatch match;
+
+    while (std::regex_search(search_start, text.cend(), match, pill_rx)) {
+        result.append(search_start, match[0].first);
+        std::string prefix = match[1].str();
+        std::string color = match[2].matched ? match[2].str() : "slate";
+        std::string label = match[3].str();
+
+        if (prefix == "status") {
+            std::string norm = label;
+            for (auto& c : norm) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (norm == "done" || norm == "completed") { color = "green"; label = "Done"; }
+            else if (norm == "in-progress" || norm == "in progress") { color = "amber"; label = "In Progress"; }
+            else if (norm == "blocked") { color = "rose"; label = "Blocked"; }
+            else { color = "blue"; }
+        } else if (prefix == "priority") {
+            std::string norm = label;
+            for (auto& c : norm) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            if (norm == "p0" || norm == "high" || norm == "urgent" || norm == "critical") { color = "rose"; }
+            else if (norm == "p1" || norm == "medium") { color = "amber"; }
+            else { color = "blue"; }
+        }
+
+        std::string pill_html = "<span class=\"cme-pill cme-pill-" + escape_html(color) + "\" data-color=\"" + escape_html(color) + "\">" + escape_html(label) + "</span>";
+        result.append(pill_html);
+        search_start = match[0].second;
+    }
+    result.append(search_start, text.cend());
+    return result;
 }
 
 } // namespace
@@ -747,18 +807,20 @@ std::string MarkdownRenderer::render_to_html(
     RenderContext ctx;
     md_parse(markdown_text.data(), static_cast<MD_SIZE>(markdown_text.size()), &parser, &ctx);
 
+    std::string processed_output = render_pills_in_html(ctx.output);
+
     std::string reviews_html;
     if (options.include_reviews) {
         reviews_html = render_reviews_html(reviews);
     }
 
     if (options.standalone) {
-        return wrap_standalone(options.title, ctx.output, reviews_html);
+        return wrap_standalone(options.title, processed_output, reviews_html);
     }
 
     std::ostringstream ss;
     ss << "<article class=\"cme-content\">\n"
-       << ctx.output
+       << processed_output
        << "</article>\n"
        << reviews_html;
     return ss.str();

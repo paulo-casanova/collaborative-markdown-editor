@@ -12,6 +12,7 @@ import {
   getSnippetState,
   setSnippetState,
 } from '../../../utils/snippetSync';
+import { resolvePillStyle } from '../../../utils/pillUtils';
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -1022,4 +1023,60 @@ function renderSimpleText(str: string): DocumentFragment {
   }
   return frag;
 }
+
+export class PillWidget extends WidgetType {
+  constructor(
+    public color: string,
+    public label: string,
+    public from: number,
+    public to: number,
+    public rawText: string
+  ) {
+    super();
+  }
+
+  eq(other: PillWidget): boolean {
+    return (
+      this.color === other.color &&
+      this.label === other.label &&
+      this.from === other.from &&
+      this.to === other.to &&
+      this.rawText === other.rawText
+    );
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const span = document.createElement('span');
+    const style = resolvePillStyle(this.color);
+    span.className = `cme-pill inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border cursor-pointer align-baseline select-none transition-colors my-0.5 mx-0.5 ${style.bgClass} ${style.textClass} ${style.borderClass}`;
+    span.title = `${this.rawText} (Click to edit)`;
+
+    if (this.color.startsWith('#')) {
+      span.style.backgroundColor = `${this.color}20`;
+      span.style.borderColor = `${this.color}40`;
+      span.style.color = this.color;
+    }
+
+    // Dot indicator
+    const dot = document.createElement('span');
+    dot.className = 'w-1.5 h-1.5 rounded-full flex-shrink-0';
+    dot.style.backgroundColor = this.color.startsWith('#') ? this.color : (style.dotColor || '#94a3b8');
+    span.appendChild(dot);
+
+    // Label
+    const textNode = document.createElement('span');
+    textNode.textContent = this.label;
+    span.appendChild(textNode);
+
+    // Focus cursor inside pill text on click to reveal raw markdown
+    span.addEventListener('click', (e) => {
+      e.stopPropagation();
+      view.dispatch({ selection: { anchor: this.from + 1 } });
+      view.focus();
+    });
+
+    return span;
+  }
+}
+
 

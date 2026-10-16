@@ -46,6 +46,7 @@ import {
   stripHeadingNumberPrefix,
   subscribeLinkValidation,
 } from '../utils/linkValidator';
+import { parsePillSyntax, resolvePillStyle } from '../utils/pillUtils';
 
 type FontMode = 'sans' | 'serif' | 'mono';
 type WidthMode = 'standard' | 'full';
@@ -1313,14 +1314,15 @@ function renderInlineFormatted(
   // 1. Inline code: `...`
   // 2. Embedded images: ![alt](url)
   // 3. WikiLinks: [[target]] or [[target|label]]
-  // 4. Standard Markdown Links: [label](target)
-  // 5. Display Math: $$...$$
-  // 6. Inline Math: $...$
-  // 7. Strikethrough: ~~...~~
-  // 8. Bold: **...**
-  // 9. Italic: *...*
+  // 4. Custom Pills: [pill:color|label], [pill:label], [status:...], [priority:...]
+  // 5. Standard Markdown Links: [label](target)
+  // 6. Display Math: $$...$$
+  // 7. Inline Math: $...$
+  // 8. Strikethrough: ~~...~~
+  // 9. Bold: **...**
+  // 10. Italic: *...*
   const parts = text.split(
-    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g
+    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g
   );
 
   let currentOffset = 0;
@@ -1438,6 +1440,35 @@ function renderInlineFormatted(
           </a>
         );
       }
+    }
+
+    // 2c. Custom Pills & Badges: [pill:color|label], [pill:label], [status:...], [priority:...]
+    const parsedPill = parsePillSyntax(part);
+    if (parsedPill) {
+      const style = resolvePillStyle(parsedPill.color);
+      const isHex = parsedPill.isCustomHex;
+      const customStyle = isHex
+        ? {
+            backgroundColor: `${parsedPill.color}20`,
+            borderColor: `${parsedPill.color}40`,
+            color: parsedPill.color,
+          }
+        : undefined;
+      const dotBg = isHex ? parsedPill.color : style.dotColor;
+
+      return (
+        <span
+          key={idx}
+          className={`cme-pill inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border align-baseline select-none my-0.5 mx-0.5 ${style.bgClass} ${style.textClass} ${style.borderClass}`}
+          style={customStyle}
+          data-testid="cme-pill"
+          data-color={parsedPill.color}
+          title={part}
+        >
+          <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: dotBg }} />
+          <span>{parsedPill.label}</span>
+        </span>
+      );
     }
 
     // 3. WikiLinks [[target]] or [[target|label]]
