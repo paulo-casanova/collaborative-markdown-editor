@@ -72,6 +72,8 @@ export function parseMarkdownToHtml(markdown: string): string {
   const output: string[] = [];
 
   let inCode = false;
+  let codeFenceChar = '';
+  let codeFenceLen = 0;
   let codeLang = '';
   let codeLines: string[] = [];
   let inList: 'ul' | 'ol' | 'taskList' | null = null;
@@ -94,16 +96,32 @@ export function parseMarkdownToHtml(markdown: string): string {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
 
-    // Fenced Code Block or Mermaid block
-    if (line.startsWith('```')) {
-      closeList();
-      closeBlockquote();
-
-      if (!inCode) {
-        inCode = true;
-        codeLang = line.slice(3).trim();
-        codeLines = [];
-      } else {
+    // Fenced Code Block or Mermaid block (``` or ~~~)
+    if (!inCode) {
+      const fenceMatch = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
+      if (fenceMatch) {
+        const marker = fenceMatch[1];
+        const char = marker[0];
+        const len = marker.length;
+        const rawInfo = fenceMatch[2].trim();
+        if (!(char === '`' && rawInfo.includes('`'))) {
+          closeList();
+          closeBlockquote();
+          inCode = true;
+          codeFenceChar = char;
+          codeFenceLen = len;
+          codeLang = rawInfo;
+          codeLines = [];
+          continue;
+        }
+      }
+    } else {
+      const closeMatch = line.match(/^[ \t]{0,3}(`{3,}|~{3,})\s*$/);
+      if (
+        closeMatch &&
+        closeMatch[1][0] === codeFenceChar &&
+        closeMatch[1].length >= codeFenceLen
+      ) {
         inCode = false;
         const code = codeLines.join('\n');
         if (codeLang === 'mermaid') {
@@ -116,11 +134,8 @@ export function parseMarkdownToHtml(markdown: string): string {
           const markerAttr = isSnippet && parts[2] ? ` data-snippet-marker="${escapeHtml(parts[2])}"` : '';
           output.push(`<pre${sourceAttr}${markerAttr}><code class="language-${effectiveLang || 'plaintext'}">${escapeHtml(code)}</code></pre>`);
         }
+        continue;
       }
-      continue;
-    }
-
-    if (inCode) {
       codeLines.push(line);
       continue;
     }
@@ -165,11 +180,47 @@ export function parseMarkdownToHtml(markdown: string): string {
     // Blockquote
     if (line.startsWith('>')) {
       closeList();
-      if (!inBlockquote) {
-        output.push('<blockquote>');
-        inBlockquote = true;
+      closeBlockquote();
+
+      const quoteLines: string[] = [];
+      while (i < lines.length) {
+        if (lines[i].startsWith('>')) {
+          quoteLines.push(lines[i].replace(/^>\s?/, ''));
+          i++;
+        } else if (lines[i].trim() === '' && i + 1 < lines.length && lines[i + 1].startsWith('>')) {
+          quoteLines.push('');
+          i++;
+        } else {
+          break;
+        }
       }
-      output.push(`<p>${inlineFormat(line.replace(/^>\s*/, ''))}</p>`);
+      i--;
+
+      const paragraphs: string[] = [];
+      let currentPara: string[] = [];
+      for (const qLine of quoteLines) {
+        if (qLine.trim() === '') {
+          if (currentPara.length > 0) {
+            paragraphs.push(currentPara.join(' '));
+            currentPara = [];
+          }
+        } else {
+          currentPara.push(qLine);
+        }
+      }
+      if (currentPara.length > 0) {
+        paragraphs.push(currentPara.join(' '));
+      }
+
+      output.push('<blockquote>');
+      if (paragraphs.length > 0) {
+        for (const para of paragraphs) {
+          output.push(`<p>${inlineFormat(para)}</p>`);
+        }
+      } else {
+        output.push('<p></p>');
+      }
+      output.push('</blockquote>');
       continue;
     } else {
       closeBlockquote();

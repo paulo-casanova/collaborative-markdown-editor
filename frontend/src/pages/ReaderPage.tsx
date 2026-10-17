@@ -905,89 +905,107 @@ export function renderMarkdown(
   while (i < lines.length) {
     const line = lines[i];
 
-    // Fenced Code Block or Mermaid block
-    if (line.trim().startsWith('```')) {
-      const lang = line.trim().replace(/^```/, '').trim();
-      const codeLines: string[] = [];
-      i++;
-      while (i < lines.length && !lines[i].trim().startsWith('```')) {
-        codeLines.push(lines[i]);
+    // Fenced Code Block or Mermaid block (``` or ~~~)
+    const fenceMatch = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
+    if (fenceMatch) {
+      const fenceMarker = fenceMatch[1];
+      const fenceChar = fenceMarker[0];
+      const fenceLen = fenceMarker.length;
+      const rawInfo = fenceMatch[2].trim();
+
+      // For backticks, info string cannot contain backticks
+      if (!(fenceChar === '`' && rawInfo.includes('`'))) {
+        const codeLines: string[] = [];
         i++;
-      }
-      i++; // skip closing ```
-      const code = codeLines.join('\n');
-      const codeBlockId = `code-block-${i}`;
-
-      if (lang === 'mermaid') {
-        elements.push(
-          <MermaidBlock key={`mermaid-${i}`} source={code} />
-        );
-      } else {
-        const langLower = (lang || '').toLowerCase().trim();
-        const effectiveLang = (langLower === 'none' || langLower === 'text') ? '' : langLower;
-
-        let highlighted = '';
-        try {
-          if (effectiveLang && hljs.getLanguage(effectiveLang)) {
-            highlighted = hljs.highlight(code, { language: effectiveLang, ignoreIllegals: true }).value;
-          } else if (effectiveLang) {
-            highlighted = hljs.highlightAuto(code).value;
-          } else {
-            const autoRes = hljs.highlightAuto(code);
-            highlighted = autoRes.value || escapeHtml(code);
+        while (i < lines.length) {
+          const closeMatch = lines[i].match(/^[ \t]{0,3}(`{3,}|~{3,})\s*$/);
+          if (
+            closeMatch &&
+            closeMatch[1][0] === fenceChar &&
+            closeMatch[1].length >= fenceLen
+          ) {
+            break;
           }
-        } catch {
-          highlighted = escapeHtml(code);
+          codeLines.push(lines[i]);
+          i++;
         }
+        i++; // skip closing fence
+        const code = codeLines.join('\n');
+        const codeBlockId = `code-block-${i}`;
 
-        const linesInBlock = code.split('\n');
-        const lineCount = linesInBlock.length;
+        if (rawInfo === 'mermaid') {
+          elements.push(
+            <MermaidBlock key={`mermaid-${i}`} source={code} />
+          );
+        } else {
+          const langLower = (rawInfo || '').toLowerCase().trim();
+          const effectiveLang = (langLower === 'none' || langLower === 'text') ? '' : langLower;
 
-        elements.push(
-          <div
-            key={`code-${i}`}
-            className="my-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden group shadow-sm"
-          >
-            <div className="flex items-center justify-between px-3.5 py-1.5 bg-cme-bg-subtle text-xs font-mono text-cme-text-muted border-b border-cme-border-base">
-              <span>{effectiveLang || 'none'}</span>
-              <button
-                onClick={() => onCopyCode(code, codeBlockId)}
-                className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
-                title="Copy code"
-              >
-                {copiedCodeId === codeBlockId ? (
-                  <>
-                    <Check className="w-3 h-3 text-emerald-500" />
-                    <span className="text-[10px] text-emerald-500">Copied</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3 h-3" />
-                    <span className="text-[10px]">Copy</span>
-                  </>
-                )}
-              </button>
-            </div>
-            <div className="flex p-4 overflow-x-auto font-mono text-xs leading-6 bg-cme-bg-base/50">
-              <div
-                className="line-numbers-gutter select-none text-right pr-3 pl-1 text-cme-text-subtle/50 font-mono text-xs leading-6 border-r border-cme-border-base/40 mr-3 flex-shrink-0"
-                aria-hidden="true"
-              >
-                {Array.from({ length: lineCount }, (_, idx) => (
-                  <div key={idx}>{idx + 1}</div>
-                ))}
+          let highlighted = '';
+          if (code.length > 0) {
+            try {
+              if (effectiveLang && hljs.getLanguage(effectiveLang)) {
+                highlighted = hljs.highlight(code, { language: effectiveLang, ignoreIllegals: true }).value;
+              } else if (effectiveLang) {
+                highlighted = hljs.highlightAuto(code).value;
+              } else {
+                const autoRes = hljs.highlightAuto(code);
+                highlighted = autoRes.value || escapeHtml(code);
+              }
+            } catch {
+              highlighted = escapeHtml(code);
+            }
+          }
+
+          const linesInBlock = code.split('\n');
+          const lineCount = code.length === 0 ? 1 : linesInBlock.length;
+
+          elements.push(
+            <div
+              key={`code-${i}`}
+              className="my-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden group shadow-sm"
+            >
+              <div className="flex items-center justify-between px-3.5 py-1.5 bg-cme-bg-subtle text-xs font-mono text-cme-text-muted border-b border-cme-border-base">
+                <span>{effectiveLang || 'none'}</span>
+                <button
+                  onClick={() => onCopyCode(code, codeBlockId)}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+                  title="Copy code"
+                >
+                  {copiedCodeId === codeBlockId ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-500" />
+                      <span className="text-[10px] text-emerald-500">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span className="text-[10px]">Copy</span>
+                    </>
+                  )}
+                </button>
               </div>
-              <pre className="font-mono text-xs text-cme-text-base leading-6 flex-1 overflow-x-auto whitespace-pre">
-                <code
-                  className={effectiveLang ? `hljs language-${effectiveLang}` : 'hljs'}
-                  dangerouslySetInnerHTML={{ __html: highlighted }}
-                />
-              </pre>
+              <div className="flex p-4 overflow-x-auto font-mono text-xs leading-6 bg-cme-bg-base/50">
+                <div
+                  className="line-numbers-gutter select-none text-right pr-3 pl-1 text-cme-text-subtle/50 font-mono text-xs leading-6 border-r border-cme-border-base/40 mr-3 flex-shrink-0"
+                  aria-hidden="true"
+                >
+                  {Array.from({ length: lineCount }, (_, idx) => (
+                    <div key={idx}>{idx + 1}</div>
+                  ))}
+                </div>
+                <pre className="font-mono text-xs text-cme-text-base leading-6 flex-1 overflow-x-auto whitespace-pre">
+                  <code
+                    className={effectiveLang ? `hljs language-${effectiveLang}` : 'hljs'}
+                    dangerouslySetInnerHTML={{ __html: highlighted || '\n' }}
+                  />
+                </pre>
+              </div>
             </div>
-          </div>
-        );
+          );
+        }
+        continue;
       }
-      continue;
     }
 
     // Display Math Block $$...$$
@@ -1117,21 +1135,53 @@ export function renderMarkdown(
     // Blockquote >
     if (line.startsWith('>')) {
       const quoteLines: string[] = [];
-      while (i < lines.length && lines[i].startsWith('>')) {
-        quoteLines.push(lines[i].replace(/^>\s?/, ''));
-        i++;
+      while (i < lines.length) {
+        if (lines[i].startsWith('>')) {
+          quoteLines.push(lines[i].replace(/^>\s?/, ''));
+          i++;
+        } else if (lines[i].trim() === '' && i + 1 < lines.length && lines[i + 1].startsWith('>')) {
+          quoteLines.push('');
+          i++;
+        } else {
+          break;
+        }
       }
+
+      const paragraphs: string[] = [];
+      let currentPara: string[] = [];
+      for (const qLine of quoteLines) {
+        if (qLine.trim() === '') {
+          if (currentPara.length > 0) {
+            paragraphs.push(currentPara.join(' '));
+            currentPara = [];
+          }
+        } else {
+          currentPara.push(qLine);
+        }
+      }
+      if (currentPara.length > 0) {
+        paragraphs.push(currentPara.join(' '));
+      }
+
       elements.push(
         <blockquote
           key={`quote-${i}`}
-          className="my-3 pl-4 border-l-4 border-cme-primary italic text-cme-text-muted bg-cme-primary/5 py-1 rounded-r-lg"
+          className="my-3 pl-4 border-l-4 border-cme-primary italic text-cme-text-muted bg-cme-primary/5 py-2 rounded-r-lg space-y-2"
         >
-          {renderInlineFormatted(
-            quoteLines.join(' '),
-            currentDocTarget,
-            currentDocMarkdown,
-            currentDocPath,
-            true
+          {paragraphs.length > 0 ? (
+            paragraphs.map((para, pIdx) => (
+              <p key={pIdx} className="my-1.5 first:mt-0 last:mb-0 leading-relaxed">
+                {renderInlineFormatted(
+                  para,
+                  currentDocTarget,
+                  currentDocMarkdown,
+                  currentDocPath,
+                  true
+                )}
+              </p>
+            ))
+          ) : (
+            <p className="my-1.5 first:mt-0 last:mb-0 leading-relaxed">&nbsp;</p>
           )}
         </blockquote>
       );

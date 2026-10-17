@@ -222,7 +222,28 @@ int main() {
 
         // Standard code block must remain <pre><code class="language-cpp">
         assert(html.find("<pre><code class=\"language-cpp\">#include &lt;iostream&gt;\nint main() { return 0; }") != std::string::npos);
-        std::cout << "     [PASS] Mermaid diagram blocks converted into <div class=\"mermaid\">.\n";
+
+        // Empty code blocks and tilde fences
+        std::string empty_blocks_md =
+            "```\n```\n\n"
+            "```python\n```\n\n"
+            "~~~\n~~~\n\n"
+            "````\n```\ninner\n```\n````\n";
+        std::string empty_html = cme::renderer::MarkdownRenderer::render_to_html(empty_blocks_md, opts);
+        assert(empty_html.find("<pre><code></code></pre>") != std::string::npos);
+        assert(empty_html.find("<pre><code class=\"language-python\"></code></pre>") != std::string::npos);
+        assert(empty_html.find("<pre><code>```\ninner\n```\n</code></pre>") != std::string::npos);
+
+        // Multi-paragraph blockquote separated by empty quote line
+        std::string quote_md =
+            "> Paragraph 1 line 1\n"
+            "> Paragraph 1 line 2\n"
+            ">\n"
+            "> Paragraph 2 line 1\n";
+        std::string quote_html = cme::renderer::MarkdownRenderer::render_to_html(quote_md, opts);
+        assert(quote_html.find("<blockquote>\n<p>Paragraph 1 line 1\nParagraph 1 line 2</p>\n<p>Paragraph 2 line 1</p>\n</blockquote>") != std::string::npos);
+
+        std::cout << "     [PASS] Mermaid diagram blocks converted into <div class=\"mermaid\">, empty code blocks & blockquotes verified.\n";
     }
 
     // =========================================================================

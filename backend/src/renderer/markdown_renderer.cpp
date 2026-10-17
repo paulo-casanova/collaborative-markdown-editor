@@ -885,6 +885,8 @@ inline std::string normalize_markdown_links_with_spaces(std::string_view input) 
     std::istringstream stream{std::string(input)};
     std::string line;
     bool in_fence = false;
+    char fence_char = '\0';
+    size_t fence_len = 0;
 
     // Matches !?[alt](destination)
     static const std::regex link_re(R"((!?\[[^\]]*\])\(([^)\n]+)\))");
@@ -894,11 +896,38 @@ inline std::string normalize_markdown_links_with_spaces(std::string_view input) 
     while (std::getline(stream, line)) {
         // Check for fence start/end (``` or ~~~)
         auto trimmed_start = line.find_first_not_of(" \t");
-        if (trimmed_start != std::string::npos && (line.compare(trimmed_start, 3, "```") == 0 || line.compare(trimmed_start, 3, "~~~") == 0)) {
-            in_fence = !in_fence;
-            output.append(line);
-            output.push_back('\n');
-            continue;
+        if (trimmed_start != std::string::npos && trimmed_start <= 3) {
+            char ch = line[trimmed_start];
+            if (ch == '`' || ch == '~') {
+                size_t count = 0;
+                while (trimmed_start + count < line.size() && line[trimmed_start + count] == ch) {
+                    count++;
+                }
+                if (count >= 3) {
+                    if (!in_fence) {
+                        // For backticks, CommonMark requires info string cannot contain backticks
+                        if (ch != '`' || line.find('`', trimmed_start + count) == std::string::npos) {
+                            in_fence = true;
+                            fence_char = ch;
+                            fence_len = count;
+                            output.append(line);
+                            output.push_back('\n');
+                            continue;
+                        }
+                    } else if (ch == fence_char && count >= fence_len) {
+                        // Closing fence: only optional whitespace allowed after closing fence
+                        auto rest_idx = line.find_first_not_of(" \t", trimmed_start + count);
+                        if (rest_idx == std::string::npos) {
+                            in_fence = false;
+                            fence_char = '\0';
+                            fence_len = 0;
+                            output.append(line);
+                            output.push_back('\n');
+                            continue;
+                        }
+                    }
+                }
+            }
         }
 
         if (in_fence) {

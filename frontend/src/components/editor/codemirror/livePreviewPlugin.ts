@@ -97,50 +97,78 @@ export function buildLivePreviewDecorations(
     }
   };
 
-  let match: RegExpExecArray | null;
+  // 1 & 2. Multiline Blocks: Fenced Code Blocks & Mermaid Diagrams (``` or ~~~)
+  let curLineNum = 1;
+  const totalDocLines = doc.lines;
+  while (curLineNum <= totalDocLines) {
+    const l = doc.line(curLineNum);
+    const lineText = l.text;
+    const fenceMatch = lineText.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
+    if (fenceMatch) {
+      const fenceMarker = fenceMatch[1];
+      const fenceChar = fenceMarker[0];
+      const fenceLen = fenceMarker.length;
+      const rawInfo = fenceMatch[2].trim();
 
-  // 1. Multiline Blocks: Mermaid Diagrams (```mermaid ... ```)
-  const mermaidRegex = /```mermaid\n([\s\S]*?)\n```/g;
-  while ((match = mermaidRegex.exec(docText)) !== null) {
-    const from = match.index;
-    const to = from + match[0].length;
-    const source = match[1].trim();
-    codeOrFenceRanges.push({ from, to });
+      // For backticks, CommonMark requires info string cannot contain backticks
+      if (!(fenceChar === '`' && rawInfo.includes('`'))) {
+        const blockStartFrom = l.from;
+        let blockEndTo = -1;
+        let endLineNum = -1;
+        const codeLines: string[] = [];
 
-    const cursorInside = cursorTo >= from && cursorFrom <= to;
-    if (!cursorInside && source.length > 0) {
-      addReplace(
-        from,
-        to,
-        Decoration.replace({
-          widget: new MermaidBlockWidget(source, from, to, isDark),
-          block: true,
-        })
-      );
+        for (let j = curLineNum + 1; j <= totalDocLines; j++) {
+          const nextLine = doc.line(j);
+          const closeMatch = nextLine.text.match(/^[ \t]{0,3}(`{3,}|~{3,})\s*$/);
+          if (
+            closeMatch &&
+            closeMatch[1][0] === fenceChar &&
+            closeMatch[1].length >= fenceLen
+          ) {
+            blockEndTo = nextLine.to;
+            endLineNum = j;
+            break;
+          } else {
+            codeLines.push(nextLine.text);
+          }
+        }
+
+        if (endLineNum !== -1) {
+          const code = codeLines.join('\n');
+          codeOrFenceRanges.push({ from: blockStartFrom, to: blockEndTo });
+
+          const cursorInside = cursorTo >= blockStartFrom && cursorFrom <= blockEndTo;
+          if (rawInfo.toLowerCase() === 'mermaid' || rawInfo.toLowerCase().startsWith('mermaid ')) {
+            if (!cursorInside && code.trim().length > 0) {
+              addReplace(
+                blockStartFrom,
+                blockEndTo,
+                Decoration.replace({
+                  widget: new MermaidBlockWidget(code.trim(), blockStartFrom, blockEndTo, isDark),
+                  block: true,
+                })
+              );
+            }
+          } else {
+            // Regular fenced code block (supports empty code blocks!)
+            if (!cursorInside) {
+              addReplace(
+                blockStartFrom,
+                blockEndTo,
+                Decoration.replace({
+                  widget: new CodeBlockWidget(rawInfo, code, blockStartFrom, blockEndTo, documentPath),
+                  block: true,
+                })
+              );
+            }
+          }
+
+          curLineNum = endLineNum + 1;
+          continue;
+        }
+      }
     }
-  }
-
-  // 2. Multiline Blocks: Fenced Code Blocks (```lang ... ``` or ```lang|source|marker ... ```)
-  const codeBlockRegex = /```([^\n]*)\n([\s\S]*?)\n```/g;
-  while ((match = codeBlockRegex.exec(docText)) !== null) {
-    const rawHeader = match[1].trim();
-    if (rawHeader.toLowerCase().startsWith('mermaid')) continue;
-    const from = match.index;
-    const to = from + match[0].length;
-    const code = match[2];
-    codeOrFenceRanges.push({ from, to });
-
-    const cursorInside = cursorTo >= from && cursorFrom <= to;
-    if (!cursorInside && code.length > 0) {
-      addReplace(
-        from,
-        to,
-        Decoration.replace({
-          widget: new CodeBlockWidget(rawHeader || '', code, from, to, documentPath),
-          block: true,
-        })
-      );
-    }
+    curLineNum++;
   }
 
   // Pre-scan inline backtick code spans (`...`) on non-fenced lines so display math & links inside backticks are ignored
@@ -189,6 +217,7 @@ export function buildLivePreviewDecorations(
   };
 
   // 3. Multiline Blocks: Display Math ($$...$$)
+  let match: RegExpExecArray | null;
   const mathRegex = /\$\$([\s\S]*?)\$\$/g;
   while ((match = mathRegex.exec(docText)) !== null) {
     const from = match.index;

@@ -839,7 +839,7 @@ export class CodeBlockWidget extends WidgetType {
     body.className = 'flex p-4 overflow-x-auto cursor-pointer font-mono text-xs leading-6';
 
     const lines = this.code.split('\n');
-    const lineCount = lines.length;
+    const lineCount = this.code.length === 0 ? 1 : lines.length;
 
     // Line numbers gutter
     const gutter = document.createElement('div');
@@ -854,27 +854,29 @@ export class CodeBlockWidget extends WidgetType {
     codeElem.className = effectiveLang ? `hljs language-${effectiveLang}` : 'hljs';
 
     let highlighted = '';
-    if (effectiveLang) {
-      try {
-        if (hljs.getLanguage(effectiveLang)) {
-          highlighted = hljs.highlight(this.code, { language: effectiveLang, ignoreIllegals: true }).value;
-        } else {
-          highlighted = hljs.highlightAuto(this.code).value;
+    if (this.code.length > 0) {
+      if (effectiveLang) {
+        try {
+          if (hljs.getLanguage(effectiveLang)) {
+            highlighted = hljs.highlight(this.code, { language: effectiveLang, ignoreIllegals: true }).value;
+          } else {
+            highlighted = hljs.highlightAuto(this.code).value;
+          }
+        } catch {
+          highlighted = escapeHtml(this.code);
         }
-      } catch {
+      } else {
         highlighted = escapeHtml(this.code);
       }
-    } else {
-      highlighted = escapeHtml(this.code);
     }
-    codeElem.innerHTML = highlighted;
+    codeElem.innerHTML = highlighted || '\n';
     pre.appendChild(codeElem);
 
     body.appendChild(gutter);
     body.appendChild(pre);
 
     body.addEventListener('click', () => {
-      view.dispatch({ selection: { anchor: this.from + 4 } });
+      view.dispatch({ selection: { anchor: Math.min(this.from + 4, this.to) } });
       view.focus();
     });
 
