@@ -1027,7 +1027,7 @@ Result<void> Server::start() {
             return;
         }
 
-        std::string cmd = "curl -s -L --max-time 5 \"" + url_param + "\"";
+        std::string cmd = "curl -s -S -L --fail --max-time 5 \"" + url_param + "\" 2>&1";
         FILE* pipe = popen(cmd.c_str(), "r");
         if (!pipe) {
             send_json(res, "502 Bad Gateway", {{"error", "Failed to execute fetch"}});
@@ -1039,8 +1039,12 @@ Result<void> Server::start() {
             result += buffer;
         }
         int status = pclose(pipe);
-        if (status != 0 || result.empty()) {
-            send_json(res, "502 Bad Gateway", {{"error", "Failed to fetch remote URL"}});
+        if (status != 0) {
+            std::string err_msg = result.empty() ? "Failed to fetch remote URL" : result;
+            while (!err_msg.empty() && (err_msg.back() == '\n' || err_msg.back() == '\r')) {
+                err_msg.pop_back();
+            }
+            send_json(res, "502 Bad Gateway", {{"error", err_msg}});
             return;
         }
 

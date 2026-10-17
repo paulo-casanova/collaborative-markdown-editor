@@ -182,8 +182,14 @@ export async function fetchSnippetSource(
     const proxyUrl = `/api/v1/workspaces/snippet-proxy?url=${encodeURIComponent(cleanSource)}`;
     const proxyRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
     if (!proxyRes.ok) {
-      const errText = await proxyRes.text().catch(() => '');
-      throw new Error(`Failed to fetch remote snippet: ${cleanSource} (${proxyRes.status} ${errText})`);
+      let errDetail = '';
+      try {
+        const jsonErr = await proxyRes.json();
+        errDetail = jsonErr?.error || '';
+      } catch {
+        errDetail = await proxyRes.text().catch(() => '');
+      }
+      throw new Error(`Failed to fetch remote snippet: ${cleanSource} (${proxyRes.status}${errDetail ? `: ${errDetail}` : ''})`);
     }
     return await proxyRes.text();
   }

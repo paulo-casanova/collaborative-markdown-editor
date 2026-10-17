@@ -2331,13 +2331,13 @@ Result<nlohmann::json> DocumentService::set_node_permission(
         pqxx::work tx(conn_res->get());
         if (target_type == "DOCUMENT") {
             tx.exec_params(
-                "DELETE FROM permissions WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid AND grantee_type = $2 AND grantee_id = $3::uuid;",
+                "DELETE FROM permissions WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid AND grantee_type = $2 AND grantee_id = $3::uuid",
                 target_id,
                 grantee_type,
                 grantee_id
             );
             tx.exec_params(
-                "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DOCUMENT', $1::uuid, $2, $3::uuid, $4, $5);",
+                "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DOCUMENT', $1::uuid, $2, $3::uuid, $4, $5)",
                 target_id,
                 grantee_type,
                 grantee_id,
@@ -2347,13 +2347,13 @@ Result<nlohmann::json> DocumentService::set_node_permission(
         } else {
             std::string clean_dir = normalize_rel_path(dir_path);
             tx.exec_params(
-                "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1 AND grantee_type = $2 AND grantee_id = $3::uuid;",
+                "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1 AND grantee_type = $2 AND grantee_id = $3::uuid",
                 clean_dir,
                 grantee_type,
                 grantee_id
             );
             tx.exec_params(
-                "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DIRECTORY', $1, $2, $3::uuid, $4, $5);",
+                "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DIRECTORY', $1, $2, $3::uuid, $4, $5)",
                 clean_dir,
                 grantee_type,
                 grantee_id,
@@ -2520,7 +2520,7 @@ Result<void> DocumentService::transfer_node_ownership(
                 SET owner_user_id = NULLIF($2, '')::uuid,
                     owner_team_id = NULLIF($3, '')::uuid,
                     updated_at = NOW()
-                WHERE id = $1::uuid;
+                WHERE id = $1::uuid
                 )",
                 target_id,
                 new_owner_user_id,
@@ -2535,7 +2535,7 @@ Result<void> DocumentService::transfer_node_ownership(
                 ON CONFLICT (directory_path) DO UPDATE
                 SET owner_user_id = NULLIF($2, '')::uuid,
                     owner_team_id = NULLIF($3, '')::uuid,
-                    updated_at = NOW();
+                    updated_at = NOW()
                 )",
                 clean_dir,
                 new_owner_user_id,
