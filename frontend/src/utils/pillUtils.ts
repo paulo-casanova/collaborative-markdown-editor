@@ -22,7 +22,7 @@ export interface ParsedPill {
 }
 
 export function parsePillSyntax(raw: string): ParsedPill | null {
-  const match = raw.match(/^\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)\|)?([^\]\n]+)\]$/);
+  const match = raw.match(/^\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)(?:\\?\|))?([^\]\n]+)\]$/);
   if (!match) return null;
 
   const prefixType = match[1];

@@ -54,6 +54,7 @@ import {
 } from '../utils/linkValidator';
 import { parsePillSyntax, resolvePillStyle } from '../utils/pillUtils';
 import { parseImageDimensionAndAlt, getImageStyles, parseImageTarget } from '../utils/imageDimensions';
+import { splitTableRow, parseTableAlignments } from '../utils/tableUtils';
 
 type FontMode = 'sans' | 'serif' | 'mono';
 type WidthMode = 'standard' | 'full';
@@ -1205,38 +1206,9 @@ export function renderMarkdown(
           curIdx++;
         }
 
-        const splitRow = (rowStr: string): string[] => {
-          let trimmed = rowStr.trim();
-          if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
-          if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
-          const cells: string[] = [];
-          let currentCell = '';
-          for (let c = 0; c < trimmed.length; c++) {
-            const char = trimmed[c];
-            if (char === '\\' && c + 1 < trimmed.length && trimmed[c + 1] === '|') {
-              currentCell += '|';
-              c++;
-            } else if (char === '|') {
-              cells.push(currentCell.trim());
-              currentCell = '';
-            } else {
-              currentCell += char;
-            }
-          }
-          cells.push(currentCell.trim());
-          return cells;
-        };
-
-        const headerCells = splitRow(tableLines[0]);
-        const delimiterCells = splitRow(tableLines[1]);
-
-        const alignments: ('left' | 'center' | 'right')[] = delimiterCells.map((delim) => {
-          if (delim.startsWith(':') && delim.endsWith(':')) return 'center';
-          if (delim.endsWith(':')) return 'right';
-          return 'left';
-        });
-
-        const dataRows = tableLines.slice(2).map((row) => splitRow(row));
+        const headerCells = splitTableRow(tableLines[0]);
+        const alignments = parseTableAlignments(tableLines[1]);
+        const dataRows = tableLines.slice(2).map((row) => splitTableRow(row));
 
         elements.push(
           <div

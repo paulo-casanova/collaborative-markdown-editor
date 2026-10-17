@@ -308,7 +308,7 @@ export function buildLivePreviewDecorations(
             tFrom,
             tTo,
             Decoration.replace({
-              widget: new TableBlockWidget(tableRaw, tFrom, tTo),
+              widget: new TableBlockWidget(tableRaw, tFrom, tTo, documentPath),
               block: true,
             })
           );

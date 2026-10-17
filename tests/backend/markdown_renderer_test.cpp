@@ -297,6 +297,31 @@ int main() {
     }
 
     // =========================================================================
+    // 4c. UNIT TEST: Pills and Links Inside Markdown Tables
+    // =========================================================================
+    {
+        std::cout << "  -> Testing pills, wikilinks, and standard links inside tables...\n";
+        std::string md =
+            "| Item | Status | Target Link | External Link |\n"
+            "| :--- | :---: | :--- | ---: |\n"
+            "| Feature Alpha | [pill:green|Active] | [[Docs/Alpha|Alpha Doc]] | [Spec](https://example.com/spec) |\n"
+            "| Feature Beta | [status:in-progress] | [[Beta]] | [Issue Tracker](https://issue.org/42) |\n";
+
+        cme::renderer::RenderOptions opts{.standalone = false};
+        std::string html = cme::renderer::MarkdownRenderer::render_to_html(md, opts);
+
+        assert(html.find("<table>") != std::string::npos);
+        assert(html.find("Item</th>") != std::string::npos);
+        assert(html.find("<span class=\"cme-pill cme-pill-green\" data-color=\"green\">Active</span>") != std::string::npos);
+        assert(html.find("<span class=\"cme-pill cme-pill-amber\" data-color=\"amber\">In Progress</span>") != std::string::npos);
+        assert(html.find("<a class=\"wiki-link\" href=\"/api/v1/documents/by-path/html?path=Docs%2FAlpha\" data-target=\"Docs/Alpha\">Alpha Doc</a>") != std::string::npos);
+        assert(html.find("<a class=\"wiki-link\" href=\"/api/v1/documents/by-path/html?path=Beta\" data-target=\"Beta\">Beta</a>") != std::string::npos);
+        assert(html.find("<a href=\"https://example.com/spec\">Spec</a>") != std::string::npos);
+        assert(html.find("<a href=\"https://issue.org/42\">Issue Tracker</a>") != std::string::npos);
+        std::cout << "     [PASS] Pills and links rendered correctly inside markdown table cells.\n";
+    }
+
+    // =========================================================================
     // 5. UNIT TEST: Review Subsystem Annotations Overlay
     // =========================================================================
     {

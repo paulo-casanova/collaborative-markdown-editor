@@ -321,6 +321,92 @@ Deep details.`;
         expect(el.props.className).toContain('rounded-xl');
       }
     });
+
+    it('renders tables with custom pills, wikilinks, and markdown links inside cells', () => {
+      const md = [
+        '| Name | Status | WikiLink | External |',
+        '| :--- | :---: | :--- | ---: |',
+        '| Project A | [pill:green|Approved] | [[Architecture/Overview|Specs]] | [Guide](https://example.com) |',
+        '| Project B | [status:in-progress] | [[Roadmap]] | [Link](https://cme.dev) |',
+      ].join('\n');
+
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(1);
+      const tableWrapper = elements[0];
+      expect(tableWrapper.props.className).toContain('cme-table-block-node');
+      const table = tableWrapper.props.children;
+      expect(table.type).toBe('table');
+      const [thead, tbody] = table.props.children;
+      expect(thead.type).toBe('thead');
+      expect(tbody.type).toBe('tbody');
+
+      // Thead headers
+      const thList = thead.props.children.props.children;
+      expect(thList.length).toBe(4);
+
+      // Tbody rows
+      const rows = tbody.props.children;
+      expect(rows.length).toBe(2);
+      const row1Cells = rows[0].props.children;
+      expect(row1Cells.length).toBe(4);
+    });
+  });
+
+  describe('Table Parsing & Row Splitting (tableUtils)', () => {
+    it('splits table cells while protecting pipes in pills and wikilinks', async () => {
+      const { splitTableRow, parseTableAlignments, isTableDelimiterRow } = await import('../../src/utils/tableUtils');
+
+      // Basic split
+      expect(splitTableRow('| Col 1 | Col 2 | Col 3 |')).toEqual(['Col 1', 'Col 2', 'Col 3']);
+      expect(splitTableRow('Col 1 | Col 2 | Col 3')).toEqual(['Col 1', 'Col 2', 'Col 3']);
+
+      // Escaped pipe
+      expect(splitTableRow('| Cell with \\| pipe | Next |')).toEqual(['Cell with | pipe', 'Next']);
+
+      // Inline code with pipe
+      expect(splitTableRow('| `cmd | grep` | Output |')).toEqual(['`cmd | grep`', 'Output']);
+
+      // Custom pill with pipe
+      expect(splitTableRow('| Task 1 | [pill:green|Done] | Notes |')).toEqual(['Task 1', '[pill:green|Done]', 'Notes']);
+      expect(splitTableRow('| [pill:#7c3aed|VIP Member] | Active |')).toEqual(['[pill:#7c3aed|VIP Member]', 'Active']);
+
+      // WikiLink with alias pipe
+      expect(splitTableRow('| Page | [[Docs/Architecture|System Architecture]] | Verified |')).toEqual([
+        'Page',
+        '[[Docs/Architecture|System Architecture]]',
+        'Verified',
+      ]);
+
+      // Alignments
+      expect(parseTableAlignments('| :--- | :---: | ---: |')).toEqual(['left', 'center', 'right']);
+      expect(parseTableAlignments('--- | :---: | ---')).toEqual(['left', 'center', 'left']);
+
+      // Delimiter row check
+      expect(isTableDelimiterRow('| :--- | :---: | ---: |')).toBe(true);
+      expect(isTableDelimiterRow('| not | delimiter |')).toBe(false);
+      expect(isTableDelimiterRow('plain text')).toBe(false);
+    });
+
+    it('renders HTML tables with pills and links in parseMarkdownToHtml', () => {
+      const md = [
+        '| Task | Status | Doc | Ref |',
+        '| :--- | :---: | :--- | ---: |',
+        '| Build Core | [pill:green|Passed] | [[Build/Guide|Build Docs]] | [Repo](https://github.com/repo) |',
+        '| Test Suite | [status:done] | [[Tests]] | [CI](https://ci.dev) |',
+      ].join('\n');
+
+      const html = parseMarkdownToHtml(md);
+      expect(html).toContain('<table><thead><tr>');
+      expect(html).toContain('<th>Task</th>');
+      expect(html).toContain('<th align="center" style="text-align: center;">Status</th>');
+      expect(html).toContain('<span class="cme-pill cme-pill-green" data-color="green">Passed</span>');
+      expect(html).toContain('<span class="cme-pill cme-pill-green" data-color="green">Done</span>');
+      expect(html).toContain('<a class="wiki-link" data-target="Build/Guide">Build Docs</a>');
+      expect(html).toContain('<a class="wiki-link" data-target="Tests">Tests</a>');
+      expect(html).toContain('<a href="https://github.com/repo" target="_blank" rel="noopener noreferrer">Repo</a>');
+      expect(html).toContain('</tbody></table>');
+    });
   });
 });
+
 

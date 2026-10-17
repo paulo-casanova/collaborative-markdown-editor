@@ -3,7 +3,13 @@ import katex from 'katex';
 import { renderMermaidSvg } from '../utils/mermaidRenderer';
 import hljs from 'highlight.js';
 import { findHeadingPosition, slugify } from '../../navigation/DocumentOutline';
-import { isExternalUrl, stripHeadingNumberPrefix } from '../../../utils/linkValidator';
+import {
+  isExternalUrl,
+  stripHeadingNumberPrefix,
+  validateLinkTarget,
+  extractDocumentHeadings,
+  matchesHeadingTarget,
+} from '../../../utils/linkValidator';
 import { getWorkspaceFileUrl, isMarkdownPath } from '../../../api/documents';
 import {
   parseCodeFenceHeader,
@@ -12,8 +18,9 @@ import {
   getSnippetState,
   setSnippetState,
 } from '../../../utils/snippetSync';
-import { resolvePillStyle } from '../../../utils/pillUtils';
+import { resolvePillStyle, parsePillSyntax } from '../../../utils/pillUtils';
 import { parseImageDimensionAndAlt, parseImageTarget } from '../../../utils/imageDimensions';
+import { splitTableRow, parseTableAlignments } from '../../../utils/tableUtils';
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -929,13 +936,19 @@ export class TableBlockWidget extends WidgetType {
   constructor(
     public rawText: string,
     public from: number,
-    public to: number
+    public to: number,
+    public docPath?: string
   ) {
     super();
   }
 
   eq(other: TableBlockWidget): boolean {
-    return this.rawText === other.rawText && this.from === other.from && this.to === other.to;
+    return (
+      this.rawText === other.rawText &&
+      this.from === other.from &&
+      this.to === other.to &&
+      this.docPath === other.docPath
+    );
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -953,21 +966,8 @@ export class TableBlockWidget extends WidgetType {
       'overflow-x-auto rounded-xl border border-cme-border-base bg-cme-bg-surface shadow-sm cursor-pointer';
     card.title = 'Click table to edit markdown source';
 
-    const splitRow = (line: string): string[] => {
-      let trimmed = line;
-      if (trimmed.startsWith('|')) trimmed = trimmed.slice(1);
-      if (trimmed.endsWith('|')) trimmed = trimmed.slice(0, -1);
-      return trimmed.split('|').map((c) => c.trim());
-    };
-
-    const headerCells = splitRow(lines[0]);
-    const delimiterCells = splitRow(lines[1]);
-
-    const alignments: ('left' | 'center' | 'right')[] = delimiterCells.map((delim) => {
-      if (delim.startsWith(':') && delim.endsWith(':')) return 'center';
-      if (delim.endsWith(':')) return 'right';
-      return 'left';
-    });
+    const headerCells = splitTableRow(lines[0]);
+    const alignments = parseTableAlignments(lines[1]);
 
     const table = document.createElement('table');
     table.className = 'w-full text-left text-sm border-collapse';
@@ -980,7 +980,7 @@ export class TableBlockWidget extends WidgetType {
       const th = document.createElement('th');
       th.className = 'px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0';
       th.style.textAlign = alignments[idx] || 'left';
-      renderCellContent(th, header);
+      renderCellContent(th, header, view, this.docPath);
       trHead.appendChild(th);
     });
     thead.appendChild(trHead);
@@ -990,7 +990,7 @@ export class TableBlockWidget extends WidgetType {
     const tbody = document.createElement('tbody');
     tbody.className = 'divide-y divide-cme-border-base/40 text-cme-text-base';
     for (let r = 2; r < lines.length; r++) {
-      const rowCells = splitRow(lines[r]);
+      const rowCells = splitTableRow(lines[r]);
       const tr = document.createElement('tr');
       tr.className = (r - 2) % 2 === 1 ? 'bg-cme-bg-subtle/20 hover:bg-cme-bg-hover/40' : 'hover:bg-cme-bg-hover/40';
       headerCells.forEach((_, colIdx) => {
@@ -998,7 +998,7 @@ export class TableBlockWidget extends WidgetType {
         td.className = 'px-4 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0';
         td.style.textAlign = alignments[colIdx] || 'left';
         const cellValue = rowCells[colIdx] || '';
-        renderCellContent(td, cellValue);
+        renderCellContent(td, cellValue, view, this.docPath);
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
@@ -1017,33 +1017,232 @@ export class TableBlockWidget extends WidgetType {
   }
 }
 
-function renderCellContent(container: HTMLElement, text: string) {
-  if (!text) {
+function createTableCellLink(
+  rawTarget: string,
+  displayLabel: string,
+  view: EditorView,
+  docPath?: string
+): HTMLElement {
+  const docText = view.state.doc.toString();
+  const targetInfo = parseImageTarget(rawTarget);
+  const cleanTarget = targetInfo.cleanSrc;
+  const external = isExternalUrl(cleanTarget);
+  const hashIdx = cleanTarget.indexOf('#');
+  const targetDoc = !external && hashIdx >= 0 ? cleanTarget.slice(0, hashIdx).trim() : cleanTarget;
+  const rawAnchor = !external && hashIdx >= 0 ? cleanTarget.slice(hashIdx + 1).trim() : '';
+
+  let isSameDoc = !external && (cleanTarget.startsWith('#') || targetDoc === '');
+  let effectiveAnchor = rawAnchor;
+  if (!external && !isSameDoc && targetDoc) {
+    const headings = extractDocumentHeadings(docText);
+    if (headings.some((h) => matchesHeadingTarget(h.rawText, targetDoc))) {
+      isSameDoc = true;
+      effectiveAnchor = rawAnchor || targetDoc;
+    }
+  }
+
+  const validation = validateLinkTarget(cleanTarget, docText, docPath);
+  if (!validation.valid) {
+    const broken = document.createElement('span');
+    broken.className =
+      'broken-link-span inline-flex items-center gap-1 font-mono text-xs px-1.5 py-0.5 rounded-md border border-rose-500/50 bg-rose-500/10 text-rose-600 dark:text-rose-400';
+    broken.title = `Broken link: ${validation.reason || 'Target file or heading does not exist'}`;
+    const sign = document.createElement('span');
+    sign.className = 'broken-link-sign font-bold';
+    sign.textContent = '⚠';
+    const txt = document.createElement('span');
+    txt.className = 'font-medium underline decoration-rose-500/60';
+    txt.textContent = displayLabel;
+    broken.appendChild(sign);
+    broken.appendChild(txt);
+    return broken;
+  }
+
+  const a = document.createElement('a');
+  a.className =
+    'text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer';
+  a.textContent = displayLabel;
+  a.title = `${displayLabel} (${cleanTarget})`;
+
+  if (external) {
+    a.href = cleanTarget;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    const extIcon = document.createElement('span');
+    extIcon.className = 'text-[10px] opacity-70 ml-0.5';
+    extIcon.textContent = '↗';
+    a.appendChild(extIcon);
+  } else {
+    a.href = '#';
+  }
+
+  a.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+
+    if (external) {
+      window.open(cleanTarget, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    if (isSameDoc) {
+      const headingRef = effectiveAnchor || rawAnchor || cleanTarget.replace(/^#/, '');
+      const pos = findHeadingPosition(view.state.doc, headingRef);
+      if (pos) {
+        view.dispatch({
+          selection: { anchor: pos.from },
+          effects: EditorView.scrollIntoView(pos.from, { y: 'start', yMargin: 40 }),
+        });
+        view.focus();
+      }
+      return;
+    }
+
+    const isNonMarkdownAsset = !isMarkdownPath(targetDoc);
+    if (isNonMarkdownAsset) {
+      window.open(getWorkspaceFileUrl(targetDoc, docPath), '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    const anchorSlug = effectiveAnchor ? slugify(effectiveAnchor) : '';
+    let handled = false;
+    const onHandled = () => {
+      handled = true;
+    };
+    window.addEventListener('cme-wikilink-handled', onHandled, { once: true });
+    window.dispatchEvent(
+      new CustomEvent('cme-open-wikilink', {
+        detail: { target: targetDoc, anchor: anchorSlug },
+      })
+    );
+    setTimeout(() => {
+      window.removeEventListener('cme-wikilink-handled', onHandled);
+      if (!handled && typeof window !== 'undefined') {
+        const hashPart = anchorSlug ? `#${anchorSlug}` : '';
+        if (!window.location.search.includes(encodeURIComponent(targetDoc))) {
+          window.location.href = `/documents/by-path?path=${encodeURIComponent(targetDoc)}${hashPart}`;
+        }
+      }
+    }, 50);
+  });
+
+  return a;
+}
+
+function renderCellContent(
+  container: HTMLElement,
+  text: string,
+  view: EditorView,
+  docPath?: string
+) {
+  if (!text || !text.trim()) {
     container.innerHTML = '&nbsp;';
     return;
   }
 
-  const mathRegex = /(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)/g;
+  const tokenRegex =
+    /(`[^`]+`|(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!\!)\[\[([^\]]+)\]\]|(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)|~~[^~\n]+~~|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g;
+
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
-  while ((match = mathRegex.exec(text)) !== null) {
+  while ((match = tokenRegex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      container.appendChild(renderSimpleText(text.slice(lastIndex, match.index)));
+      container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
     }
-    const mathSpan = document.createElement('span');
-    mathSpan.className = 'inline-math-cell';
-    try {
-      katex.render(match[1], mathSpan, { throwOnError: false, displayMode: false });
-    } catch {
-      mathSpan.textContent = match[0];
+    const token = match[0];
+
+    // 1. Math: $inline$
+    if (match[2] && token.startsWith('$') && token.endsWith('$')) {
+      const mathSpan = document.createElement('span');
+      mathSpan.className = 'inline-math-cell';
+      try {
+        katex.render(match[2], mathSpan, { throwOnError: false, displayMode: false });
+      } catch {
+        mathSpan.textContent = token;
+      }
+      container.appendChild(mathSpan);
     }
-    container.appendChild(mathSpan);
-    lastIndex = match.index + match[0].length;
+    // 2. Inline Code: `...`
+    else if (token.startsWith('`') && token.endsWith('`') && token.length > 1) {
+      const code = document.createElement('code');
+      code.className = 'px-1 py-0.5 rounded bg-cme-bg-subtle text-[11px] font-mono text-pink-600 dark:text-pink-400';
+      code.textContent = token.slice(1, -1);
+      container.appendChild(code);
+    }
+    // 3. Custom Pills: [pill:...], [status:...], [priority:...]
+    else if (token.startsWith('[') && token.endsWith(']') && (token.startsWith('[pill:') || token.startsWith('[status:') || token.startsWith('[priority:'))) {
+      const parsed = parsePillSyntax(token);
+      if (parsed) {
+        const style = resolvePillStyle(parsed.color);
+        const pillSpan = document.createElement('span');
+        pillSpan.className = `cme-pill inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border align-baseline select-none transition-colors my-0.5 mx-0.5 ${style.bgClass} ${style.textClass} ${style.borderClass}`;
+        pillSpan.title = token;
+        if (parsed.isCustomHex) {
+          pillSpan.style.backgroundColor = `${parsed.color}20`;
+          pillSpan.style.borderColor = `${parsed.color}40`;
+          pillSpan.style.color = parsed.color;
+        }
+        const dot = document.createElement('span');
+        dot.className = 'w-1.5 h-1.5 rounded-full flex-shrink-0';
+        dot.style.backgroundColor = parsed.isCustomHex ? parsed.color : (style.dotColor || '#94a3b8');
+        pillSpan.appendChild(dot);
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = parsed.label;
+        pillSpan.appendChild(labelSpan);
+        container.appendChild(pillSpan);
+      } else {
+        container.appendChild(document.createTextNode(token));
+      }
+    }
+    // 4. WikiLinks: [[target|label]] or [[target]]
+    else if (token.startsWith('[[') && token.endsWith(']]')) {
+      const inner = token.slice(2, -2);
+      const pipeIdx = inner.indexOf('|');
+      const target = (pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner).trim();
+      const alias = (pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : '').trim();
+      const displayLabel = alias || target;
+      container.appendChild(createTableCellLink(target, displayLabel, view, docPath));
+    }
+    // 5. Markdown Links: [label](target)
+    else if (token.startsWith('[') && token.includes('](') && token.endsWith(')')) {
+      const linkMatch = token.match(/^\[([^\][\n]+)\]\(([^)\n]+)\)$/);
+      if (linkMatch) {
+        const label = linkMatch[1].trim();
+        const rawTarget = linkMatch[2].trim();
+        container.appendChild(createTableCellLink(rawTarget, label, view, docPath));
+      } else {
+        container.appendChild(document.createTextNode(token));
+      }
+    }
+    // 6. Strikethrough: ~~...~~
+    else if (token.startsWith('~~') && token.endsWith('~~') && token.length > 4) {
+      const del = document.createElement('del');
+      del.textContent = token.slice(2, -2);
+      container.appendChild(del);
+    }
+    // 7. Bold: **...** or __...__
+    else if ((token.startsWith('**') && token.endsWith('**') && token.length > 4) ||
+             (token.startsWith('__') && token.endsWith('__') && token.length > 4)) {
+      const strong = document.createElement('strong');
+      strong.textContent = token.slice(2, -2);
+      container.appendChild(strong);
+    }
+    // 8. Italic: *...* or _..._
+    else if ((token.startsWith('*') && token.endsWith('*') && token.length > 2) ||
+             (token.startsWith('_') && token.endsWith('_') && token.length > 2)) {
+      const em = document.createElement('em');
+      em.textContent = token.slice(1, -1);
+      container.appendChild(em);
+    } else {
+      container.appendChild(document.createTextNode(token));
+    }
+
+    lastIndex = match.index + token.length;
   }
 
   if (lastIndex < text.length) {
-    container.appendChild(renderSimpleText(text.slice(lastIndex)));
+    container.appendChild(document.createTextNode(text.slice(lastIndex)));
   }
 }
 
@@ -1051,38 +1250,6 @@ function escapeHtml(text: string): string {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
-}
-
-function renderSimpleText(str: string): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  const tokenRegex = /(\*\*[^\*]+\*\*|`[^`]+`|\*[^\*]+\*)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = tokenRegex.exec(str)) !== null) {
-    if (m.index > last) {
-      frag.appendChild(document.createTextNode(str.slice(last, m.index)));
-    }
-    const token = m[0];
-    if (token.startsWith('**') && token.endsWith('**')) {
-      const strong = document.createElement('strong');
-      strong.textContent = token.slice(2, -2);
-      frag.appendChild(strong);
-    } else if (token.startsWith('`') && token.endsWith('`')) {
-      const code = document.createElement('code');
-      code.className = 'px-1 py-0.5 rounded bg-cme-bg-subtle text-[11px] font-mono text-pink-600 dark:text-pink-400';
-      code.textContent = token.slice(1, -1);
-      frag.appendChild(code);
-    } else if (token.startsWith('*') && token.endsWith('*')) {
-      const em = document.createElement('em');
-      em.textContent = token.slice(1, -1);
-      frag.appendChild(em);
-    }
-    last = m.index + token.length;
-  }
-  if (last < str.length) {
-    frag.appendChild(document.createTextNode(str.slice(last)));
-  }
-  return frag;
 }
 
 export class PillWidget extends WidgetType {

@@ -2,6 +2,8 @@
  * Lightweight and robust Markdown to semantic HTML parser for TipTap / ProseMirror editor initialization.
  */
 
+import { splitTableRow, parseTableAlignments, isTableDelimiterRow } from './tableUtils';
+
 export function slugify(text: string): string {
   return text
     .toLowerCase()
@@ -28,7 +30,7 @@ function inlineFormat(text: string): string {
   res = res.replace(/\[\[([^\]]+)\]\]/g, '<a class="wiki-link" data-target="$1">$1</a>');
 
   // Custom Pills & Badges: [pill:color|label], [pill:label], [status:...], [priority:...]
-  res = res.replace(/(?<!!)\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)\|)?([^\]\n]+)\]/g, (_match, prefix, color, rawLabel) => {
+  res = res.replace(/(?<!!)\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)(?:\\?\|))?([^\]\n]+)\]/g, (_match, prefix, color, rawLabel) => {
     let c = (color || 'slate').toLowerCase();
     let label = rawLabel.trim();
     if (prefix === 'status') {
@@ -45,6 +47,9 @@ function inlineFormat(text: string): string {
     }
     return `<span class="cme-pill cme-pill-${escapeHtml(c)}" data-color="${escapeHtml(c)}">${escapeHtml(label)}</span>`;
   });
+
+  // Standard Markdown Links: [label](target)
+  res = res.replace(/(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
   // Bold & Italic
   res = res.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
@@ -224,6 +229,57 @@ export function parseMarkdownToHtml(markdown: string): string {
       continue;
     } else {
       closeBlockquote();
+    }
+
+    // GFM Table block
+    if (trimmed.includes('|') && i + 1 < lines.length) {
+      const nextTrimmed = lines[i + 1].trim();
+      if (isTableDelimiterRow(nextTrimmed)) {
+        closeList();
+        closeBlockquote();
+
+        const tableLines: string[] = [trimmed, nextTrimmed];
+        let curIdx = i + 2;
+        while (curIdx < lines.length) {
+          const rowTrimmed = lines[curIdx].trim();
+          if (!rowTrimmed.includes('|') || rowTrimmed.length === 0) {
+            break;
+          }
+          tableLines.push(rowTrimmed);
+          curIdx++;
+        }
+
+        const headerCells = splitTableRow(tableLines[0]);
+        const alignments = parseTableAlignments(tableLines[1]);
+        const dataRows = tableLines.slice(2).map((row) => splitTableRow(row));
+
+        let tableHtml = '<table><thead><tr>';
+        for (let colIdx = 0; colIdx < headerCells.length; colIdx++) {
+          const align = alignments[colIdx];
+          const alignAttr = align && align !== 'left' ? ` align="${align}" style="text-align: ${align};"` : '';
+          tableHtml += `<th${alignAttr}>${inlineFormat(headerCells[colIdx])}</th>`;
+        }
+        tableHtml += '</tr></thead>';
+
+        if (dataRows.length > 0) {
+          tableHtml += '<tbody>';
+          for (const rowCells of dataRows) {
+            tableHtml += '<tr>';
+            for (let colIdx = 0; colIdx < headerCells.length; colIdx++) {
+              const align = alignments[colIdx];
+              const alignAttr = align && align !== 'left' ? ` align="${align}" style="text-align: ${align};"` : '';
+              tableHtml += `<td${alignAttr}>${inlineFormat(rowCells[colIdx] || '')}</td>`;
+            }
+            tableHtml += '</tr>';
+          }
+          tableHtml += '</tbody>';
+        }
+        tableHtml += '</table>';
+        output.push(tableHtml);
+
+        i = curIdx - 1;
+        continue;
+      }
     }
 
     // Headings

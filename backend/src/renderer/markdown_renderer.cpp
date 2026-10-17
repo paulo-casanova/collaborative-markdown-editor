@@ -842,7 +842,7 @@ std::string wrap_standalone(
 }
 
 std::string render_pills_in_html(std::string_view html) {
-    static const std::regex pill_rx(R"(\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)\|)?([^\]\n]+)\])");
+    static const std::regex pill_rx(R"(\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)(?:\\?\|))?([^\]\n]+)\])");
     std::string text(html);
     std::string result;
     std::string::const_iterator search_start(text.cbegin());
@@ -1039,7 +1039,12 @@ inline std::string normalize_markdown_links_with_spaces(std::string_view input) 
             search_start = match[0].second;
         }
         transformed.append(search_start, line_with_embeds.cend());
-        output.append(transformed);
+
+        // 3. Escape pipe in pill syntax [pill:color|label], [status:...|...], [priority:...|...] so table parsing does not split columns
+        static const std::regex pill_pipe_re(R"(\[(pill|status|priority):([a-zA-Z0-9#_-]+)\|([^\]\n]+)\])");
+        std::string final_line = std::regex_replace(transformed, pill_pipe_re, "[$1:$2\\|$3]");
+
+        output.append(final_line);
         output.push_back('\n');
     }
 
