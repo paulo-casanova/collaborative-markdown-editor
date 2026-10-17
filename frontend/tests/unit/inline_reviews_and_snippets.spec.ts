@@ -5,6 +5,10 @@ import {
   getSnippetCacheKey,
   setSnippetState,
   getSnippetState,
+  fetchSnippetEndpoints,
+  fetchSnippetSource,
+  clearSnippetEndpointsCache,
+  setSnippetEndpointsForTesting,
 } from '../../src/utils/snippetSync';
 import {
   InlineSuggestionWidget,
@@ -247,6 +251,77 @@ const a = 1;
     expect(header.className).toContain('min-w-0');
     // Header must explicitly render the actual error message
     expect(header.innerHTML).toContain("⚠ Expected exactly 2 lines matching '[compute_tax]', found 1");
+  });
+
+  it('fetches and caches configured snippet endpoints', async () => {
+    clearSnippetEndpointsCache();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ endpoints: ['mg', 'gh'], allowed_hosts: ['mygit.com'] }),
+    } as any);
+
+    try {
+      const endpoints = await fetchSnippetEndpoints();
+      expect(endpoints.has('mg')).toBe(true);
+      expect(endpoints.has('gh')).toBe(true);
+      expect(endpoints.has('other')).toBe(false);
+      expect(globalThis.fetch).toHaveBeenCalledWith('/api/v1/workspaces/snippet-endpoints', expect.any(Object));
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('routes named snippet endpoints directly to snippet-proxy', async () => {
+    setSnippetEndpointsForTesting(['mg', 'gh']);
+    const originalFetch = globalThis.fetch;
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith('/api/v1/workspaces/snippet-proxy')) {
+        return Promise.resolve({
+          ok: true,
+          text: async () => '// [main]\nint code = 100;\n// [main]',
+        });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    });
+    globalThis.fetch = mockFetch as any;
+
+    try {
+      const content = await fetchSnippetSource('mg/services/auth.cpp');
+      expect(content).toContain('int code = 100;');
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/v1/workspaces/snippet-proxy?url=mg%2Fservices%2Fauth.cpp',
+        expect.any(Object)
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('routes local workspace files to files API when not a named endpoint', async () => {
+    setSnippetEndpointsForTesting(['mg']);
+    const originalFetch = globalThis.fetch;
+    const mockFetch = vi.fn().mockImplementation((url: string) => {
+      if (url.startsWith('/api/v1/workspaces/files')) {
+        return Promise.resolve({
+          ok: true,
+          text: async () => '// [foo]\nint foo = 1;\n// [foo]',
+        });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    });
+    globalThis.fetch = mockFetch as any;
+
+    try {
+      const content = await fetchSnippetSource('src/main.cpp', 'docs/notes.md');
+      expect(content).toContain('int foo = 1;');
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/v1/workspaces/files?path=docs%2Fsrc%2Fmain.cpp',
+        expect.any(Object)
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

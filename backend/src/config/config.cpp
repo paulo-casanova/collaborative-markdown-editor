@@ -53,6 +53,43 @@ void apply_env_overrides(AppConfig& cfg) {
     if (const char* v = std::getenv("CME_LOGGING_LEVEL")) cfg.logging.level = v;
     if (const char* v = std::getenv("CME_UI_EMBEDDED")) cfg.ui.embedded = (std::string(v) == "true" || std::string(v) == "1");
     if (const char* v = std::getenv("CME_UI_DIST_DIR")) cfg.ui.dist_dir = v;
+    if (const char* v = std::getenv("CME_SNIPPETS_ALLOWED_HOSTS")) {
+        cfg.snippets.allowed_hosts.clear();
+        std::string list_str(v);
+        std::stringstream ss(list_str);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+            if (!item.empty()) cfg.snippets.allowed_hosts.push_back(item);
+        }
+    }
+    if (const char* v = std::getenv("CME_SNIPPETS_DEFAULT_CURL_ARGS")) {
+        cfg.snippets.default_curl_args = v;
+    }
+    if (const char* v = std::getenv("CME_SNIPPET_ENDPOINTS")) {
+        std::string list_str(v);
+        std::stringstream ss(list_str);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            auto eq = item.find('=');
+            if (eq != std::string::npos) {
+                std::string name = item.substr(0, eq);
+                std::string rest = item.substr(eq + 1);
+                while (!name.empty() && std::isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
+                while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
+                SnippetEndpointConfig ep;
+                auto pipe_pos = rest.find('|');
+                if (pipe_pos != std::string::npos) {
+                    ep.url = rest.substr(0, pipe_pos);
+                    ep.curl_args = rest.substr(pipe_pos + 1);
+                } else {
+                    ep.url = rest;
+                }
+                cfg.snippets.endpoints[name] = ep;
+            }
+        }
+    }
 }
 
 void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
@@ -149,6 +186,43 @@ void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
         auto l = root["logging"];
         if (l["level"]) cfg.logging.level = l["level"].as<std::string>();
         if (l["format"]) cfg.logging.format = l["format"].as<std::string>();
+    }
+
+    if (root["snippets"]) {
+        auto sn = root["snippets"];
+        if (sn["allowed_hosts"]) {
+            cfg.snippets.allowed_hosts.clear();
+            if (sn["allowed_hosts"].IsSequence()) {
+                for (const auto& item : sn["allowed_hosts"]) {
+                    cfg.snippets.allowed_hosts.push_back(item.as<std::string>());
+                }
+            } else if (sn["allowed_hosts"].IsScalar()) {
+                std::string list_str = sn["allowed_hosts"].as<std::string>();
+                std::stringstream ss(list_str);
+                std::string item;
+                while (std::getline(ss, item, ',')) {
+                    while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+                    while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+                    if (!item.empty()) cfg.snippets.allowed_hosts.push_back(item);
+                }
+            }
+        }
+        if (sn["default_curl_args"]) {
+            cfg.snippets.default_curl_args = sn["default_curl_args"].as<std::string>();
+        }
+        if (sn["endpoints"] && sn["endpoints"].IsMap()) {
+            for (auto it = sn["endpoints"].begin(); it != sn["endpoints"].end(); ++it) {
+                std::string ep_name = it->first.as<std::string>();
+                SnippetEndpointConfig ep;
+                if (it->second.IsScalar()) {
+                    ep.url = it->second.as<std::string>();
+                } else if (it->second.IsMap()) {
+                    if (it->second["url"]) ep.url = it->second["url"].as<std::string>();
+                    if (it->second["curl_args"]) ep.curl_args = it->second["curl_args"].as<std::string>();
+                }
+                cfg.snippets.endpoints[ep_name] = ep;
+            }
+        }
     }
 }
 
@@ -251,6 +325,34 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
                 while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
                 while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
                 if (!item.empty()) cfg.server.cors_allowed_origins.push_back(item);
+            }
+        } else if (arg == "--snippet-allowed-hosts" && i + 1 < argc) {
+            cfg.snippets.allowed_hosts.clear();
+            std::string list_str(argv[++i]);
+            std::stringstream ss(list_str);
+            std::string item;
+            while (std::getline(ss, item, ',')) {
+                while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+                while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+                if (!item.empty()) cfg.snippets.allowed_hosts.push_back(item);
+            }
+        } else if (arg == "--snippet-endpoint" && i + 1 < argc) {
+            std::string item(argv[++i]);
+            auto eq = item.find('=');
+            if (eq != std::string::npos) {
+                std::string name = item.substr(0, eq);
+                std::string rest = item.substr(eq + 1);
+                while (!name.empty() && std::isspace(static_cast<unsigned char>(name.front()))) name.erase(name.begin());
+                while (!name.empty() && std::isspace(static_cast<unsigned char>(name.back()))) name.pop_back();
+                SnippetEndpointConfig ep;
+                auto pipe_pos = rest.find('|');
+                if (pipe_pos != std::string::npos) {
+                    ep.url = rest.substr(0, pipe_pos);
+                    ep.curl_args = rest.substr(pipe_pos + 1);
+                } else {
+                    ep.url = rest;
+                }
+                cfg.snippets.endpoints[name] = ep;
             }
         }
     }

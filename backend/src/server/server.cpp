@@ -305,6 +305,9 @@ Result<void> Server::start() {
     // 8. Initialize Review Engine Service (Step 3.4)
     review_service_ = std::make_shared<review::ReviewService>(db_pool_, document_service_);
 
+    // 8.5 Initialize Snippet Fetcher
+    snippet_fetcher_ = std::make_shared<snippet::SnippetFetcher>(config_.snippets);
+
     // 9. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
@@ -1010,47 +1013,51 @@ Result<void> Server::start() {
         res->end(file_res.value());
     });
 
-    // GET /api/v1/workspaces/snippet-proxy?url=<encoded_url>
+    // GET /api/v1/workspaces/snippet-proxy?url=<encoded_url_or_endpoint>
     app.get("/api/v1/workspaces/snippet-proxy", [this](auto *res, auto *req) {
         std::string url_param = url_decode(req->getQuery("url"));
         if (url_param.empty()) {
-            send_json(res, "400 Bad Request", {{"error", "Missing url parameter"}});
-            return;
-        }
-        if (url_param.find("http://") != 0 && url_param.find("https://") != 0) {
-            send_json(res, "400 Bad Request", {{"error", "Only http:// and https:// URLs are supported"}});
-            return;
-        }
-        // Sanitize against shell command injection
-        if (url_param.find_first_of(";&|`$<>\"'\n\r") != std::string::npos) {
-            send_json(res, "400 Bad Request", {{"error", "Invalid URL characters"}});
+            send_json(res, "400 Bad Request", {{"error", "Missing url parameter"}}, {}, req->getHeader("origin"));
             return;
         }
 
-        std::string cmd = "curl -s -S -L --fail --max-time 5 \"" + url_param + "\" 2>&1";
-        FILE* pipe = popen(cmd.c_str(), "r");
-        if (!pipe) {
-            send_json(res, "502 Bad Gateway", {{"error", "Failed to execute fetch"}});
-            return;
-        }
-        char buffer[2048];
-        std::string result;
-        while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-            result += buffer;
-        }
-        int status = pclose(pipe);
-        if (status != 0) {
-            std::string err_msg = result.empty() ? "Failed to fetch remote URL" : result;
-            while (!err_msg.empty() && (err_msg.back() == '\n' || err_msg.back() == '\r')) {
-                err_msg.pop_back();
-            }
-            send_json(res, "502 Bad Gateway", {{"error", err_msg}});
+        if (!snippet_fetcher_) {
+            send_json(res, "500 Internal Server Error", {{"error", "Snippet fetcher not initialized"}}, {}, req->getHeader("origin"));
             return;
         }
 
+        auto fetch_res = snippet_fetcher_->fetch(url_param);
+        if (!fetch_res.success) {
+            std::string status_str = "502 Bad Gateway";
+            if (fetch_res.http_status == 400) status_str = "400 Bad Request";
+            else if (fetch_res.http_status == 403) status_str = "403 Forbidden";
+            else if (fetch_res.http_status == 404) status_str = "404 Not Found";
+
+            send_json(res, status_str, {{"error", fetch_res.error_message}}, {}, req->getHeader("origin"));
+            return;
+        }
+
+        res->writeStatus("200 OK");
+        write_cors_headers(res, req->getHeader("origin"));
         res->writeHeader("Content-Type", "text/plain; charset=utf-8");
         res->writeHeader("Cache-Control", "public, max-age=60");
-        res->end(result);
+        res->end(fetch_res.content);
+    });
+
+    // GET /api/v1/workspaces/snippet-endpoints
+    app.get("/api/v1/workspaces/snippet-endpoints", [this](auto *res, auto *req) {
+        if (!snippet_fetcher_) {
+            send_json(res, "200 OK", {
+                {"endpoints", nlohmann::json::array()},
+                {"allowed_hosts", nlohmann::json::array()}
+            }, {}, req->getHeader("origin"));
+            return;
+        }
+
+        send_json(res, "200 OK", {
+            {"endpoints", snippet_fetcher_->list_endpoint_names()},
+            {"allowed_hosts", snippet_fetcher_->list_allowed_hosts()}
+        }, {}, req->getHeader("origin"));
     });
 
     // GET /api/v1/workspaces/directory-details?path=<relative_path>

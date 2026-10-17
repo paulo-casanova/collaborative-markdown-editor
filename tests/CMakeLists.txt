@@ -190,5 +190,19 @@ set_tests_properties(disaster_recovery_drill_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Secure Remote Code Snippet Fetcher test (Step 8.4)
+add_executable(snippet_fetcher_test
+    backend/snippet_fetcher_test.cpp
+)
+target_link_libraries(snippet_fetcher_test PRIVATE cme_core)
+target_compile_features(snippet_fetcher_test PRIVATE cxx_std_23)
+set_target_properties(snippet_fetcher_test PROPERTIES
+    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
+)
+add_test(NAME snippet_fetcher_test COMMAND snippet_fetcher_test)
+set_tests_properties(snippet_fetcher_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 

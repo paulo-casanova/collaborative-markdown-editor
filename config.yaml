@@ -46,3 +46,15 @@ backup:
 logging:
   level: "info"
   format: "json"
+
+snippets:
+  allowed_hosts:
+    - "github.com"
+    - "raw.githubusercontent.com"
+    - "gitlab.com"
+    - "bitbucket.org"
+  default_curl_args: "-H 'User-Agent: CME-Snippet-Fetcher/1.0'"
+  endpoints:
+    mg:
+      url: "https://www.mygit.com/${PATH}?token=${TOKEN}"
+      curl_args: "-H 'Accept: text/plain'"

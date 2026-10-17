@@ -99,6 +99,17 @@ struct LoggingConfig {
     std::string format{"json"};
 };
 
+struct SnippetEndpointConfig {
+    std::string url{""};
+    std::string curl_args{""};
+};
+
+struct SnippetsConfig {
+    std::vector<std::string> allowed_hosts{};
+    std::string default_curl_args{""};
+    std::unordered_map<std::string, SnippetEndpointConfig> endpoints{};
+};
+
 /**
  * @struct AppConfig
  * @brief Master runtime configuration container.
@@ -115,6 +126,7 @@ struct AppConfig {
     UIConfig ui;
     BackupConfig backup;
     LoggingConfig logging;
+    SnippetsConfig snippets;
 
     /**
      * @brief Loads and merges configuration following the precedence waterfall:

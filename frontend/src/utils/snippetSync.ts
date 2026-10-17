@@ -157,8 +157,48 @@ export function extractSnippetFromText(
   };
 }
 
+// Global cache for configured snippet endpoint names (e.g. ['mg', 'gh'])
+let cachedEndpoints: Set<string> | null = null;
+let endpointFetchPromise: Promise<Set<string>> | null = null;
+
+export async function fetchSnippetEndpoints(): Promise<Set<string>> {
+  if (cachedEndpoints) return cachedEndpoints;
+  if (endpointFetchPromise) return endpointFetchPromise;
+
+  endpointFetchPromise = (async () => {
+    try {
+      const res = await fetch('/api/v1/workspaces/snippet-endpoints', {
+        signal: AbortSignal.timeout(3000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const eps = Array.isArray(data?.endpoints) ? data.endpoints : [];
+        cachedEndpoints = new Set<string>(eps.map((e: string) => e.trim().toLowerCase()));
+      } else {
+        cachedEndpoints = new Set<string>();
+      }
+    } catch {
+      cachedEndpoints = new Set<string>();
+    } finally {
+      endpointFetchPromise = null;
+    }
+    return cachedEndpoints;
+  })();
+
+  return endpointFetchPromise;
+}
+
+export function clearSnippetEndpointsCache(): void {
+  cachedEndpoints = null;
+  endpointFetchPromise = null;
+}
+
+export function setSnippetEndpointsForTesting(endpoints: string[]): void {
+  cachedEndpoints = new Set<string>(endpoints.map((e) => e.trim().toLowerCase()));
+}
+
 /**
- * Fetches the source text for a snippet from a remote URL or workspace file.
+ * Fetches the source text for a snippet from a remote URL, named endpoint, or workspace file.
  */
 export async function fetchSnippetSource(
   source: string,
@@ -166,6 +206,12 @@ export async function fetchSnippetSource(
 ): Promise<string> {
   const cleanSource = source.trim();
   if (!cleanSource) throw new Error('Snippet source is empty');
+
+  // Check if source matches a configured named endpoint prefix (e.g. "mg/foo/bar")
+  const endpoints = await fetchSnippetEndpoints();
+  const firstSlash = cleanSource.indexOf('/');
+  const prefix = (firstSlash !== -1 ? cleanSource.substring(0, firstSlash) : cleanSource).trim().toLowerCase();
+  const isNamedEndpoint = endpoints.has(prefix);
 
   if (cleanSource.startsWith('http://') || cleanSource.startsWith('https://')) {
     // Attempt direct fetch first (for CORS-enabled endpoints)
@@ -190,6 +236,23 @@ export async function fetchSnippetSource(
         errDetail = await proxyRes.text().catch(() => '');
       }
       throw new Error(`Failed to fetch remote snippet: ${cleanSource} (${proxyRes.status}${errDetail ? `: ${errDetail}` : ''})`);
+    }
+    return await proxyRes.text();
+  }
+
+  if (isNamedEndpoint) {
+    // Directly proxy named endpoints through CME server
+    const proxyUrl = `/api/v1/workspaces/snippet-proxy?url=${encodeURIComponent(cleanSource)}`;
+    const proxyRes = await fetch(proxyUrl, { signal: AbortSignal.timeout(6000) });
+    if (!proxyRes.ok) {
+      let errDetail = '';
+      try {
+        const jsonErr = await proxyRes.json();
+        errDetail = jsonErr?.error || '';
+      } catch {
+        errDetail = await proxyRes.text().catch(() => '');
+      }
+      throw new Error(`Failed to fetch snippet from endpoint '${prefix}': ${cleanSource} (${proxyRes.status}${errDetail ? `: ${errDetail}` : ''})`);
     }
     return await proxyRes.text();
   }
