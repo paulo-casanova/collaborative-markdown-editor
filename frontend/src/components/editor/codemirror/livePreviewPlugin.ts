@@ -22,7 +22,9 @@ import {
   HeadingNumberWidget,
   ImageEmbedWidget,
   PillWidget,
+  setRawTablePos,
 } from './livePreviewWidgets';
+export { setRawTablePos };
 import { parsePillSyntax } from '../../../utils/pillUtils';
 import { parseImageTarget } from '../../../utils/imageDimensions';
 import { slugify } from '../../navigation/DocumentOutline';
@@ -34,6 +36,34 @@ import { useUIStore } from '../../../stores/uiStore';
 
 export const forceLivePreviewRebuild = StateEffect.define<boolean>();
 
+export const rawTableField = StateField.define<number | null>({
+  create() {
+    return null;
+  },
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setRawTablePos)) {
+        return effect.value;
+      }
+    }
+    if (value !== null) {
+      if (tr.docChanged) {
+        value = tr.changes.mapPos(value);
+      }
+      if (tr.selection) {
+        const head = tr.state.selection.main.head;
+        const line = tr.state.doc.lineAt(head);
+        const text = line.text.trim();
+        // If cursor moves to a line that is not part of a table (|), exit raw table mode
+        if (!text.includes('|')) {
+          return null;
+        }
+      }
+    }
+    return value;
+  },
+});
+
 interface DecoItem {
   from: number;
   to: number;
@@ -44,19 +74,24 @@ export function createLivePreviewPlugin(
   isDark: boolean = false,
   documentPath?: string
 ): Extension {
-  return StateField.define<DecorationSet>({
-    create(state) {
-      return buildLivePreviewDecorations(state, isDark, documentPath);
-    },
-    update(decorations, tr) {
-      const forced = tr.effects.some((e) => e.is(forceLivePreviewRebuild));
-      if (tr.docChanged || tr.selection || forced) {
-        return buildLivePreviewDecorations(tr.state, isDark, documentPath);
-      }
-      return decorations.map(tr.changes);
-    },
-    provide: (f) => EditorView.decorations.from(f),
-  });
+  return [
+    rawTableField,
+    StateField.define<DecorationSet>({
+      create(state) {
+        return buildLivePreviewDecorations(state, isDark, documentPath);
+      },
+      update(decorations, tr) {
+        const forced = tr.effects.some(
+          (e) => e.is(forceLivePreviewRebuild) || e.is(setRawTablePos)
+        );
+        if (tr.docChanged || tr.selection || forced) {
+          return buildLivePreviewDecorations(tr.state, isDark, documentPath);
+        }
+        return decorations.map(tr.changes);
+      },
+      provide: (f) => EditorView.decorations.from(f),
+    }),
+  ];
 }
 
 export function buildLivePreviewDecorations(
@@ -301,9 +336,14 @@ export function buildLivePreviewDecorations(
         const tFrom = tableStartLine.from;
         const tTo = tableEndLine.to;
         const tableRaw = docText.slice(tFrom, tTo);
-        const cursorInsideTable = cursorTo >= tFrom && cursorFrom <= tTo;
+        const rawTablePos = state.field(rawTableField, false);
+        const isExplicitRaw =
+          rawTablePos !== null &&
+          rawTablePos !== undefined &&
+          rawTablePos >= tFrom &&
+          rawTablePos <= tTo;
 
-        if (!cursorInsideTable) {
+        if (!isExplicitRaw) {
           addReplace(
             tFrom,
             tTo,

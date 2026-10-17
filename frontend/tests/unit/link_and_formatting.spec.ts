@@ -406,6 +406,141 @@ Deep details.`;
       expect(html).toContain('<a href="https://github.com/repo" target="_blank" rel="noopener noreferrer">Repo</a>');
       expect(html).toContain('</tbody></table>');
     });
+
+    it('parses, formats, and manipulates tables (addRow, deleteRow, addColumn, deleteColumn, setAlignment, updateCell)', async () => {
+      const {
+        parseMarkdownTable,
+        formatMarkdownTable,
+        addRow,
+        deleteRow,
+        addColumn,
+        deleteColumn,
+        setColumnAlignment,
+        updateCell,
+      } = await import('../../src/utils/tableUtils');
+
+      const raw = [
+        '| Name | Status | Score |',
+        '| :--- | :---: | ---: |',
+        '| Alice | [pill:green|Active] | 95 |',
+        '| Bob | [pill:amber|Idle] | 80 |',
+      ].join('\n');
+
+      const table = parseMarkdownTable(raw);
+      expect(table).not.toBeNull();
+      expect(table!.headers).toEqual(['Name', 'Status', 'Score']);
+      expect(table!.alignments).toEqual(['left', 'center', 'right']);
+      expect(table!.rows).toHaveLength(2);
+      expect(table!.rows[0]).toEqual(['Alice', '[pill:green|Active]', '95']);
+      expect(table!.rows[1]).toEqual(['Bob', '[pill:amber|Idle]', '80']);
+
+      // 1. updateCell
+      const updatedCellBody = updateCell(table!, 0, 2, '98');
+      expect(updatedCellBody.rows[0][2]).toBe('98');
+
+      const updatedCellHeader = updateCell(table!, -1, 0, 'User Name');
+      expect(updatedCellHeader.headers[0]).toBe('User Name');
+
+      // 2. addRow (append)
+      const withNewRow = addRow(table!);
+      expect(withNewRow.rows).toHaveLength(3);
+      expect(withNewRow.rows[2]).toEqual(['', '', '']);
+
+      // addRow (insert at index 1)
+      const withInsertedRow = addRow(table!, 1);
+      expect(withInsertedRow.rows).toHaveLength(3);
+      expect(withInsertedRow.rows[1]).toEqual(['', '', '']);
+      expect(withInsertedRow.rows[2][0]).toBe('Bob');
+
+      // 3. deleteRow
+      const afterDeleteRow = deleteRow(table!, 0);
+      expect(afterDeleteRow.rows).toHaveLength(1);
+      expect(afterDeleteRow.rows[0][0]).toBe('Bob');
+
+      // 4. addColumn (append)
+      const withNewCol = addColumn(table!, undefined, 'Notes');
+      expect(withNewCol.headers).toEqual(['Name', 'Status', 'Score', 'Notes']);
+      expect(withNewCol.alignments).toEqual(['left', 'center', 'right', 'left']);
+      expect(withNewCol.rows[0]).toEqual(['Alice', '[pill:green|Active]', '95', '']);
+
+      // addColumn (insert at index 1)
+      const withInsertedCol = addColumn(table!, 1, 'Role');
+      expect(withInsertedCol.headers).toEqual(['Name', 'Role', 'Status', 'Score']);
+      expect(withInsertedCol.alignments).toEqual(['left', 'left', 'center', 'right']);
+      expect(withInsertedCol.rows[0]).toEqual(['Alice', '', '[pill:green|Active]', '95']);
+
+      // 5. deleteColumn
+      const afterDeleteCol = deleteColumn(table!, 1);
+      expect(afterDeleteCol.headers).toEqual(['Name', 'Score']);
+      expect(afterDeleteCol.alignments).toEqual(['left', 'right']);
+      expect(afterDeleteCol.rows[0]).toEqual(['Alice', '95']);
+
+      // deleteColumn does not delete the last remaining column
+      const singleColTable = deleteColumn(afterDeleteCol, 1);
+      expect(singleColTable.headers).toEqual(['Name']);
+      const cannotDeleteLast = deleteColumn(singleColTable, 0);
+      expect(cannotDeleteLast.headers).toEqual(['Name']);
+
+      // 6. setColumnAlignment
+      const realigned = setColumnAlignment(table!, 0, 'center');
+      expect(realigned.alignments[0]).toBe('center');
+
+      // 7. formatMarkdownTable formatting with padded columns
+      const formatted = formatMarkdownTable(realigned);
+      expect(formatted).toContain('| Name  | Status              | Score |');
+      expect(formatted).toContain('| :---: | :-----------------: | ----: |');
+      expect(formatted).toContain('| Alice | [pill:green|Active] | 95    |');
+
+      // Escapes unescaped pipes in cell values
+      const withRawPipe = updateCell(table!, 0, 0, 'Alice | Senior');
+      const formattedPipe = formatMarkdownTable(withRawPipe);
+      expect(formattedPipe).toContain('Alice \\| Senior');
+    });
+
+    it('TableBlockWidget handles eq, ignoreEvent, and setRawTablePos effect', async () => {
+      const { TableBlockWidget, setRawTablePos } = await import(
+        '../../src/components/editor/codemirror/livePreviewWidgets'
+      );
+
+      const raw = [
+        '| Header 1 | Header 2 |',
+        '| :------- | :------- |',
+        '| Cell 1   | Cell 2   |',
+      ].join('\n');
+
+      const widget1 = new TableBlockWidget(raw, 0, raw.length, '/test/doc.md');
+      const widget2 = new TableBlockWidget(raw, 0, raw.length, '/test/doc.md');
+      const widget3 = new TableBlockWidget(raw + '\n| Cell 3 | Cell 4 |', 0, raw.length, '/test/doc.md');
+
+      // 1. ignoreEvent returns true so CodeMirror does not intercept cell/button inputs
+      expect(widget1.ignoreEvent({ type: 'click' } as any)).toBe(true);
+      expect(widget1.ignoreEvent({ type: 'keydown' } as any)).toBe(true);
+
+      // 2. eq comparison
+      expect(widget1.eq(widget2)).toBe(true);
+      expect(widget1.eq(widget3)).toBe(false);
+
+      // 3. setRawTablePos effect
+      const rawEffect = setRawTablePos.of(15);
+      expect(rawEffect.value).toBe(15);
+      const resetEffect = setRawTablePos.of(null);
+      expect(resetEffect.value).toBeNull();
+
+      // 4. In DOM environment (if present), verifies DOM structure
+      if (typeof document !== 'undefined') {
+        const { EditorState } = await import('@codemirror/state');
+        const { EditorView } = await import('@codemirror/view');
+        const state = EditorState.create({ doc: raw });
+        const parent = document.createElement('div');
+        const view = new EditorView({ state, parent });
+        const dom = widget1.toDOM(view);
+        expect(dom.className).toContain('cme-table-block-node');
+        const headerBar = dom.querySelector('.cme-table-header');
+        expect(headerBar).not.toBeNull();
+        expect(headerBar?.textContent).toContain('Table (1 rows × 2 cols)');
+        view.destroy();
+      }
+    });
   });
 });
 

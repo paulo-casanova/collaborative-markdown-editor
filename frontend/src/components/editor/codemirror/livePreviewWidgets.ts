@@ -1,4 +1,5 @@
 import { WidgetType, EditorView } from '@codemirror/view';
+import { StateEffect } from '@codemirror/state';
 import katex from 'katex';
 import { renderMermaidSvg } from '../utils/mermaidRenderer';
 import hljs from 'highlight.js';
@@ -20,7 +21,19 @@ import {
 } from '../../../utils/snippetSync';
 import { resolvePillStyle, parsePillSyntax } from '../../../utils/pillUtils';
 import { parseImageDimensionAndAlt, parseImageTarget } from '../../../utils/imageDimensions';
-import { splitTableRow, parseTableAlignments } from '../../../utils/tableUtils';
+import {
+  parseMarkdownTable,
+  formatMarkdownTable,
+  updateCell,
+  addRow,
+  deleteRow,
+  addColumn,
+  deleteColumn,
+  setColumnAlignment,
+  TableData,
+} from '../../../utils/tableUtils';
+
+export const setRawTablePos = StateEffect.define<number | null>();
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -932,6 +945,23 @@ export class InlineMathWidget extends WidgetType {
   }
 }
 
+interface PendingTableFocus {
+  pos: number;
+  row: number; // -1 for header, 0..N-1 for data rows
+  col: number; // 0..M-1
+}
+let pendingTableFocus: PendingTableFocus | null = null;
+
+const TABLE_ICONS = {
+  table: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/></svg>`,
+  plus: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
+  trash: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
+  raw: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
+  alignLeft: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"></line><line x1="15" y1="12" x2="3" y2="12"></line><line x1="17" y1="18" x2="3" y2="18"></line></svg>`,
+  alignCenter: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="6"></line><line x1="21" y1="12" x2="3" y2="12"></line><line x1="18" y1="18" x2="6" y2="18"></line></svg>`,
+  alignRight: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="12" x2="9" y2="12"></line><line x1="21" y1="18" x2="7" y2="18"></line></svg>`,
+};
+
 export class TableBlockWidget extends WidgetType {
   constructor(
     public rawText: string,
@@ -940,6 +970,10 @@ export class TableBlockWidget extends WidgetType {
     public docPath?: string
   ) {
     super();
+  }
+
+  ignoreEvent(_event: Event): boolean {
+    return true;
   }
 
   eq(other: TableBlockWidget): boolean {
@@ -953,65 +987,414 @@ export class TableBlockWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const container = document.createElement('div');
-    container.className = 'cme-table-block-node py-2 my-0 select-none';
+    container.className = 'cme-table-block-node relative my-4 group/table select-none';
 
-    const lines = this.rawText.split('\n').map((l) => l.trim()).filter(Boolean);
-    if (lines.length < 2) {
+    const tableData = parseMarkdownTable(this.rawText);
+    if (!tableData) {
       container.textContent = this.rawText;
       return container;
     }
 
     const card = document.createElement('div');
     card.className =
-      'overflow-x-auto rounded-xl border border-cme-border-base bg-cme-bg-surface shadow-sm cursor-pointer';
-    card.title = 'Click table to edit markdown source';
+      'rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm transition-all';
 
-    const headerCells = splitTableRow(lines[0]);
-    const alignments = parseTableAlignments(lines[1]);
+    // 1. Top Header Bar
+    const headerBar = document.createElement('div');
+    headerBar.className =
+      'cme-table-header flex items-center justify-between px-3.5 py-1.5 border-b border-cme-border-base bg-cme-bg-subtle text-xs';
+
+    const leftInfo = document.createElement('div');
+    leftInfo.className =
+      'flex items-center gap-1.5 font-medium text-cme-text-muted text-[11px] select-none';
+    leftInfo.innerHTML = `${TABLE_ICONS.table}<span>Table (${tableData.rows.length} rows × ${tableData.headers.length} cols)</span>`;
+    headerBar.appendChild(leftInfo);
+
+    const rightActions = document.createElement('div');
+    rightActions.className = 'flex items-center gap-1.5';
+
+    // Button: + Add Row
+    const addRowBtn = document.createElement('button');
+    addRowBtn.type = 'button';
+    addRowBtn.className =
+      'px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover flex items-center gap-1 transition-colors';
+    addRowBtn.innerHTML = `${TABLE_ICONS.plus}<span>Row</span>`;
+    addRowBtn.title = 'Add row at bottom';
+    addRowBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const updated = addRow(tableData);
+      const newMarkdown = formatMarkdownTable(updated);
+      pendingTableFocus = { pos: this.from, row: tableData.rows.length, col: 0 };
+      view.dispatch({
+        changes: { from: this.from, to: this.to, insert: newMarkdown },
+      });
+    });
+    rightActions.appendChild(addRowBtn);
+
+    // Button: + Add Col
+    const addColBtn = document.createElement('button');
+    addColBtn.type = 'button';
+    addColBtn.className =
+      'px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover flex items-center gap-1 transition-colors';
+    addColBtn.innerHTML = `${TABLE_ICONS.plus}<span>Column</span>`;
+    addColBtn.title = 'Add column to the right';
+    addColBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const updated = addColumn(tableData);
+      const newMarkdown = formatMarkdownTable(updated);
+      pendingTableFocus = { pos: this.from, row: -1, col: tableData.headers.length };
+      view.dispatch({
+        changes: { from: this.from, to: this.to, insert: newMarkdown },
+      });
+    });
+    rightActions.appendChild(addColBtn);
+
+    // Button: </> Raw
+    const rawBtn = document.createElement('button');
+    rawBtn.type = 'button';
+    rawBtn.className =
+      'px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover flex items-center gap-1 transition-colors';
+    rawBtn.innerHTML = `${TABLE_ICONS.raw}<span>Raw</span>`;
+    rawBtn.title = 'Switch to raw Markdown mode';
+    rawBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      view.dispatch({
+        effects: setRawTablePos.of(this.from),
+        selection: { anchor: this.from },
+      });
+      view.focus();
+    });
+    rightActions.appendChild(rawBtn);
+
+    headerBar.appendChild(rightActions);
+    card.appendChild(headerBar);
+
+    // 2. Scrollable Table Wrapper
+    const tableWrapper = document.createElement('div');
+    tableWrapper.className = 'overflow-x-auto';
 
     const table = document.createElement('table');
     table.className = 'w-full text-left text-sm border-collapse';
 
-    // Thead
+    const colCount = tableData.headers.length;
+    const rowCount = tableData.rows.length;
+
+    // Helper: commit updated table to CodeMirror
+    const dispatchTableChange = (
+      updatedData: TableData,
+      nextFocus?: { row: number; col: number }
+    ) => {
+      if (nextFocus) {
+        pendingTableFocus = { pos: this.from, row: nextFocus.row, col: nextFocus.col };
+      }
+      const newMarkdown = formatMarkdownTable(updatedData);
+      view.dispatch({
+        changes: { from: this.from, to: this.to, insert: newMarkdown },
+      });
+    };
+
+    // Helper: activate inline input for a cell
+    const activateCellEditor = (
+      cellElem: HTMLElement,
+      rowIdx: number,
+      colIdx: number
+    ) => {
+      if (cellElem.querySelector('input.cme-cell-input')) return;
+
+      const rawVal = cellElem.dataset.raw || '';
+      cellElem.innerHTML = '';
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className =
+        'cme-cell-input w-full px-1.5 py-0.5 text-xs font-normal rounded border border-cme-primary bg-cme-bg-surface text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary shadow-sm';
+      input.value = rawVal;
+      input.style.textAlign = tableData.alignments[colIdx] || 'left';
+      cellElem.appendChild(input);
+
+      input.focus();
+      input.select();
+
+      let committed = false;
+      const commit = (nextFocus?: { row: number; col: number }) => {
+        if (committed) return;
+        committed = true;
+        const currentInputVal = input.value;
+        if (currentInputVal !== rawVal || nextFocus) {
+          let updated = updateCell(tableData, rowIdx, colIdx, currentInputVal);
+          if (nextFocus && nextFocus.row >= updated.rows.length) {
+            updated = addRow(updated);
+          }
+          dispatchTableChange(updated, nextFocus);
+        } else {
+          // Revert cell to rendered preview
+          cellElem.innerHTML = '';
+          cellElem.dataset.raw = rawVal;
+          renderCellContent(cellElem, rawVal, view, this.docPath);
+        }
+      };
+
+      input.addEventListener('blur', () => {
+        commit();
+      });
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+          e.preventDefault();
+          e.stopPropagation();
+          if (e.shiftKey) {
+            // Navigate back
+            let prevRow = rowIdx;
+            let prevCol = colIdx - 1;
+            if (prevCol < 0) {
+              if (rowIdx > 0) {
+                prevRow = rowIdx - 1;
+                prevCol = colCount - 1;
+              } else if (rowIdx === 0) {
+                prevRow = -1;
+                prevCol = colCount - 1;
+              } else {
+                prevRow = -1;
+                prevCol = 0;
+              }
+            }
+            commit({ row: prevRow, col: prevCol });
+          } else {
+            // Navigate forward
+            let nextRow = rowIdx;
+            let nextCol = colIdx + 1;
+            if (nextCol >= colCount) {
+              nextCol = 0;
+              nextRow = rowIdx === -1 ? 0 : rowIdx + 1;
+            }
+            commit({ row: nextRow, col: nextCol });
+          }
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          e.stopPropagation();
+          const nextRow = rowIdx === -1 ? 0 : rowIdx + 1;
+          commit({ row: nextRow, col: colIdx });
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
+          committed = true;
+          cellElem.innerHTML = '';
+          cellElem.dataset.raw = rawVal;
+          renderCellContent(cellElem, rawVal, view, this.docPath);
+        }
+      });
+    };
+
+    // Helper: attach click & mousedown listeners on cell
+    const bindCellListeners = (
+      cellElem: HTMLElement,
+      rowIdx: number,
+      colIdx: number
+    ) => {
+      cellElem.dataset.tableCell = `${rowIdx},${colIdx}`;
+      cellElem.addEventListener('mousedown', (e) => {
+        if ((e.target as HTMLElement).closest('a, button, input')) return;
+        pendingTableFocus = { pos: this.from, row: rowIdx, col: colIdx };
+      });
+      cellElem.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('a, button, input')) return;
+        e.stopPropagation();
+        activateCellEditor(cellElem, rowIdx, colIdx);
+      });
+    };
+
+    // 3. Table Header (thead)
     const thead = document.createElement('thead');
-    thead.className = 'bg-cme-bg-subtle/80 text-cme-text-base border-b border-cme-border-base font-semibold';
+    thead.className =
+      'bg-cme-bg-subtle/80 text-cme-text-base border-b border-cme-border-base font-semibold';
     const trHead = document.createElement('tr');
-    headerCells.forEach((header, idx) => {
+
+    // Leading empty TH for row action handles
+    const thRowGrip = document.createElement('th');
+    thRowGrip.className =
+      'w-8 px-1 py-2 text-center text-xs border-r border-cme-border-base/40 text-cme-text-muted';
+    thRowGrip.innerHTML = '<span class="text-[10px] opacity-40">#</span>';
+    trHead.appendChild(thRowGrip);
+
+    tableData.headers.forEach((header, colIdx) => {
       const th = document.createElement('th');
-      th.className = 'px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0';
-      th.style.textAlign = alignments[idx] || 'left';
-      renderCellContent(th, header, view, this.docPath);
+      const align = tableData.alignments[colIdx] || 'left';
+      th.className =
+        'px-3 py-2 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0 relative group/col';
+      th.style.textAlign = align;
+
+      // Flex wrapper for content and hover controls
+      const colWrapper = document.createElement('div');
+      colWrapper.className = 'flex items-center justify-between gap-1';
+
+      // Header text container (interactive cell)
+      const contentSpan = document.createElement('div');
+      contentSpan.className = 'flex-1 min-h-[1.25rem] cursor-text';
+      contentSpan.dataset.raw = header;
+      renderCellContent(contentSpan, header, view, this.docPath);
+      bindCellListeners(contentSpan, -1, colIdx);
+      colWrapper.appendChild(contentSpan);
+
+      // Column controls (hover visible)
+      const colControls = document.createElement('div');
+      colControls.className =
+        'opacity-0 group-hover/col:opacity-100 flex items-center gap-0.5 transition-opacity ml-1';
+
+      // Alignment cycle button
+      const alignBtn = document.createElement('button');
+      alignBtn.type = 'button';
+      alignBtn.className =
+        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
+      alignBtn.title = `Alignment: ${align} (click to cycle)`;
+      alignBtn.innerHTML =
+        align === 'center'
+          ? TABLE_ICONS.alignCenter
+          : align === 'right'
+          ? TABLE_ICONS.alignRight
+          : TABLE_ICONS.alignLeft;
+      alignBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const nextAlign: 'left' | 'center' | 'right' =
+          align === 'left' ? 'center' : align === 'center' ? 'right' : 'left';
+        const updated = setColumnAlignment(tableData, colIdx, nextAlign);
+        dispatchTableChange(updated);
+      });
+      colControls.appendChild(alignBtn);
+
+      // Insert column right button (+)
+      const insertColBtn = document.createElement('button');
+      insertColBtn.type = 'button';
+      insertColBtn.className =
+        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
+      insertColBtn.title = 'Insert column right';
+      insertColBtn.innerHTML = TABLE_ICONS.plus;
+      insertColBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const updated = addColumn(tableData, colIdx + 1);
+        dispatchTableChange(updated, { row: -1, col: colIdx + 1 });
+      });
+      colControls.appendChild(insertColBtn);
+
+      // Delete column button (✕)
+      if (colCount > 1) {
+        const delColBtn = document.createElement('button');
+        delColBtn.type = 'button';
+        delColBtn.className =
+          'p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors';
+        delColBtn.title = 'Delete column';
+        delColBtn.innerHTML = TABLE_ICONS.trash;
+        delColBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const updated = deleteColumn(tableData, colIdx);
+          dispatchTableChange(updated);
+        });
+        colControls.appendChild(delColBtn);
+      }
+
+      colWrapper.appendChild(colControls);
+      th.appendChild(colWrapper);
       trHead.appendChild(th);
     });
     thead.appendChild(trHead);
     table.appendChild(thead);
 
-    // Tbody
+    // 4. Table Body (tbody)
     const tbody = document.createElement('tbody');
     tbody.className = 'divide-y divide-cme-border-base/40 text-cme-text-base';
-    for (let r = 2; r < lines.length; r++) {
-      const rowCells = splitTableRow(lines[r]);
+
+    for (let r = 0; r < rowCount; r++) {
+      const rowCells = tableData.rows[r];
       const tr = document.createElement('tr');
-      tr.className = (r - 2) % 2 === 1 ? 'bg-cme-bg-subtle/20 hover:bg-cme-bg-hover/40' : 'hover:bg-cme-bg-hover/40';
-      headerCells.forEach((_, colIdx) => {
+      tr.className =
+        (r % 2 === 1 ? 'bg-cme-bg-subtle/20 ' : '') +
+        'hover:bg-cme-bg-hover/30 group/row transition-colors';
+
+      // Leading action handle cell for row actions
+      const tdRowGrip = document.createElement('td');
+      tdRowGrip.className =
+        'w-8 px-1 py-1 text-center text-xs border-r border-cme-border-base/40 align-middle';
+      const rowControls = document.createElement('div');
+      rowControls.className =
+        'opacity-0 group-hover/row:opacity-100 flex items-center justify-center gap-0.5 transition-opacity';
+
+      // Insert row below button (+)
+      const insertRowBtn = document.createElement('button');
+      insertRowBtn.type = 'button';
+      insertRowBtn.className =
+        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
+      insertRowBtn.title = 'Insert row below';
+      insertRowBtn.innerHTML = TABLE_ICONS.plus;
+      insertRowBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const updated = addRow(tableData, r + 1);
+        dispatchTableChange(updated, { row: r + 1, col: 0 });
+      });
+      rowControls.appendChild(insertRowBtn);
+
+      // Delete row button (✕)
+      const delRowBtn = document.createElement('button');
+      delRowBtn.type = 'button';
+      delRowBtn.className =
+        'p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors';
+      delRowBtn.title = 'Delete row';
+      delRowBtn.innerHTML = TABLE_ICONS.trash;
+      delRowBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const updated = deleteRow(tableData, r);
+        dispatchTableChange(updated);
+      });
+      rowControls.appendChild(delRowBtn);
+
+      tdRowGrip.appendChild(rowControls);
+      tr.appendChild(tdRowGrip);
+
+      // Data cells
+      tableData.headers.forEach((_, colIdx) => {
         const td = document.createElement('td');
-        td.className = 'px-4 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0';
-        td.style.textAlign = alignments[colIdx] || 'left';
+        const align = tableData.alignments[colIdx] || 'left';
+        td.className =
+          'px-3 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0 cursor-text min-h-[1.5rem]';
+        td.style.textAlign = align;
         const cellValue = rowCells[colIdx] || '';
+        td.dataset.raw = cellValue;
         renderCellContent(td, cellValue, view, this.docPath);
+        bindCellListeners(td, r, colIdx);
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
-    card.appendChild(table);
+    tableWrapper.appendChild(table);
+    card.appendChild(tableWrapper);
+
+    // 5. Bottom Add Row Bar
+    const bottomBar = document.createElement('div');
+    bottomBar.className =
+      'w-full py-1.5 text-center text-xs text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-subtle/60 border-t border-cme-border-base transition-colors flex items-center justify-center gap-1.5 cursor-pointer select-none';
+    bottomBar.innerHTML = `${TABLE_ICONS.plus}<span class="text-[11px] font-medium">Add Row</span>`;
+    bottomBar.title = 'Add new row at the bottom';
+    bottomBar.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const updated = addRow(tableData);
+      dispatchTableChange(updated, { row: rowCount, col: 0 });
+    });
+    card.appendChild(bottomBar);
+
     container.appendChild(card);
 
-    container.addEventListener('click', (e) => {
-      e.stopPropagation();
-      view.dispatch({ selection: { anchor: this.from + 2 } });
-      view.focus();
-    });
+    // 6. Handle pending focus on mount
+    if (pendingTableFocus && pendingTableFocus.pos === this.from) {
+      const target = pendingTableFocus;
+      pendingTableFocus = null;
+      requestAnimationFrame(() => {
+        const targetCell = container.querySelector(
+          `[data-table-cell="${target.row},${target.col}"]`
+        ) as HTMLElement;
+        if (targetCell) {
+          activateCellEditor(targetCell, target.row, target.col);
+        }
+      });
+    }
 
     return container;
   }
