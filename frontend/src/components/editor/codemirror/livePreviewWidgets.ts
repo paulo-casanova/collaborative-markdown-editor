@@ -3,7 +3,7 @@ import katex from 'katex';
 import { renderMermaidSvg } from '../utils/mermaidRenderer';
 import hljs from 'highlight.js';
 import { findHeadingPosition, slugify } from '../../navigation/DocumentOutline';
-import { isExternalUrl } from '../../../utils/linkValidator';
+import { isExternalUrl, stripHeadingNumberPrefix } from '../../../utils/linkValidator';
 import { getWorkspaceFileUrl, isMarkdownPath } from '../../../api/documents';
 import {
   parseCodeFenceHeader,
@@ -384,8 +384,16 @@ export class WikiLinkWidget extends WidgetType {
     const hashIndex = cleanTarget.indexOf('#');
     const targetDoc = !external && hashIndex >= 0 ? cleanTarget.slice(0, hashIndex).trim() : cleanTarget;
     const rawAnchor = !external && hashIndex >= 0 ? cleanTarget.slice(hashIndex + 1).trim() : '';
-    const isSameDoc = !external && (cleanTarget.startsWith('#') || targetDoc === '');
-    const anchorSlug = rawAnchor ? slugify(rawAnchor) : '';
+    let isSameDoc = !external && (cleanTarget.startsWith('#') || targetDoc === '');
+    let effectiveAnchor = rawAnchor;
+    if (!external && !isSameDoc && targetDoc) {
+      if (findHeadingPosition(view.state.doc, targetDoc)) {
+        isSameDoc = true;
+        effectiveAnchor = rawAnchor || targetDoc;
+      }
+    }
+    const strippedAnchor = stripHeadingNumberPrefix(effectiveAnchor);
+    const anchorSlug = effectiveAnchor ? slugify(strippedAnchor || effectiveAnchor) : '';
     const isNonMarkdownAsset = !external && !isSameDoc && !isMarkdownPath(targetDoc);
 
     const pill = document.createElement('span');
@@ -398,7 +406,7 @@ export class WikiLinkWidget extends WidgetType {
     }
 
     const displayLabel =
-      this.label || (isSameDoc ? (rawAnchor ? `#${rawAnchor}` : cleanTarget) : cleanTarget);
+      this.label || (isSameDoc ? (effectiveAnchor ? `#${effectiveAnchor}` : cleanTarget) : cleanTarget);
 
     const underlineClass = this.isValid
       ? 'decoration-cme-primary/40'
@@ -425,7 +433,7 @@ export class WikiLinkWidget extends WidgetType {
       popover.innerHTML = `
         <div class="space-y-1">
           <label class="font-semibold text-cme-text-muted text-[10px]">Target Heading:</label>
-          <input type="text" readonly class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none" value="#${escapeHtml(rawAnchor)}" />
+          <input type="text" readonly class="w-full px-2 py-1 text-xs font-mono rounded border border-cme-border-base bg-cme-bg-subtle text-cme-text-base focus:outline-none" value="#${escapeHtml(effectiveAnchor || rawAnchor)}" />
         </div>
         <div class="flex items-center justify-between pt-1 border-t border-cme-border-base">
           <button type="button" class="jump-btn px-2 py-1 rounded text-xs font-medium bg-cme-primary text-white hover:bg-cme-primary/90 transition-colors">Jump to Heading</button>
@@ -445,13 +453,21 @@ export class WikiLinkWidget extends WidgetType {
     span.appendChild(popover);
 
     const jumpToHeading = () => {
-      const pos = findHeadingPosition(view.state.doc, rawAnchor);
+      const headingRef = effectiveAnchor || rawAnchor;
+      const pos = findHeadingPosition(view.state.doc, headingRef);
       if (pos) {
         view.dispatch({
           selection: { anchor: pos.from },
-          scrollIntoView: true,
+          effects: EditorView.scrollIntoView(pos.from, { y: 'start', yMargin: 40 }),
         });
         view.focus();
+        requestAnimationFrame(() => {
+          if (view?.dom?.isConnected) {
+            view.dispatch({
+              effects: EditorView.scrollIntoView(pos.from, { y: 'start', yMargin: 40 }),
+            });
+          }
+        });
         popover.classList.add('hidden');
         return true;
       }

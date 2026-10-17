@@ -12,7 +12,9 @@ import {
  * "1.2.3 Subheading" -> "Subheading"
  */
 export function stripHeadingNumberPrefix(text: string): string {
-  return text.replace(/^\s*(?:\d+(?:\.\d+)*\.(?:\s+|$)|(?:\d+\.)+\d+\s+)/, '').trim();
+  return text
+    .replace(/^\s*(?:(?:\d+(?:\.\d+)*\.(?:[-_\s]+|$))|(?:\d+\.)+\d+(?:[-_\s]+|$))/, '')
+    .trim();
 }
 
 /**
@@ -36,14 +38,25 @@ export function slugifyHeading(text: string, stripNumbers: boolean = false): str
  * Matches both with and without leading section numbers (e.g. "3. Whatever" matches "#Whatever" and "#3. Whatever").
  */
 export function matchesHeadingTarget(headingRawText: string, targetHeadingRef: string): boolean {
-  const cleanRef = targetHeadingRef.replace(/^#+/, '').trim();
+  let cleanRef = targetHeadingRef.replace(/^#+/, '').trim();
+  try {
+    cleanRef = decodeURIComponent(cleanRef);
+  } catch {
+    // ignore malformed URI sequence
+  }
+  cleanRef = cleanRef.replace(/^#+/, '').trim();
   if (!cleanRef) return false;
 
   const refLower = cleanRef.toLowerCase();
   const refSlug = slugifyHeading(cleanRef, false);
   const refStrippedSlug = slugifyHeading(cleanRef, true);
 
-  const headingClean = headingRawText.replace(/[*_`~[\]]/g, '').trim();
+  const headingClean = headingRawText
+    .replace(/\s+#+\s*$/, '')
+    .replace(/\{#[^}]+\}\s*$/, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/[*_`~[\]]/g, '')
+    .trim();
   const headingLower = headingClean.toLowerCase();
   const headingStripped = stripHeadingNumberPrefix(headingClean);
   const headingStrippedLower = headingStripped.toLowerCase();
@@ -54,6 +67,10 @@ export function matchesHeadingTarget(headingRawText: string, targetHeadingRef: s
   return (
     headingLower === refLower ||
     headingStrippedLower === refLower ||
+    headingLower === refSlug ||
+    headingStrippedLower === refSlug ||
+    headingSlug === cleanRef ||
+    headingStrippedSlug === cleanRef ||
     (refSlug.length > 0 && (headingSlug === refSlug || headingStrippedSlug === refSlug)) ||
     (refStrippedSlug.length > 0 && (headingSlug === refStrippedSlug || headingStrippedSlug === refStrippedSlug))
   );
@@ -303,9 +320,23 @@ export function validateLinkTarget(
   if (workspaceTreeLoaded) {
     const fileExists = candidates.some((c) => knownWorkspacePaths.has(c));
     if (!fileExists) {
+      if (currentDocMarkdown && !headingRef) {
+        const headings = extractDocumentHeadings(currentDocMarkdown);
+        const matchesHeading = headings.some((h) => matchesHeadingTarget(h.rawText, rawFilePart));
+        if (matchesHeading) {
+          return { valid: true };
+        }
+      }
       return { valid: false, reason: `File "${rawFilePart}" does not exist` };
     }
   } else if (remoteDocNegativeCache.has(normFile.toLowerCase())) {
+    if (currentDocMarkdown && !headingRef) {
+      const headings = extractDocumentHeadings(currentDocMarkdown);
+      const matchesHeading = headings.some((h) => matchesHeadingTarget(h.rawText, rawFilePart));
+      if (matchesHeading) {
+        return { valid: true };
+      }
+    }
     return { valid: false, reason: `File "${rawFilePart}" does not exist` };
   }
 

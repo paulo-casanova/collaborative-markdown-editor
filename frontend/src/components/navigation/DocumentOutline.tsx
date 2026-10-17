@@ -3,6 +3,7 @@ import { AlignLeft, Hash } from 'lucide-react';
 import {
   matchesHeadingTarget,
   stripHeadingNumberPrefix,
+  slugifyHeading,
 } from '../../utils/linkValidator';
 import { useUIStore } from '../../stores/uiStore';
 
@@ -16,9 +17,11 @@ export interface OutlineItem {
 export function slugify(text: string): string {
   const slug = text
     .toLowerCase()
+    .replace(/[*_`~[\]]/g, '')
     .replace(/[^\w\s-]/g, '')
     .trim()
-    .replace(/\s+/g, '-');
+    .replace(/[\s_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
   return slug || 'heading';
 }
 
@@ -32,19 +35,31 @@ export function extractHeadingsFromMarkdown(
   const slugCounts: Record<string, number> = {};
   const counters = [0, 0, 0, 0, 0, 0];
   let inCodeFence = false;
+  let inMathBlock = false;
 
   for (let idx = 0; idx < lines.length; idx++) {
-    const line = lines[idx];
-    if (/^\s*```/.test(line)) {
+    const rawLine = lines[idx].replace(/\r$/, '');
+    if (/^\s*```/.test(rawLine)) {
       inCodeFence = !inCodeFence;
       continue;
     }
     if (inCodeFence) continue;
 
-    const match = line.match(/^(#{1,6})\s+(.+)$/);
+    if (/^\s*\$\$/.test(rawLine)) {
+      inMathBlock = !inMathBlock;
+      continue;
+    }
+    if (inMathBlock) continue;
+
+    const match = rawLine.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
     if (match) {
       const level = match[1].length;
-      const rawText = match[2].trim().replace(/[*_`]/g, '');
+      const fullHeading = match[2]
+        .replace(/\s+#+\s*$/, '')
+        .replace(/\{#[^}]+\}\s*$/, '')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+      const rawText = fullHeading.replace(/[*_`~[\]]/g, '');
       const strippedText = stripHeadingNumberPrefix(rawText) || rawText;
       const baseSlug = slugify(strippedText);
       const count = slugCounts[baseSlug] || 0;
@@ -87,27 +102,52 @@ export function findHeadingPosition(
   targetHeading: string
 ): { from: number; to: number } | null {
   if (!doc || !targetHeading) return null;
-  const rawTarget = targetHeading.replace(/^#+\s*/, '').trim();
-  const cleanTarget = rawTarget.replace(/[*_`]/g, '').trim().toLowerCase();
+  let decoded = targetHeading;
+  try {
+    decoded = decodeURIComponent(targetHeading);
+  } catch {
+    // ignore
+  }
+  const rawTarget = decoded.replace(/^#+\s*/, '').trim();
+  const cleanTarget = rawTarget.replace(/[*_`~[\]]/g, '').trim().toLowerCase();
   const targetSlug = slugify(cleanTarget);
+  const targetStrippedSlug = slugify(stripHeadingNumberPrefix(cleanTarget) || cleanTarget);
   const slugCounts: Record<string, number> = {};
+  let inCodeFence = false;
 
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
-    const match = line.text.match(/^(#{1,6})\s+(.*)$/);
+    const lineText = line.text.replace(/\r$/, '');
+    if (/^\s*```/.test(lineText)) {
+      inCodeFence = !inCodeFence;
+      continue;
+    }
+    if (inCodeFence) continue;
+
+    const match = lineText.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
     if (match) {
-      const rawText = match[2].trim();
-      const strippedText = stripHeadingNumberPrefix(rawText.replace(/[*_`]/g, '').trim()).toLowerCase();
+      const fullHeading = match[2]
+        .replace(/\s+#+\s*$/, '')
+        .replace(/\{#[^}]+\}\s*$/, '')
+        .replace(/<[^>]+>/g, '')
+        .trim();
+      const rawText = fullHeading;
+      const strippedText = stripHeadingNumberPrefix(rawText.replace(/[*_`~[\]]/g, '').trim()).toLowerCase();
       const baseSlug = slugify(strippedText || rawText);
+      const rawSlug = slugify(rawText);
       const count = slugCounts[baseSlug] || 0;
       slugCounts[baseSlug] = count + 1;
       const fullSlug = count === 0 ? baseSlug : `${baseSlug}-${count}`;
 
       if (
         matchesHeadingTarget(rawText, rawTarget) ||
+        matchesHeadingTarget(rawText, targetHeading) ||
         strippedText === cleanTarget ||
         rawText.toLowerCase() === cleanTarget ||
         baseSlug === targetSlug ||
+        baseSlug === targetStrippedSlug ||
+        rawSlug === targetSlug ||
+        rawSlug === targetStrippedSlug ||
         fullSlug === targetSlug ||
         fullSlug === cleanTarget ||
         baseSlug === cleanTarget
@@ -116,6 +156,61 @@ export function findHeadingPosition(
       }
     }
   }
+  return null;
+}
+
+export function findHeadingElement(targetHeading: string): HTMLElement | null {
+  if (typeof window === 'undefined' || !targetHeading) return null;
+  let decoded = targetHeading;
+  try {
+    decoded = decodeURIComponent(targetHeading);
+  } catch {
+    // ignore
+  }
+  const clean = decoded.replace(/^#+/, '').trim();
+  if (!clean) return null;
+
+  const cleanLower = clean.toLowerCase();
+  const slug = slugify(clean);
+  const strippedSlug = slugify(stripHeadingNumberPrefix(clean) || clean);
+
+  // 1. Direct ID lookups
+  const directCandidates = [
+    clean,
+    cleanLower,
+    slug,
+    strippedSlug,
+    targetHeading.replace(/^#+/, ''),
+    slugifyHeading(clean, false),
+    slugifyHeading(clean, true),
+  ];
+  for (const c of directCandidates) {
+    if (!c) continue;
+    const el = window.document.getElementById(c);
+    if (el) return el;
+  }
+
+  // 2. Query all heading elements inside article / editor
+  const headingElements = Array.from(
+    window.document.querySelectorAll(
+      'article h1, article h2, article h3, article h4, article h5, article h6, [data-testid="reader-article"] h1, [data-testid="reader-article"] h2, [data-testid="reader-article"] h3, [data-testid="reader-article"] h4, [data-testid="reader-article"] h5, [data-testid="reader-article"] h6, .cm-line[data-heading-level]'
+    )
+  ) as HTMLElement[];
+
+  for (const el of headingElements) {
+    const text = (el.textContent || '').trim();
+    if (
+      matchesHeadingTarget(text, clean) ||
+      matchesHeadingTarget(text, targetHeading) ||
+      slugify(text) === slug ||
+      slugify(text) === strippedSlug ||
+      el.id === slug ||
+      el.id === strippedSlug
+    ) {
+      return el;
+    }
+  }
+
   return null;
 }
 
@@ -202,7 +297,7 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
 
       let current = headings[0].id;
       for (const item of headings) {
-        const el = document.getElementById(item.id);
+        const el = findHeadingElement(item.id);
         if (el) {
           const rect = el.getBoundingClientRect();
           if (rect.top <= 160) {
@@ -235,17 +330,23 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
   const handleHeadingClick = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     setActiveId(id);
+    try {
+      window.history.pushState(null, '', '#' + encodeURIComponent(id));
+    } catch {
+      // ignore
+    }
     isClickScrolling.current = true;
     setTimeout(() => {
       isClickScrolling.current = false;
     }, 800);
 
-    const targetEl = document.getElementById(id);
-    if (targetEl) {
-      targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
     if (onSelectHeading) {
       onSelectHeading(id);
+    } else {
+      const targetEl = findHeadingElement(id);
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
     }
   };
 

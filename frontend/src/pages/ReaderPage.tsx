@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -37,13 +37,20 @@ import type { CommentRecord } from '../review/types';
 import { parseMarkdownToHtml } from '../utils/markdownToHtml';
 import { useUIStore } from '../stores/uiStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
-import { DocumentOutline, extractHeadingsFromMarkdown, slugify } from '../components/navigation/DocumentOutline';
+import {
+  DocumentOutline,
+  extractHeadingsFromMarkdown,
+  slugify,
+  findHeadingElement,
+} from '../components/navigation/DocumentOutline';
 import { renderMermaidSvg } from '../components/editor/utils/mermaidRenderer';
 import {
   validateLinkTarget,
   isExternalUrl,
   stripHeadingNumberPrefix,
   subscribeLinkValidation,
+  extractDocumentHeadings,
+  matchesHeadingTarget,
 } from '../utils/linkValidator';
 import { parsePillSyntax, resolvePillStyle } from '../utils/pillUtils';
 import { parseImageDimensionAndAlt, getImageStyles, parseImageTarget } from '../utils/imageDimensions';
@@ -222,34 +229,53 @@ export const ReaderPage: React.FC = () => {
     }
   }, [document, openTab, setBreadcrumbs]);
 
+  const scrollTarget = useCallback((target: string) => {
+    if (!target) return;
+    let decoded = target;
+    try {
+      decoded = decodeURIComponent(target);
+    } catch {
+      // ignore
+    }
+    const clean = decoded.replace(/^#+/, '').trim();
+    if (!clean) return;
+
+    const tryScroll = () => {
+      const el = findHeadingElement(clean);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return true;
+      }
+      return false;
+    };
+
+    if (!tryScroll()) {
+      const delays = [60, 120, 240, 480];
+      delays.forEach((delay) => {
+        setTimeout(() => {
+          tryScroll();
+        }, delay);
+      });
+    }
+  }, []);
+
   // Auto-scroll to heading anchor if present in URL on load
   useEffect(() => {
     if (!document?.content || isLoading) return;
-    const hash = window.location.hash.replace(/^#/, '');
-    if (hash) {
-      const timer = setTimeout(() => {
-        const el = typeof window !== 'undefined' ? window.document.getElementById(hash) : null;
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
-      }, 100);
-      return () => clearTimeout(timer);
+    if (window.location.hash) {
+      scrollTarget(window.location.hash);
     }
-  }, [document?.id, document?.content, isLoading]);
+  }, [document?.id, document?.content, isLoading, scrollTarget]);
 
   useEffect(() => {
     const handleHashChange = () => {
-      const hash = window.location.hash.replace(/^#/, '');
-      if (hash) {
-        const el = typeof window !== 'undefined' ? window.document.getElementById(hash) : null;
-        if (el) {
-          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+      if (window.location.hash) {
+        scrollTarget(window.location.hash);
       }
     };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+  }, [scrollTarget]);
 
   // Document-level header numbering setting
   const numberHeaders = Boolean(document?.number_headers);
@@ -426,7 +452,7 @@ export const ReaderPage: React.FC = () => {
       {/* Main Reading Area with Right Sticky Table of Contents */}
       <div className={`${containerWidthClass} px-4 md:px-8 pt-8 flex gap-8 items-start`}>
         {/* Document Article Body */}
-        <div className={`flex-1 min-w-0 ${widthClass} transition-all`}>
+        <main className={`flex-1 min-w-0 ${widthClass} transition-all`}>
           <article
             className={`prose dark:prose-invert max-w-none text-cme-text-base ${fontClass} leading-relaxed`}
             data-testid="reader-article"
@@ -843,12 +869,16 @@ export const ReaderPage: React.FC = () => {
               )}
             </section>
           )}
-        </div>
+        </main>
 
         {/* Right Sticky Column: Document Outline (Table of Contents) */}
         <aside className="w-64 lg:w-72 hidden md:block sticky top-20 flex-shrink-0 self-start">
           <div className="border border-cme-border-base rounded-2xl bg-cme-bg-surface overflow-hidden shadow-sm">
-            <DocumentOutline headings={headings} markdown={document.content} />
+            <DocumentOutline
+              headings={headings}
+              markdown={document.content}
+              onSelectHeading={(id) => scrollTarget(id)}
+            />
           </div>
         </aside>
       </div>
@@ -1501,12 +1531,20 @@ function renderInlineFormatted(
       const hashIndex = cleanTarget.indexOf('#');
       const targetDoc = !external && hashIndex >= 0 ? cleanTarget.slice(0, hashIndex).trim() : cleanTarget;
       const rawAnchor = !external && hashIndex >= 0 ? cleanTarget.slice(hashIndex + 1).trim() : '';
-      const isSameDoc = !external && (cleanTarget.startsWith('#') || targetDoc === '');
-      const strippedAnchor = stripHeadingNumberPrefix(rawAnchor);
-      const anchorSlug = rawAnchor ? slugify(strippedAnchor || rawAnchor) : '';
+      let isSameDoc = !external && (cleanTarget.startsWith('#') || targetDoc === '');
+      let effectiveAnchor = rawAnchor;
+      if (!external && !isSameDoc && targetDoc && currentDocMarkdown) {
+        const headings = extractDocumentHeadings(currentDocMarkdown);
+        if (headings.some((h) => matchesHeadingTarget(h.rawText, targetDoc))) {
+          isSameDoc = true;
+          effectiveAnchor = rawAnchor || targetDoc;
+        }
+      }
+      const strippedAnchor = stripHeadingNumberPrefix(effectiveAnchor);
+      const anchorSlug = effectiveAnchor ? slugify(strippedAnchor || effectiveAnchor) : '';
       const isNonMarkdownAsset = !external && !isSameDoc && !isMarkdownPath(targetDoc);
 
-      const displayLabel = label || (isSameDoc ? (rawAnchor ? `#${rawAnchor}` : cleanTarget) : cleanTarget);
+      const displayLabel = label || (isSameDoc ? (effectiveAnchor ? `#${effectiveAnchor}` : cleanTarget) : cleanTarget);
 
       // Validate link target
       const validation = validateLinkTarget(cleanTarget, currentDocMarkdown, currentDocPath);
@@ -1570,10 +1608,22 @@ function renderInlineFormatted(
                 return;
               }
               e.preventDefault();
-              const el = typeof window !== 'undefined' ? window.document.getElementById(anchorSlug) : null;
-              if (el) {
-                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              const targetCandidate = effectiveAnchor || anchorSlug;
+              const tryScroll = () => {
+                const el = findHeadingElement(targetCandidate);
+                if (el) {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  return true;
+                }
+                return false;
+              };
+              if (!tryScroll()) {
+                [60, 120, 240].forEach((delay) => setTimeout(tryScroll, delay));
+              }
+              try {
                 window.history.pushState(null, '', hashHref);
+              } catch {
+                // ignore
               }
             }}
           >

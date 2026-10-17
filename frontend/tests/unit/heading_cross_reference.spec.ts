@@ -115,4 +115,52 @@ Duplicate section heading.
     const pos7 = findHeadingPosition(mockDoc, 'Non Existent');
     expect(pos7).toBeNull();
   });
+
+  it('locates "Writing an Actor" with %20 URL encoding, leading #, and numbered prefixes', () => {
+    const lines = [
+      '# Introduction',
+      '',
+      '## 1. Writing an Actor',
+      'Actor implementation details.',
+      '',
+      '### 1.1 Managing State',
+      'State details.',
+    ];
+
+    let offset = 0;
+    const lineObjs = lines.map((text) => {
+      const from = offset;
+      const to = offset + text.length;
+      offset = to + 1;
+      return { from, to, text };
+    });
+
+    const mockDoc = {
+      lines: lines.length,
+      line: (n: number) => lineObjs[n - 1],
+    };
+
+    // Exact text with number
+    expect(findHeadingPosition(mockDoc, '1. Writing an Actor')?.from).toBe(lineObjs[2].from);
+
+    // Without section number
+    expect(findHeadingPosition(mockDoc, 'Writing an Actor')?.from).toBe(lineObjs[2].from);
+
+    // With leading hash
+    expect(findHeadingPosition(mockDoc, '#Writing an Actor')?.from).toBe(lineObjs[2].from);
+
+    // With URL encoding %20
+    expect(findHeadingPosition(mockDoc, 'Writing%20an%20Actor')?.from).toBe(lineObjs[2].from);
+    expect(findHeadingPosition(mockDoc, '#Writing%20an%20Actor')?.from).toBe(lineObjs[2].from);
+
+    // By slug
+    expect(findHeadingPosition(mockDoc, 'writing-an-actor')?.from).toBe(lineObjs[2].from);
+    expect(findHeadingPosition(mockDoc, '#writing-an-actor')?.from).toBe(lineObjs[2].from);
+
+    // Subheading
+    expect(findHeadingPosition(mockDoc, 'Managing State')?.from).toBe(lineObjs[5].from);
+    expect(findHeadingPosition(mockDoc, '#1.1 Managing State')?.from).toBe(lineObjs[5].from);
+    expect(findHeadingPosition(mockDoc, 'managing-state')?.from).toBe(lineObjs[5].from);
+  });
 });
+

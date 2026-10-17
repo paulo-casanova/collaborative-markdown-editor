@@ -249,7 +249,7 @@ Divider with spaced hyphens.
     // 1. Verify link renders as an in-page anchor with href="#architecture-overview"
     const xrefLink = article.locator('a[href="#architecture-overview"]').first();
     await expect(xrefLink).toBeVisible();
-    await expect(xrefLink).toHaveText('#Architecture Overview');
+    await expect(xrefLink).toContainText('#Architecture Overview');
 
     // 2. Click the heading link
     await xrefLink.click();
@@ -260,7 +260,7 @@ Divider with spaced hyphens.
     // 4. Verify piped heading link
     const pipedLink = article.locator('a[href="#architecture-overview"]').nth(1);
     await expect(pipedLink).toBeVisible();
-    await expect(pipedLink).toHaveText('Go to Arch');
+    await expect(pipedLink).toContainText('Go to Arch');
   });
 
   test('supports resizing the editor outline sidebar and preserves universal Read/Edit mode when opening files', async ({

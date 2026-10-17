@@ -67,6 +67,12 @@ std::string slugify(std::string_view text) {
     return slug.empty() ? "heading" : slug;
 }
 
+inline std::string strip_heading_number_prefix(std::string_view text) {
+    static const std::regex prefix_re(R"(^\s*(?:(?:\d+(?:\.\d+)*\.(?:[-_\s]+|$))|(?:\d+\.)+\d+(?:[-_\s]+|$)))");
+    std::string s(text);
+    return std::regex_replace(s, prefix_re, "");
+}
+
 struct ImageDimensionResult {
     std::string alt;
     std::string width;
@@ -339,7 +345,8 @@ int leave_block_cb(MD_BLOCKTYPE type, void* detail, void* userdata) {
             break;
         case MD_BLOCK_H: {
             ctx->in_heading = false;
-            std::string base_slug = slugify(ctx->heading_plain);
+            std::string stripped_plain = strip_heading_number_prefix(ctx->heading_plain);
+            std::string base_slug = slugify(stripped_plain.empty() ? ctx->heading_plain : stripped_plain);
             int count = ctx->slug_counts[base_slug]++;
             std::string slug = (count == 0) ? base_slug : base_slug + "-" + std::to_string(count);
 

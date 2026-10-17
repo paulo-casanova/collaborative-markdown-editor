@@ -21,8 +21,9 @@ import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { useReviewStore } from '../../stores/reviewStore';
 import { Badge } from '../common/Badge';
 import { CollaborativeEditor } from '../editor/CollaborativeEditor';
+import { EditorView } from '@codemirror/view';
 import { CmeCollabProvider, CollabConnectionStatus, ReviewEventPayload } from '../../api/collabProvider';
-import { DocumentOutline, findHeadingPosition, slugify } from '../navigation/DocumentOutline';
+import { DocumentOutline, findHeadingPosition, findHeadingElement } from '../navigation/DocumentOutline';
 import { ReviewSidebar } from '../review/ReviewSidebar';
 import { reconcileAnchor } from '../../review/textAnchoring';
 import { updateCachedDocumentHeadings } from '../../utils/linkValidator';
@@ -98,7 +99,13 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const scrollToHeading = useCallback(
     (headingTarget: string) => {
       if (!headingTarget) return;
-      const clean = headingTarget.replace(/^#/, '');
+      let decoded = headingTarget;
+      try {
+        decoded = decodeURIComponent(headingTarget);
+      } catch {
+        // ignore
+      }
+      const clean = decoded.replace(/^#+/, '').trim();
       if (!clean) return;
 
       if (editorInstance && !editorInstance.isDestroyed) {
@@ -108,16 +115,22 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
           if (pos) {
             view.dispatch({
               selection: { anchor: pos.from },
-              scrollIntoView: true,
+              effects: EditorView.scrollIntoView(pos.from, { y: 'start', yMargin: 40 }),
             });
             view.focus();
+            requestAnimationFrame(() => {
+              if (!editorInstance.isDestroyed && view?.dom?.isConnected) {
+                view.dispatch({
+                  effects: EditorView.scrollIntoView(pos.from, { y: 'start', yMargin: 40 }),
+                });
+              }
+            });
             return;
           }
         }
       }
 
-      const dom = typeof window !== 'undefined' ? window.document : null;
-      const domEl = dom ? (dom.getElementById(clean) || dom.getElementById(slugify(clean))) : null;
+      const domEl = findHeadingElement(clean);
       if (domEl) {
         domEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
