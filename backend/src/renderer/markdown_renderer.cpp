@@ -11,6 +11,8 @@
 #include <cctype>
 #include <algorithm>
 #include <regex>
+#include <vector>
+#include <optional>
 #include "md4c.h"
 
 namespace cme::renderer {
@@ -65,6 +67,80 @@ std::string slugify(std::string_view text) {
     return slug.empty() ? "heading" : slug;
 }
 
+struct ImageDimensionResult {
+    std::string alt;
+    std::string width;
+    std::string height;
+};
+
+inline std::optional<std::pair<std::string, std::string>> parse_dim_token(const std::string& token) {
+    // 1. Width x Height (e.g. 300x200, 300px x 200px, 50%x50%)
+    static const std::regex wxh_re(R"(^(\d+(?:\.\d+)?(?:px|%)?)\s*[xX]\s*(\d+(?:\.\d+)?(?:px|%)?)$)");
+    std::smatch m;
+    if (std::regex_match(token, m, wxh_re)) {
+        std::string w = m[1].str();
+        std::string h = m[2].str();
+        if (std::regex_match(w, std::regex(R"(^\d+(?:\.\d+)?$)"))) w += "px";
+        if (std::regex_match(h, std::regex(R"(^\d+(?:\.\d+)?$)"))) h += "px";
+        return std::make_pair(w, h);
+    }
+    // 2. Height only (e.g. x200, x200px, X300)
+    static const std::regex h_re(R"(^[xX]\s*(\d+(?:\.\d+)?)(px|%)?$)");
+    if (std::regex_match(token, m, h_re)) {
+        std::string unit = m[2].matched ? m[2].str() : "px";
+        return std::make_pair("", m[1].str() + unit);
+    }
+    // 3. Width only (e.g. 300, 300px, 50%)
+    static const std::regex w_re(R"(^(\d+(?:\.\d+)?)(px|%)?$)");
+    if (std::regex_match(token, m, w_re)) {
+        std::string unit = m[2].matched ? m[2].str() : "px";
+        return std::make_pair(m[1].str() + unit, "");
+    }
+    return std::nullopt;
+}
+
+inline ImageDimensionResult parse_image_alt_and_dimensions(const std::string& raw_alt) {
+    ImageDimensionResult res;
+    if (raw_alt.find('|') != std::string::npos) {
+        std::stringstream ss(raw_alt);
+        std::string segment;
+        std::vector<std::string> non_dim_parts;
+        while (std::getline(ss, segment, '|')) {
+            auto start = segment.find_first_not_of(" \t\r\n");
+            auto end = segment.find_last_not_of(" \t\r\n");
+            std::string trimmed = (start == std::string::npos) ? "" : segment.substr(start, end - start + 1);
+            if (trimmed.empty()) continue;
+
+            auto dim = parse_dim_token(trimmed);
+            if (dim) {
+                if (!dim->first.empty()) res.width = dim->first;
+                if (!dim->second.empty()) res.height = dim->second;
+            } else {
+                non_dim_parts.push_back(trimmed);
+            }
+        }
+        std::string combined_alt;
+        for (size_t i = 0; i < non_dim_parts.size(); ++i) {
+            if (i > 0) combined_alt += " | ";
+            combined_alt += non_dim_parts[i];
+        }
+        res.alt = combined_alt;
+    } else {
+        auto start = raw_alt.find_first_not_of(" \t\r\n");
+        auto end = raw_alt.find_last_not_of(" \t\r\n");
+        std::string trimmed = (start == std::string::npos) ? "" : raw_alt.substr(start, end - start + 1);
+        auto dim = parse_dim_token(trimmed);
+        if (dim) {
+            if (!dim->first.empty()) res.width = dim->first;
+            if (!dim->second.empty()) res.height = dim->second;
+            res.alt = "";
+        } else {
+            res.alt = trimmed;
+        }
+    }
+    return res;
+}
+
 struct RenderContext {
     std::string output;
 
@@ -109,7 +185,7 @@ struct RenderContext {
         } else if (in_code_block) {
             output.append(escape_html(text));
         } else if (in_img) {
-            img_alt.append(escape_html(text));
+            img_alt.append(text);
         } else {
             output.append(escape_html(text));
         }
@@ -399,11 +475,21 @@ int leave_span_cb(MD_SPANTYPE type, void* detail, void* userdata) {
             break;
         case MD_SPAN_IMG: {
             ctx->in_img = false;
-            std::string tag = "<img src=\"" + escape_html(ctx->img_src) + "\" alt=\"" + escape_html(ctx->img_alt) + "\"";
+            auto parsed = parse_image_alt_and_dimensions(ctx->img_alt);
+            std::string tag = "<img src=\"" + escape_html(ctx->img_src) + "\" alt=\"" + escape_html(parsed.alt) + "\"";
             if (!ctx->img_title.empty()) {
                 tag += " title=\"" + escape_html(ctx->img_title) + "\"";
             }
-            tag += " />";
+            std::string style = "max-width: 100%;";
+            if (!parsed.width.empty()) {
+                style += " width: " + parsed.width + ";";
+            }
+            if (!parsed.height.empty()) {
+                style += " height: " + parsed.height + "; object-fit: contain;";
+            } else {
+                style += " height: auto;";
+            }
+            tag += " style=\"" + style + "\" />";
             ctx->append_raw(tag);
             ctx->img_src.clear();
             ctx->img_title.clear();

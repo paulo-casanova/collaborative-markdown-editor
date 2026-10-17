@@ -131,6 +131,31 @@ int main() {
     }
 
     // =========================================================================
+    // 1b. UNIT TEST: Image Dimensions & Native Sizing
+    // =========================================================================
+    {
+        std::cout << "  -> Testing image dimension parsing and native sizing...\n";
+        std::string md =
+            "Default image: ![System Architecture](diagram.png)\n\n"
+            "Width-only image: ![System Architecture|400](diagram.png)\n\n"
+            "WxH image: ![System Architecture|400x300](diagram.png)\n\n"
+            "Percentage image: ![System Architecture|50%](diagram.png)\n\n"
+            "Height-only image: ![System Architecture|x250](diagram.png)\n\n"
+            "Pure dimension alt: ![600x400](diagram.png)\n";
+
+        cme::renderer::RenderOptions opts{.standalone = false};
+        std::string html = cme::renderer::MarkdownRenderer::render_to_html(md, opts);
+
+        assert(html.find("<img src=\"diagram.png\" alt=\"System Architecture\" style=\"max-width: 100%; height: auto;\" />") != std::string::npos);
+        assert(html.find("<img src=\"diagram.png\" alt=\"System Architecture\" style=\"max-width: 100%; width: 400px; height: auto;\" />") != std::string::npos);
+        assert(html.find("<img src=\"diagram.png\" alt=\"System Architecture\" style=\"max-width: 100%; width: 400px; height: 300px; object-fit: contain;\" />") != std::string::npos);
+        assert(html.find("<img src=\"diagram.png\" alt=\"System Architecture\" style=\"max-width: 100%; width: 50%; height: auto;\" />") != std::string::npos);
+        assert(html.find("<img src=\"diagram.png\" alt=\"System Architecture\" style=\"max-width: 100%; height: 250px; object-fit: contain;\" />") != std::string::npos);
+        assert(html.find("<img src=\"diagram.png\" alt=\"\" style=\"max-width: 100%; width: 600px; height: 400px; object-fit: contain;\" />") != std::string::npos);
+        std::cout << "     [PASS] Image dimensions and native sizing rendered accurately.\n";
+    }
+
+    // =========================================================================
     // 2. UNIT TEST: KaTeX Math Transforms ($inline$ and $$display$$)
     // =========================================================================
     {

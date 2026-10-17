@@ -46,6 +46,7 @@ import {
   subscribeLinkValidation,
 } from '../utils/linkValidator';
 import { parsePillSyntax, resolvePillStyle } from '../utils/pillUtils';
+import { parseImageDimensionAndAlt, getImageStyles } from '../utils/imageDimensions';
 
 type FontMode = 'sans' | 'serif' | 'mono';
 type WidthMode = 'standard' | 'full';
@@ -1356,26 +1357,32 @@ function renderInlineFormatted(
       );
     }
 
-    // 2a. Obsidian Embeds: ![[target]] or ![[target|alt]]
+    // 2a. Obsidian Embeds: ![[target]] or ![[target|alt]] or ![[target|alt|size]]
     if (part.startsWith('![[') && part.endsWith(']]')) {
       const inner = part.slice(3, -2);
       const pipeIdx = inner.indexOf('|');
       const target = (pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner).trim();
-      const alt = (pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : target).trim();
+      const altOrSize = (pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : '').trim();
+      const parsed = parseImageDimensionAndAlt(altOrSize);
+      const displayAlt = parsed.altText || target;
       const resolvedSrc = isExternalUrl(target) ? target : getWorkspaceFileUrl(target, currentDocPath);
+      const { linkStyle, imgStyle } = getImageStyles(parsed);
+
       return (
         <a
           key={idx}
           href={resolvedSrc}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-block my-1 rounded border border-cme-border-base bg-cme-bg-surface overflow-hidden align-middle hover:border-cme-primary transition-colors"
-          title={`${alt || target} (Click to open)`}
+          className="inline-block my-1 rounded border border-cme-border-base bg-cme-bg-surface overflow-hidden align-middle hover:border-cme-primary transition-colors max-w-full"
+          title={`${displayAlt} (Click to open)`}
+          style={linkStyle}
         >
           <img
             src={resolvedSrc}
-            alt={alt || target}
-            className="max-h-48 max-w-xs object-contain inline-block align-middle"
+            alt={displayAlt}
+            className="block align-middle"
+            style={imgStyle}
             onError={(e) => {
               const el = e.currentTarget;
               el.style.display = 'none';
@@ -1396,22 +1403,29 @@ function renderInlineFormatted(
     if (part.startsWith('![') && part.includes('](') && part.endsWith(')')) {
       const imgMatch = part.match(/^!\[([^\]]*)\]\(([^)\n]+)\)$/);
       if (imgMatch) {
-        const alt = imgMatch[1].trim();
-        const rawSrc = imgMatch[2].trim().split(/\s+/)[0];
-        const resolvedSrc = isExternalUrl(rawSrc) ? rawSrc : getWorkspaceFileUrl(rawSrc, currentDocPath);
+        const rawAlt = imgMatch[1].trim();
+        const rawSrc = imgMatch[2].trim();
+        const parsed = parseImageDimensionAndAlt(rawAlt, rawSrc);
+        const cleanSrc = rawSrc.split(/\s+/)[0];
+        const displayAlt = parsed.altText || cleanSrc;
+        const resolvedSrc = isExternalUrl(cleanSrc) ? cleanSrc : getWorkspaceFileUrl(cleanSrc, currentDocPath);
+        const { linkStyle, imgStyle } = getImageStyles(parsed);
+
         return (
           <a
             key={idx}
             href={resolvedSrc}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-block my-1 rounded border border-cme-border-base bg-cme-bg-surface overflow-hidden align-middle hover:border-cme-primary transition-colors"
-            title={`${alt || rawSrc} (Click to open)`}
+            className="inline-block my-1 rounded border border-cme-border-base bg-cme-bg-surface overflow-hidden align-middle hover:border-cme-primary transition-colors max-w-full"
+            title={`${displayAlt} (Click to open)`}
+            style={linkStyle}
           >
             <img
               src={resolvedSrc}
-              alt={alt || rawSrc}
-              className="max-h-48 max-w-xs object-contain inline-block align-middle"
+              alt={displayAlt}
+              className="block align-middle"
+              style={imgStyle}
               onError={(e) => {
                 const el = e.currentTarget;
                 el.style.display = 'none';
@@ -1419,7 +1433,7 @@ function renderInlineFormatted(
                 if (parent && !parent.querySelector('.broken-image-fallback')) {
                   const fallback = document.createElement('span');
                   fallback.className = 'broken-image-fallback inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono rounded border border-rose-500/40 bg-rose-500/10 text-rose-500';
-                  fallback.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${rawSrc}</span>`;
+                  fallback.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${cleanSrc}</span>`;
                   parent.appendChild(fallback);
                 }
               }}

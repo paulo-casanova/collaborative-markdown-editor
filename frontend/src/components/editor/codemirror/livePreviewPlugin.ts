@@ -489,7 +489,7 @@ export function buildLivePreviewDecorations(
       if (isOverlappingReplaced(imgFrom, imgTo)) continue;
 
       const alt = imgMatch[1].trim();
-      const rawSrc = imgMatch[2].trim().split(/\s+/)[0];
+      const rawSrc = imgMatch[2].trim();
       const cursorInImg = cursorTo >= imgFrom && cursorFrom <= imgTo;
       if (!cursorInImg && rawSrc) {
         addReplace(
@@ -502,7 +502,7 @@ export function buildLivePreviewDecorations(
       }
     }
 
-    // 4g. Obsidian File & Image Embeds: ![[target]] or ![[target|alt]]
+    // 4g. Obsidian File & Image Embeds: ![[target]] or ![[target|alt]] or ![[target|alt|size]]
     const embedRegex = /!\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;
     let embMatch: RegExpExecArray | null;
     while ((embMatch = embedRegex.exec(lineText)) !== null) {
@@ -518,7 +518,7 @@ export function buildLivePreviewDecorations(
           embFrom,
           embTo,
           Decoration.replace({
-            widget: new ImageEmbedWidget(altOrSize || rawTarget, rawTarget, embFrom, embTo, documentPath),
+            widget: new ImageEmbedWidget(altOrSize, rawTarget, embFrom, embTo, documentPath),
           })
         );
       }

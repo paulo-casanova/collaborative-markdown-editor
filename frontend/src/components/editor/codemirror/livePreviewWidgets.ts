@@ -13,6 +13,7 @@ import {
   setSnippetState,
 } from '../../../utils/snippetSync';
 import { resolvePillStyle } from '../../../utils/pillUtils';
+import { parseImageDimensionAndAlt } from '../../../utils/imageDimensions';
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -279,9 +280,12 @@ export class ImageEmbedWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     const wrapper = document.createElement('span');
-    wrapper.className = 'cme-image-embed inline-flex flex-col items-start gap-1 my-1 select-none';
+    wrapper.className = 'cme-image-embed inline-flex flex-col items-start gap-1 my-1 select-none max-w-full';
 
-    const cleanSrc = this.src.trim();
+    const parsed = parseImageDimensionAndAlt(this.alt, this.src);
+    const cleanSrc = this.src.trim().split(/\s+/)[0];
+    const displayAlt = parsed.altText || cleanSrc;
+
     const resolvedUrl =
       isExternalUrl(cleanSrc) || cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')
         ? cleanSrc
@@ -291,13 +295,29 @@ export class ImageEmbedWidget extends WidgetType {
     link.href = resolvedUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
-    link.title = `${this.alt || cleanSrc} (Click to open in new tab)`;
-    link.className = 'inline-block rounded-lg overflow-hidden border border-cme-border-base bg-cme-bg-surface shadow-sm hover:border-cme-primary transition-colors';
+    link.title = `${displayAlt} (Click to open in new tab)`;
+    link.className = 'inline-block rounded-lg overflow-hidden border border-cme-border-base bg-cme-bg-surface shadow-sm hover:border-cme-primary transition-colors max-w-full';
 
     const img = document.createElement('img');
     img.src = resolvedUrl;
-    img.alt = this.alt || cleanSrc;
-    img.className = 'max-h-64 max-w-full object-contain block';
+    img.alt = displayAlt;
+    img.className = 'max-w-full block';
+
+    if (parsed.width) {
+      if (parsed.width.endsWith('%')) {
+        wrapper.style.width = parsed.width;
+        link.style.width = '100%';
+        img.style.width = '100%';
+      } else {
+        img.style.width = parsed.width;
+      }
+    }
+    if (parsed.height) {
+      img.style.height = parsed.height;
+      img.style.objectFit = 'contain';
+    } else {
+      img.style.height = 'auto';
+    }
 
     img.onerror = () => {
       wrapper.innerHTML = '';
