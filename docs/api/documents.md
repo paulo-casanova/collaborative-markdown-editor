@@ -27,6 +27,8 @@ All workspace and document operations enforce granular permissions through the P
 | `DELETE`| `/api/v1/documents/{id}` | Soft-delete a document (moves node to `trash/` in storage) | `EDIT` / Owner |
 | `POST` | `/api/v1/documents/{id}/assets` | Upload an image or attachment (saved to neighboring `images/`) | `EDIT` |
 | `GET` | `/api/v1/documents/{id}/assets/:filename` | Stream uploaded image or attachment asset | `READ` |
+| `GET` | `/api/v1/workspaces/snippet-proxy` | Secure proxy fetching remote code snippets (`?url=...`) | Public / CORS |
+| `GET` | `/api/v1/workspaces/snippet-endpoints` | Returns list of configured snippet endpoint names and allowed hosts | Public / CORS |
 
 ---
 
@@ -224,3 +226,31 @@ Streams the uploaded asset with appropriate MIME type (e.g. `image/png`, `image/
 
 #### Response (`HTTP 200 OK`)
 Direct binary stream of the stored image or attachment.
+
+---
+
+### 10. `GET /api/v1/workspaces/snippet-proxy?url=<encoded_url_or_endpoint>`
+Fetches remote code snippets or resolves named endpoint templates (e.g. `mg/services/auth.cpp`).
+* Substitutes `${PATH}` with the target path.
+* Expands `${ENV_VAR}` variables from server environment.
+* Safely executes `curl` with configured arguments via `execvp` without invoking `/bin/sh`.
+* Enforces SSRF restrictions by verifying hostname against `allowed_hosts`.
+
+#### Query Parameters
+* `url` (required, URL-encoded): Full HTTP/HTTPS URL or shorthand named endpoint.
+
+#### Response (`HTTP 200 OK`)
+Raw plain text stream (`text/plain; charset=utf-8`) with `Cache-Control: public, max-age=60`.
+
+---
+
+### 11. `GET /api/v1/workspaces/snippet-endpoints`
+Returns metadata about configured snippet endpoints and allowed hostnames for the frontend editor.
+
+#### Response (`HTTP 200 OK`)
+```json
+{
+  "endpoints": ["mg", "gh"],
+  "allowed_hosts": ["github.com", "raw.githubusercontent.com", "gitlab.com"]
+}
+```
