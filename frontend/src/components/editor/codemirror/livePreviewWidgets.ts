@@ -619,7 +619,7 @@ export class CodeBlockWidget extends WidgetType {
 
     const header = document.createElement('div');
     header.className =
-      'flex items-center justify-between px-3.5 py-1.5 border-b border-cme-border-base bg-cme-bg-surface/80 text-xs';
+      'flex items-center justify-between px-3 py-1.5 border-b border-cme-border-base bg-cme-bg-surface/80 text-xs gap-2 min-w-0';
 
     const snippetInfo = parseCodeFenceHeader(this.language);
     const isSnippet = snippetInfo.isSnippet;
@@ -631,34 +631,57 @@ export class CodeBlockWidget extends WidgetType {
           ? '...' + snippetInfo.source.slice(-33)
           : snippetInfo.source;
 
-      header.innerHTML = `
-        <div class="flex items-center gap-2 flex-wrap">
-          <span class="px-2 py-0.5 rounded bg-cme-bg-subtle font-mono text-[11px] font-semibold text-cme-text-base border border-cme-border-base uppercase">
-            ${escapeHtml(effectiveLang || 'code')}
-          </span>
-          <span class="font-mono text-[11px] text-cme-primary flex items-center gap-1 select-text" title="${escapeHtml(snippetInfo.source)} #${escapeHtml(snippetInfo.marker)}">
-            🔗 ${escapeHtml(sourceDisplay)}
-            <span class="text-cme-text-muted">#${escapeHtml(snippetInfo.marker)}</span>
-          </span>
-          <span class="sync-status-badge"></span>
-        </div>
-        <div class="flex items-center gap-1.5">
-          <button type="button" class="resync-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors cursor-pointer" data-testid="resync-snippet-btn" title="Re-sync code snippet from source">
-            Sync
-          </button>
-          <button type="button" class="copy-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors">Copy</button>
-        </div>
-      `;
+      const leftContainer = document.createElement('div');
+      leftContainer.className = 'flex items-center gap-1.5 min-w-0 flex-1 overflow-hidden';
+
+      const langBadge = document.createElement('span');
+      langBadge.className =
+        'px-1.5 py-0.5 rounded bg-cme-bg-subtle font-mono text-[11px] font-semibold text-cme-text-base border border-cme-border-base uppercase shrink-0';
+      langBadge.textContent = effectiveLang || 'code';
+      leftContainer.appendChild(langBadge);
+
+      const sourceLink = document.createElement('span');
+      sourceLink.className =
+        'font-mono text-[11px] text-cme-primary flex items-center gap-1 select-text shrink-0 truncate max-w-[200px]';
+      sourceLink.title = `${snippetInfo.source} #${snippetInfo.marker}`;
+      sourceLink.innerHTML = `🔗 ${escapeHtml(sourceDisplay)}<span class="text-cme-text-muted">#${escapeHtml(snippetInfo.marker)}</span>`;
+      leftContainer.appendChild(sourceLink);
+
+      const badge = document.createElement('span');
+      badge.className = 'sync-status-badge min-w-0 truncate';
+      leftContainer.appendChild(badge);
+
+      header.appendChild(leftContainer);
+
+      const rightContainer = document.createElement('div');
+      rightContainer.className = 'flex items-center gap-1.5 shrink-0';
+
+      const resyncBtn = document.createElement('button');
+      resyncBtn.type = 'button';
+      resyncBtn.className =
+        'resync-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors cursor-pointer';
+      resyncBtn.setAttribute('data-testid', 'resync-snippet-btn');
+      resyncBtn.title = 'Re-sync code snippet from source';
+      resyncBtn.textContent = 'Sync';
+      rightContainer.appendChild(resyncBtn);
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className =
+        'copy-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors';
+      copyBtn.textContent = 'Copy';
+      rightContainer.appendChild(copyBtn);
+
+      header.appendChild(rightContainer);
 
       const updateSyncBadge = (status?: string, error?: string) => {
-        const badge = header.querySelector('.sync-status-badge') as HTMLElement | null;
-        if (!badge) return;
         if (status === 'syncing') {
-          badge.innerHTML = `<span class="px-2 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-sans text-[11px] font-medium animate-pulse">⟳ Syncing...</span>`;
+          badge.innerHTML = `<span class="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400 font-sans text-[11px] font-medium animate-pulse inline-flex items-center gap-1 shrink-0">⟳ Syncing...</span>`;
         } else if (status === 'failed') {
-          badge.innerHTML = `<span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 font-sans text-[11px] font-medium flex items-center gap-1 border border-rose-500/30" data-testid="snippet-sync-warning" title="${escapeHtml(error || 'Snippet sync failed')}">⚠ Snippet sync failed</span>`;
+          const errDisplay = error ? escapeHtml(error) : 'Snippet sync failed';
+          badge.innerHTML = `<span class="px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-600 dark:text-rose-400 font-sans text-[11px] font-medium inline-flex items-center gap-1 border border-rose-500/30 truncate max-w-full" data-testid="snippet-sync-warning" title="${errDisplay}">⚠ ${errDisplay}</span>`;
         } else if (status === 'synced') {
-          badge.innerHTML = `<span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-sans text-[11px] font-medium flex items-center gap-1" data-testid="snippet-sync-success">✓ Synced</span>`;
+          badge.innerHTML = `<span class="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-sans text-[11px] font-medium inline-flex items-center gap-1 shrink-0" data-testid="snippet-sync-success">✓ Synced</span>`;
         } else {
           badge.innerHTML = '';
         }
@@ -725,13 +748,10 @@ export class CodeBlockWidget extends WidgetType {
 
       triggerSync(false);
 
-      const resyncBtn = header.querySelector('.resync-btn') as HTMLButtonElement | null;
-      if (resyncBtn) {
-        resyncBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          triggerSync(true);
-        });
-      }
+      resyncBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        triggerSync(true);
+      });
     } else {
       const knownLanguages = [
         { id: '', label: 'none' },
@@ -788,13 +808,15 @@ export class CodeBlockWidget extends WidgetType {
       });
     }
 
-    const copyBtn = header.querySelector('.copy-btn') as HTMLButtonElement;
-    copyBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      navigator.clipboard.writeText(this.code);
-      copyBtn.textContent = 'Copied!';
-      setTimeout(() => (copyBtn.textContent = 'Copy'), 2000);
-    });
+    const copyBtn = header.querySelector('.copy-btn') as HTMLButtonElement | null;
+    if (copyBtn) {
+      copyBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        navigator.clipboard?.writeText?.(this.code);
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => (copyBtn.textContent = 'Copy'), 2000);
+      });
+    }
 
     // Body container: Flex with line numbers gutter and syntax-highlighted pre
     const body = document.createElement('div');

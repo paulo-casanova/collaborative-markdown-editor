@@ -10,6 +10,7 @@ import {
   InlineSuggestionWidget,
   InlineCommentThreadWidget,
 } from '../../src/components/editor/codemirror/inlineReviewPlugin';
+import { CodeBlockWidget } from '../../src/components/editor/codemirror/livePreviewWidgets';
 import { useReviewStore } from '../../src/stores/reviewStore';
 import { SuggestionRecord, CommentRecord } from '../../src/review/types';
 
@@ -31,7 +32,11 @@ class MockDOMElement {
   }
 
   get innerHTML(): string {
-    return this._innerHTML;
+    const childHtml = this.children.map((c) => c.innerHTML).join('');
+    if (this._innerHTML && childHtml) {
+      return `${this._innerHTML}${childHtml}`;
+    }
+    return this._innerHTML || childHtml;
   }
 
   set innerHTML(val: string) {
@@ -222,6 +227,26 @@ const a = 1;
     expect(state).toBeDefined();
     expect(state?.status).toBe('synced');
     expect(state?.code).toBe('int worker_id = 1;');
+  });
+
+  it('renders compact single-line header and displays actual error message on snippet sync failure', () => {
+    setSnippetState('./src/calc.py', 'compute_tax', {
+      status: 'failed',
+      error: "Expected exactly 2 lines matching '[compute_tax]', found 1",
+    });
+
+    const widget = new CodeBlockWidget('python|./src/calc.py|compute_tax', '# old code', 0, 10, 'docs/test.md');
+    const mockView = { dispatch: vi.fn(), focus: vi.fn() } as any;
+    const dom = widget.toDOM(mockView);
+
+    const card = dom.children[0];
+    const header = card.children[0];
+    expect(header).toBeDefined();
+    // Header must not use flex-wrap which balloons the bar height
+    expect(header.className).not.toContain('flex-wrap');
+    expect(header.className).toContain('min-w-0');
+    // Header must explicitly render the actual error message
+    expect(header.innerHTML).toContain("⚠ Expected exactly 2 lines matching '[compute_tax]', found 1");
   });
 });
 
