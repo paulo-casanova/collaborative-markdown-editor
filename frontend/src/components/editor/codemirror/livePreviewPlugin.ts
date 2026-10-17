@@ -614,7 +614,7 @@ export function buildLivePreviewDecorations(
       }
     }
 
-    // 4i. Inline formatting: Bold **text**
+    // 4i. Inline formatting: Bold **text** and __text__
     const boldRegex = /\*\*([^\*\n]+)\*\*/g;
     let bMatch: RegExpExecArray | null;
     while ((bMatch = boldRegex.exec(lineText)) !== null) {
@@ -646,7 +646,37 @@ export function buildLivePreviewDecorations(
       }
     }
 
-    // 4j. Inline formatting: Italic *text* (when not bold)
+    const boldUnderscoreRegex = /(?<![a-zA-Z0-9_])__([^\s_\n](?:[^_\n]*?[^\s_\n])?)__(?![a-zA-Z0-9_])/g;
+    while ((bMatch = boldUnderscoreRegex.exec(lineText)) !== null) {
+      const bFrom = lineFrom + bMatch.index;
+      const bTo = bFrom + bMatch[0].length;
+
+      if (isOverlappingReplaced(bFrom, bTo)) continue;
+
+      const cursorInBold = cursorTo >= bFrom && cursorFrom <= bTo;
+      if (!cursorInBold) {
+        addReplace(bFrom, bFrom + 2, Decoration.replace({}));
+        items.push({
+          from: bFrom + 2,
+          to: bTo - 2,
+          deco: Decoration.mark({ class: 'cme-live-bold font-bold' }),
+        });
+        addReplace(bTo - 2, bTo, Decoration.replace({}));
+      } else {
+        items.push({
+          from: bFrom,
+          to: bFrom + 2,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
+        items.push({
+          from: bTo - 2,
+          to: bTo,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
+      }
+    }
+
+    // 4j. Inline formatting: Italic *text* and _text_ (when not bold)
     const italicRegex = /(?<!\*)\*([^\*\n]+)\*(?!\*)/g;
     let iMatch: RegExpExecArray | null;
     while ((iMatch = italicRegex.exec(lineText)) !== null) {
@@ -664,6 +694,47 @@ export function buildLivePreviewDecorations(
           deco: Decoration.mark({ class: 'cme-live-italic italic' }),
         });
         addReplace(iTo - 1, iTo, Decoration.replace({}));
+      } else {
+        items.push({
+          from: iFrom,
+          to: iFrom + 1,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
+        items.push({
+          from: iTo - 1,
+          to: iTo,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
+      }
+    }
+
+    const italicUnderscoreRegex = /(?<![a-zA-Z0-9_])_([^\s_\n](?:[^_\n]*?[^\s_\n])?)_(?![a-zA-Z0-9_])/g;
+    while ((iMatch = italicUnderscoreRegex.exec(lineText)) !== null) {
+      const iFrom = lineFrom + iMatch.index;
+      const iTo = iFrom + iMatch[0].length;
+
+      if (isOverlappingReplaced(iFrom, iTo)) continue;
+
+      const cursorInItalic = cursorTo >= iFrom && cursorFrom <= iTo;
+      if (!cursorInItalic) {
+        addReplace(iFrom, iFrom + 1, Decoration.replace({}));
+        items.push({
+          from: iFrom + 1,
+          to: iTo - 1,
+          deco: Decoration.mark({ class: 'cme-live-italic italic' }),
+        });
+        addReplace(iTo - 1, iTo, Decoration.replace({}));
+      } else {
+        items.push({
+          from: iFrom,
+          to: iFrom + 1,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
+        items.push({
+          from: iTo - 1,
+          to: iTo,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
       }
     }
 

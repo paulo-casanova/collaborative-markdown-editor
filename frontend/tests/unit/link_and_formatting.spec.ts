@@ -214,5 +214,44 @@ Deep details.`;
     expect(html).toContain('<span class="cme-pill cme-pill-amber" data-color="amber">In Progress</span>');
     expect(html).toContain('<span class="cme-pill cme-pill-green" data-color="green">Done</span>');
   });
+
+  describe('Markdown Inline Formatting (Bold & Italic)', () => {
+    it('parses underscore and asterisk italic: _foo_ and *bar*', () => {
+      const html1 = parseMarkdownToHtml('This is _foo_ italic.');
+      expect(html1).toContain('This is <em>foo</em> italic.');
+
+      const html2 = parseMarkdownToHtml('This is *bar* italic.');
+      expect(html2).toContain('This is <em>bar</em> italic.');
+    });
+
+    it('parses underscore and asterisk bold: __foo__ and **bar**', () => {
+      const html1 = parseMarkdownToHtml('This is __foo__ bold.');
+      expect(html1).toContain('This is <strong>foo</strong> bold.');
+
+      const html2 = parseMarkdownToHtml('This is **bar** bold.');
+      expect(html2).toContain('This is <strong>bar</strong> bold.');
+    });
+
+    it('parses bold + italic combinations: ___foo___ and ***bar***', () => {
+      const html1 = parseMarkdownToHtml('This is ___foo___ bold italic.');
+      expect(html1).toContain('<strong><em>foo</em></strong>');
+
+      const html2 = parseMarkdownToHtml('This is ***bar*** bold italic.');
+      expect(html2).toContain('<strong><em>bar</em></strong>');
+    });
+
+    it('does not parse intra-word underscores as emphasis (preserves snake_case)', () => {
+      const html = parseMarkdownToHtml('Variable snake_case_name and MAX_BUFFER_SIZE should not italicize.');
+      expect(html).not.toContain('<em>');
+      expect(html).toContain('snake_case_name');
+      expect(html).toContain('MAX_BUFFER_SIZE');
+    });
+
+    it('parses underscores surrounded by punctuation or parentheses', () => {
+      const html = parseMarkdownToHtml('Parenthesized (_italic_) and quoted "_italic_".');
+      expect(html).toContain('(<em>italic</em>)');
+      expect(html).toContain('"<em>italic</em>"');
+    });
+  });
 });
 

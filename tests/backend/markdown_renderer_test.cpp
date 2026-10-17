@@ -102,7 +102,7 @@ int main() {
         std::string md = 
             "# Main Title\n"
             "## Main Title\n" // tests slug deduplication: main-title-1
-            "Text with **bold**, *italic*, ~~strikethrough~~, _underline_, and `code`.\n\n"
+            "Text with **bold**, *italic*, ~~strikethrough~~, _italic2_, __bold2__, snake_case_var, and `code`.\n\n"
             "> A blockquote note.\n\n"
             "- [x] Completed task\n"
             "- [ ] Pending task\n\n"
@@ -118,7 +118,10 @@ int main() {
         assert(html.find("<strong>bold</strong>") != std::string::npos);
         assert(html.find("<em>italic</em>") != std::string::npos);
         assert(html.find("<del>strikethrough</del>") != std::string::npos);
-        assert(html.find("<u>underline</u>") != std::string::npos);
+        assert(html.find("<em>italic2</em>") != std::string::npos);
+        assert(html.find("<strong>bold2</strong>") != std::string::npos);
+        assert(html.find("snake_case_var") != std::string::npos);
+        assert(html.find("<em>case</em>") == std::string::npos);
         assert(html.find("<code>code</code>") != std::string::npos);
         assert(html.find("<blockquote>\n<p>A blockquote note.</p>\n</blockquote>") != std::string::npos);
         assert(html.find("<li class=\"task-list-item\"><input type=\"checkbox\" disabled class=\"task-list-item-checkbox\" checked=\"\" /> Completed task</li>") != std::string::npos);

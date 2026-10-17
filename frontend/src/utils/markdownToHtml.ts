@@ -48,8 +48,11 @@ function inlineFormat(text: string): string {
 
   // Bold & Italic
   res = res.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+  res = res.replace(/(?<![a-zA-Z0-9_])___([^_]+)___(?![a-zA-Z0-9_])/g, '<strong><em>$1</em></strong>');
   res = res.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  res = res.replace(/(?<![a-zA-Z0-9_])__([^_]+)__(?![a-zA-Z0-9_])/g, '<strong>$1</strong>');
   res = res.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  res = res.replace(/(?<![a-zA-Z0-9_])_([^\s_]|(?:[^\s_][^_]*[^\s_]))_(?![a-zA-Z0-9_])/g, '<em>$1</em>');
 
   // Strikethrough
   res = res.replace(/~~([^~]+)~~/g, '<s>$1</s>');

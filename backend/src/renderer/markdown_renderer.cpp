@@ -1023,7 +1023,7 @@ std::string MarkdownRenderer::render_to_html(
     std::string normalized_input = normalize_markdown_links_with_spaces(markdown_text);
     MD_PARSER parser = {
         0,
-        MD_DIALECT_GITHUB | MD_FLAG_LATEXMATHSPANS | MD_FLAG_WIKILINKS | MD_FLAG_UNDERLINE,
+        MD_DIALECT_GITHUB | MD_FLAG_LATEXMATHSPANS | MD_FLAG_WIKILINKS,
         enter_block_cb,
         leave_block_cb,
         enter_span_cb,

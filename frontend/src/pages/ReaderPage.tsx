@@ -1307,10 +1307,10 @@ function renderInlineFormatted(
   // 6. Display Math: $$...$$
   // 7. Inline Math: $...$
   // 8. Strikethrough: ~~...~~
-  // 9. Bold: **...**
-  // 10. Italic: *...*
+  // 9. Bold: **...** or __...__
+  // 10. Italic: *...* or _..._
   const parts = text.split(
-    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|\*[^*\n]+\*)/g
+    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g
   );
 
   let currentOffset = 0;
@@ -1697,7 +1697,12 @@ function renderInlineFormatted(
     }
 
     // 8. Bold **...**
-    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+    // 8. Bold: **...** or __...__
+    if (
+      (((part.startsWith('**') && part.endsWith('**')) ||
+        (part.startsWith('__') && part.endsWith('__'))) &&
+        part.length > 4)
+    ) {
       return (
         <strong key={idx}>
           {renderInlineFormatted(
@@ -1711,8 +1716,12 @@ function renderInlineFormatted(
       );
     }
 
-    // 9. Italic *...*
-    if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
+    // 9. Italic: *...* or _..._
+    if (
+      (((part.startsWith('*') && part.endsWith('*')) ||
+        (part.startsWith('_') && part.endsWith('_'))) &&
+        part.length > 2)
+    ) {
       return (
         <em key={idx}>
           {renderInlineFormatted(

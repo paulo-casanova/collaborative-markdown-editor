@@ -74,8 +74,8 @@ export class CodeMirrorEditorAdapter {
     if (type === 'codeBlock') return lineText.startsWith('```');
 
     const selected = doc.sliceString(sel.from, sel.to);
-    if (type === 'bold') return selected.startsWith('**') && selected.endsWith('**');
-    if (type === 'italic') return selected.startsWith('*') && selected.endsWith('*');
+    if (type === 'bold') return (selected.startsWith('**') && selected.endsWith('**')) || (selected.startsWith('__') && selected.endsWith('__'));
+    if (type === 'italic') return (selected.startsWith('*') && selected.endsWith('*')) || (selected.startsWith('_') && selected.endsWith('_'));
     if (type === 'strike') return selected.startsWith('~~') && selected.endsWith('~~');
     if (type === 'code') return selected.startsWith('`') && selected.endsWith('`');
 
@@ -251,10 +251,22 @@ export class CodeMirrorEditorAdapter {
     const to = sel.to;
     const selected = this.view.state.doc.sliceString(from, to);
 
+    const altPrefix = prefix === '*' ? '_' : prefix === '_' ? '*' : prefix === '**' ? '__' : prefix === '__' ? '**' : '';
+    const altSuffix = suffix === '*' ? '_' : suffix === '_' ? '*' : suffix === '**' ? '__' : suffix === '__' ? '**' : '';
+
     const pLen = prefix.length;
     const sLen = suffix.length;
     if (selected.startsWith(prefix) && selected.endsWith(suffix) && selected.length >= pLen + sLen) {
       const unwrapped = selected.slice(pLen, selected.length - sLen);
+      this.view.dispatch({
+        changes: { from, to, insert: unwrapped },
+        selection: { anchor: from, head: from + unwrapped.length },
+      });
+      return;
+    }
+
+    if (altPrefix && altSuffix && selected.startsWith(altPrefix) && selected.endsWith(altSuffix) && selected.length >= altPrefix.length + altSuffix.length) {
+      const unwrapped = selected.slice(altPrefix.length, selected.length - altSuffix.length);
       this.view.dispatch({
         changes: { from, to, insert: unwrapped },
         selection: { anchor: from, head: from + unwrapped.length },
