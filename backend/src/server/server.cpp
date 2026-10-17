@@ -946,6 +946,7 @@ Result<void> Server::start() {
             std::string grantee_type;
             std::string grantee_id;
             std::string access_level;
+            bool is_inheritable = true;
 
             try {
                 auto json = nlohmann::json::parse(*body);
@@ -955,6 +956,7 @@ Result<void> Server::start() {
                 if (json.contains("grantee_type") && json["grantee_type"].is_string()) grantee_type = json["grantee_type"].get<std::string>();
                 if (json.contains("grantee_id") && json["grantee_id"].is_string()) grantee_id = json["grantee_id"].get<std::string>();
                 if (json.contains("access_level") && json["access_level"].is_string()) access_level = json["access_level"].get<std::string>();
+                if (json.contains("is_inheritable") && json["is_inheritable"].is_boolean()) is_inheritable = json["is_inheritable"].get<bool>();
             } catch (...) {
                 send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
                 return;
@@ -966,7 +968,7 @@ Result<void> Server::start() {
             for (auto& c : target_type) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
 
             auto set_res = document_service_->set_node_permission(
-                target_type, target_id, dir_path, grantee_type, grantee_id, access_level, *auth_res.value()
+                target_type, target_id, dir_path, grantee_type, grantee_id, access_level, is_inheritable, *auth_res.value()
             );
             if (!set_res.has_value()) {
                 if (set_res.error() == ErrorCode::PermissionDenied) {
@@ -981,6 +983,123 @@ Result<void> Server::start() {
 
             send_json(res, "200 OK", set_res.value());
         });
+    });
+
+    // POST /api/v1/workspaces/permissions/test
+    app.post("/api/v1/workspaces/permissions/test", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string target_type;
+            std::string target_id;
+            std::string dir_path;
+            std::string subject_type;
+            std::string subject_id;
+
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("target_type") && json["target_type"].is_string()) target_type = json["target_type"].get<std::string>();
+                if (json.contains("target_id") && json["target_id"].is_string()) target_id = json["target_id"].get<std::string>();
+                if (json.contains("directory_path") && json["directory_path"].is_string()) dir_path = json["directory_path"].get<std::string>();
+                if (json.contains("subject_type") && json["subject_type"].is_string()) subject_type = json["subject_type"].get<std::string>();
+                if (json.contains("subject_id") && json["subject_id"].is_string()) subject_id = json["subject_id"].get<std::string>();
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (target_type.empty()) {
+                target_type = !target_id.empty() ? "DOCUMENT" : "DIRECTORY";
+            }
+            for (auto& c : target_type) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+            auto test_res = document_service_->test_node_permission(
+                target_type, target_id, dir_path, subject_type, subject_id, *auth_res.value()
+            );
+            if (!test_res.has_value()) {
+                if (test_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (test_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Target or subject not found"}});
+                } else if (test_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid test parameters"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to test permissions"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", test_res.value());
+        });
+    });
+
+    // GET /api/v1/workspaces/permissions/test
+    app.get("/api/v1/workspaces/permissions/test", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string target_type = url_decode(req->getQuery("target_type"));
+        std::string target_id = url_decode(req->getQuery("target_id"));
+        std::string dir_path = url_decode(req->getQuery("directory_path"));
+        std::string subject_type = url_decode(req->getQuery("subject_type"));
+        std::string subject_id = url_decode(req->getQuery("subject_id"));
+
+        if (target_type.empty()) {
+            target_type = !target_id.empty() ? "DOCUMENT" : "DIRECTORY";
+        }
+        for (auto& c : target_type) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+        auto test_res = document_service_->test_node_permission(
+            target_type, target_id, dir_path, subject_type, subject_id, *auth_res.value()
+        );
+        if (!test_res.has_value()) {
+            if (test_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else if (test_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Target or subject not found"}});
+            } else if (test_res.error() == ErrorCode::InvalidArgument) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid test parameters"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to test permissions"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", test_res.value());
     });
 
     // DELETE /api/v1/workspaces/permissions/:id

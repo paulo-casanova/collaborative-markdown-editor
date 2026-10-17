@@ -1,5 +1,5 @@
 import { apiRequest } from './client';
-import { NodePermissions, AssignablePrincipals } from '../types/document';
+import { NodePermissions, AssignablePrincipals, TestPermissionResult } from '../types/document';
 
 export interface FetchPermissionsParams {
   target_type?: 'DOCUMENT' | 'DIRECTORY';
@@ -14,6 +14,15 @@ export interface SetPermissionPayload {
   grantee_type: 'USER' | 'TEAM';
   grantee_id: string;
   access_level: 'READ' | 'COMMENT' | 'EDIT' | 'ADMIN';
+  is_inheritable?: boolean;
+}
+
+export interface TestPermissionParams {
+  target_type?: 'DOCUMENT' | 'DIRECTORY';
+  target_id?: string;
+  directory_path?: string;
+  subject_type: 'USER' | 'TEAM';
+  subject_id: string;
 }
 
 export interface TransferOwnershipPayload {
@@ -55,4 +64,11 @@ export async function transferNodeOwnership(payload: TransferOwnershipPayload): 
 
 export async function fetchAssignablePrincipals(): Promise<AssignablePrincipals> {
   return apiRequest<AssignablePrincipals>('/api/v1/workspaces/principals');
+}
+
+export async function testNodePermissions(payload: TestPermissionParams): Promise<TestPermissionResult> {
+  return apiRequest<TestPermissionResult>('/api/v1/workspaces/permissions/test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }

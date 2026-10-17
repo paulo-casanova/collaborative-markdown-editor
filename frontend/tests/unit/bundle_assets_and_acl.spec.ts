@@ -92,4 +92,86 @@ describe('Bundle Assets & Additive ACL types and logic', () => {
     expect(mockPerms.inherited_grants.length).toBe(1);
     expect(mockPerms.inherited_grants[0].inherited_from).toBe('engineering');
   });
+
+  it('supports non-inheriting directory ACL entries (is_inheritable: false)', () => {
+    const dirPerms: NodePermissions = {
+      target_type: 'DIRECTORY',
+      target_id: '',
+      target_path: 'confidential_project',
+      effective_permission: 'comment',
+      can_manage: true,
+      owner: {
+        id: 'user-1',
+        name: 'alice',
+        display_name: 'Alice',
+        is_team: false,
+      },
+      explicit_grants: [
+        {
+          id: 101,
+          grantee_type: 'TEAM',
+          grantee_id: 'team-contractors',
+          grantee_name: 'Contractors',
+          access_level: 'COMMENT',
+          is_inheritable: false,
+        },
+        {
+          id: 102,
+          grantee_type: 'TEAM',
+          grantee_id: 'team-core',
+          grantee_name: 'Core Team',
+          access_level: 'READ',
+          is_inheritable: true,
+        },
+      ],
+      inherited_grants: [],
+    };
+
+    expect(dirPerms.explicit_grants[0].is_inheritable).toBe(false);
+    expect(dirPerms.explicit_grants[1].is_inheritable).toBe(true);
+
+    // Filter child document inherited grants: only is_inheritable === true should propagate
+    const propagated = dirPerms.explicit_grants.filter((g) => g.is_inheritable !== false);
+    expect(propagated.length).toBe(1);
+    expect(propagated[0].grantee_name).toBe('Core Team');
+  });
+
+  it('evaluates test permission result model and breakdown rules', () => {
+    const testResult = {
+      target_type: 'DOCUMENT' as const,
+      target_id: 'doc-uuid-99',
+      target_path: 'guides/deploy.md',
+      subject_type: 'USER' as const,
+      subject_id: 'user-uuid-charlie',
+      subject_name: 'Charlie (@charlie)',
+      effective_level: 'COMMENT',
+      is_admin: false,
+      is_owner: false,
+      effective_teams: ['Frontend Devs', 'Engineering'],
+      matched_rules: [
+        {
+          source: 'INHERITED_GRANT',
+          level: 'READ',
+          grantee_type: 'TEAM',
+          grantee_name: 'Engineering',
+          inherited_from: 'guides',
+          is_inheritable: true,
+          description: "Inherited from 'guides' via team 'Engineering': READ",
+        },
+        {
+          source: 'EXPLICIT_GRANT',
+          level: 'COMMENT',
+          grantee_type: 'TEAM',
+          grantee_name: 'Frontend Devs',
+          is_inheritable: true,
+          description: "Direct grant to team 'Frontend Devs': COMMENT",
+        },
+      ],
+    };
+
+    expect(testResult.effective_level).toBe('COMMENT');
+    expect(testResult.matched_rules.length).toBe(2);
+    expect(testResult.effective_teams).toContain('Engineering');
+    expect(testResult.matched_rules[1].level).toBe('COMMENT');
+  });
 });

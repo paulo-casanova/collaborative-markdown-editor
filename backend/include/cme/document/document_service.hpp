@@ -281,6 +281,19 @@ public:
         const std::string& grantee_type,
         const std::string& grantee_id,
         const std::string& access_level,
+        bool is_inheritable,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Tests what ACLs apply to a specific user or team on a node.
+     */
+    Result<nlohmann::json> test_node_permission(
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& dir_path,
+        const std::string& subject_type,
+        const std::string& subject_id,
         const auth::UserIdentity& user
     );
 

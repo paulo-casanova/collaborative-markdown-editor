@@ -209,6 +209,64 @@ int main() {
         std::cout << "[TEST] Permission via directory inheritance: " << to_string(*perm_dir) << "\n";
         assert(*perm_dir == AccessLevel::Read);
 
+        // Test G: Non-inheriting directory ACL entries
+        // On 'test/local_only': Charlie has direct COMMENT (is_inheritable = false)
+        //                       Engineering has READ (is_inheritable = true)
+        std::string doc_sub_id;
+        {
+            pqxx::work g_tx(conn);
+            g_tx.exec_params(
+                "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) "
+                "VALUES ('DIRECTORY', 'test/local_only', 'USER', $1::uuid, 'COMMENT', FALSE);",
+                charlie_id
+            );
+            g_tx.exec_params(
+                "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) "
+                "VALUES ('DIRECTORY', 'test/local_only', 'TEAM', $1::uuid, 'READ', TRUE);",
+                eng_team_id
+            );
+            auto r = g_tx.exec_params(
+                "INSERT INTO documents (fs_path, title, owner_user_id) "
+                "VALUES ('test/local_only/nested/child.md', 'Child Doc', $1::uuid) RETURNING id;",
+                admin_id
+            );
+            doc_sub_id = r[0][0].as<std::string>();
+            g_tx.commit();
+        }
+
+        // G1: Charlie directly on directory 'test/local_only' -> has COMMENT (non-inheriting grant applies to the direct directory)
+        auto perm_direct_dir = PermissionEngine::check_permission(conn, charlie_id, "", "test/local_only");
+        assert(perm_direct_dir.has_value());
+        std::cout << "[TEST] Permission on test/local_only (direct): " << to_string(*perm_direct_dir) << "\n";
+        assert(*perm_direct_dir == AccessLevel::Comment);
+
+        // G2: Charlie on nested child doc 'test/local_only/nested/child.md' -> resolves to READ (COMMENT does NOT inherit, but READ from eng_team does)
+        auto perm_child = PermissionEngine::check_permission(conn, charlie_id, doc_sub_id, "test/local_only/nested/child.md");
+        assert(perm_child.has_value());
+        std::cout << "[TEST] Permission on child doc: " << to_string(*perm_child) << "\n";
+        assert(*perm_child == AccessLevel::Read);
+
+        // Test H: PermissionEngine::test_permission inspector
+        std::cout << "[TEST] Testing PermissionEngine::test_permission...\n";
+        auto test_user_res = PermissionEngine::test_permission(
+            conn, "USER", charlie_id, "DOCUMENT", doc_sub_id, "test/local_only/nested/child.md"
+        );
+        assert(test_user_res.has_value());
+        std::cout << "  - Subject name: " << test_user_res->subject_name << "\n";
+        std::cout << "  - Effective level: " << to_string(test_user_res->effective_level) << "\n";
+        std::cout << "  - Matched rules: " << test_user_res->matched_rules.size() << "\n";
+        assert(test_user_res->effective_level == AccessLevel::Read);
+        assert(!test_user_res->matched_rules.empty());
+        assert(!test_user_res->effective_teams.empty());
+
+        auto test_team_res = PermissionEngine::test_permission(
+            conn, "TEAM", eng_team_id, "DIRECTORY", "", "test/local_only"
+        );
+        assert(test_team_res.has_value());
+        std::cout << "  - Team test effective level: " << to_string(test_team_res->effective_level) << "\n";
+        assert(test_team_res->effective_level == AccessLevel::Read);
+        assert(!test_team_res->matched_rules.empty());
+
         std::cout << "\n[PASS] All db_permissions_dag_test test cases succeeded!\n";
 
         // Clean up test records

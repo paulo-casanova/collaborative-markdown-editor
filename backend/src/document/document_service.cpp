@@ -2016,7 +2016,8 @@ Result<nlohmann::json> DocumentService::get_node_permissions(
             {"grantee_type", g.grantee_type},
             {"grantee_id", g.grantee_id},
             {"grantee_name", g.grantee_name},
-            {"access_level", db::to_string(g.access_level)}
+            {"access_level", db::to_string(g.access_level)},
+            {"is_inheritable", g.is_inheritable}
         });
     }
 
@@ -2042,6 +2043,7 @@ Result<nlohmann::json> DocumentService::set_node_permission(
     const std::string& grantee_type,
     const std::string& grantee_id,
     const std::string& access_level,
+    bool is_inheritable,
     const auth::UserIdentity& user
 ) {
     if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
@@ -2069,30 +2071,34 @@ Result<nlohmann::json> DocumentService::set_node_permission(
         pqxx::work tx(conn_res->get());
         if (target_type == "DOCUMENT") {
             tx.exec_params(
-                R"(
-                DELETE FROM permissions
-                WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid AND grantee_type = $2 AND grantee_id = $3::uuid;
-                INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level)
-                VALUES ('DOCUMENT', $1::uuid, $2, $3::uuid, $4);
-                )",
+                "DELETE FROM permissions WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid AND grantee_type = $2 AND grantee_id = $3::uuid;",
+                target_id,
+                grantee_type,
+                grantee_id
+            );
+            tx.exec_params(
+                "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DOCUMENT', $1::uuid, $2, $3::uuid, $4, $5);",
                 target_id,
                 grantee_type,
                 grantee_id,
-                clean_lvl
+                clean_lvl,
+                is_inheritable
             );
         } else {
             std::string clean_dir = normalize_rel_path(dir_path);
             tx.exec_params(
-                R"(
-                DELETE FROM permissions
-                WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1 AND grantee_type = $2 AND grantee_id = $3::uuid;
-                INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level)
-                VALUES ('DIRECTORY', $1, $2, $3::uuid, $4);
-                )",
+                "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1 AND grantee_type = $2 AND grantee_id = $3::uuid;",
+                clean_dir,
+                grantee_type,
+                grantee_id
+            );
+            tx.exec_params(
+                "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DIRECTORY', $1, $2, $3::uuid, $4, $5);",
                 clean_dir,
                 grantee_type,
                 grantee_id,
-                clean_lvl
+                clean_lvl,
+                is_inheritable
             );
         }
         tx.commit();
@@ -2101,6 +2107,83 @@ Result<nlohmann::json> DocumentService::set_node_permission(
         std::cerr << "[ERROR] set_node_permission failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
+}
+
+Result<nlohmann::json> DocumentService::test_node_permission(
+    const std::string& target_type,
+    const std::string& target_id,
+    const std::string& dir_path,
+    const std::string& subject_type,
+    const std::string& subject_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    auto details_res = db::PermissionEngine::get_permission_details(
+        conn_res->get(),
+        user.user_id,
+        target_type,
+        target_id,
+        dir_path
+    );
+    if (!details_res.has_value() || (!details_res.value().can_manage && details_res.value().effective_level == db::AccessLevel::None)) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    std::string fs_path = dir_path;
+    if (target_type == "DOCUMENT" && !target_id.empty()) {
+        try {
+            pqxx::read_transaction rtx(conn_res->get());
+            auto row = rtx.exec_params("SELECT fs_path FROM documents WHERE id = $1::uuid;", target_id);
+            if (!row.empty() && !row[0][0].is_null()) {
+                fs_path = row[0][0].as<std::string>();
+            }
+        } catch (...) {}
+    }
+
+    auto test_res = db::PermissionEngine::test_permission(
+        conn_res->get(),
+        subject_type,
+        subject_id,
+        target_type,
+        target_id,
+        fs_path
+    );
+    if (!test_res.has_value()) {
+        return std::unexpected(test_res.error());
+    }
+
+    const auto& t = test_res.value();
+    nlohmann::json res = {
+        {"target_type", t.target_type},
+        {"target_id", t.target_id},
+        {"target_path", t.target_path},
+        {"subject_type", t.subject_type},
+        {"subject_id", t.subject_id},
+        {"subject_name", t.subject_name},
+        {"effective_level", std::string(db::to_string(t.effective_level))},
+        {"is_admin", t.is_system_admin},
+        {"is_owner", t.is_owner},
+        {"effective_teams", t.effective_teams}
+    };
+
+    res["matched_rules"] = nlohmann::json::array();
+    for (const auto& r : t.matched_rules) {
+        res["matched_rules"].push_back({
+            {"source", r.source},
+            {"level", std::string(db::to_string(r.level))},
+            {"grantee_type", r.grantee_type},
+            {"grantee_id", r.grantee_id},
+            {"grantee_name", r.grantee_name},
+            {"inherited_from", r.inherited_from},
+            {"is_inheritable", r.is_inheritable},
+            {"description", r.description}
+        });
+    }
+
+    return res;
 }
 
 Result<void> DocumentService::delete_node_permission(

@@ -103,6 +103,7 @@ struct GrantInfo {
     std::string grantee_name;
     AccessLevel access_level{AccessLevel::None};
     std::string inherited_from; // empty if explicit, else parent directory path
+    bool is_inheritable{true};
 };
 
 struct PermissionDetails {
@@ -114,6 +115,31 @@ struct PermissionDetails {
     std::vector<GrantInfo> inherited_grants;
     AccessLevel effective_level{AccessLevel::None};
     bool can_manage{false};
+};
+
+struct TestRuleMatch {
+    std::string source; // "SYSTEM_ADMIN", "DIRECT_OWNER", "TEAM_OWNER", "EXPLICIT_GRANT", "INHERITED_GRANT"
+    AccessLevel level{AccessLevel::None};
+    std::string grantee_type;
+    std::string grantee_id;
+    std::string grantee_name;
+    std::string inherited_from;
+    bool is_inheritable{true};
+    std::string description;
+};
+
+struct TestPermissionResult {
+    std::string target_type; // "DOCUMENT" or "DIRECTORY"
+    std::string target_id;
+    std::string target_path;
+    std::string subject_type; // "USER" or "TEAM"
+    std::string subject_id;
+    std::string subject_name;
+    AccessLevel effective_level{AccessLevel::None};
+    bool is_system_admin{false};
+    bool is_owner{false};
+    std::vector<std::string> effective_teams;
+    std::vector<TestRuleMatch> matched_rules;
 };
 
     static Result<AccessLevel> check_permission(
@@ -129,6 +155,18 @@ struct PermissionDetails {
     static Result<PermissionDetails> get_permission_details(
         pqxx::connection& conn,
         const std::string& user_id,
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& fs_path
+    );
+
+    /**
+     * @brief Tests what ACLs and effective permissions apply to a given user or team on a node.
+     */
+    static Result<TestPermissionResult> test_permission(
+        pqxx::connection& conn,
+        const std::string& subject_type,
+        const std::string& subject_id,
         const std::string& target_type,
         const std::string& target_id,
         const std::string& fs_path

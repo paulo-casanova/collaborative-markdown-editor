@@ -93,6 +93,7 @@ export interface ExplicitGrant {
   grantee_id: string;
   grantee_name: string;
   access_level: 'READ' | 'COMMENT' | 'EDIT' | 'ADMIN';
+  is_inheritable?: boolean;
 }
 
 export interface InheritedGrant {
@@ -113,6 +114,31 @@ export interface NodePermissions {
   owner: PrincipalInfo;
   explicit_grants: ExplicitGrant[];
   inherited_grants: InheritedGrant[];
+}
+
+export interface TestRuleMatch {
+  source: string;
+  level: string;
+  grantee_type?: string;
+  grantee_id?: string;
+  grantee_name?: string;
+  inherited_from?: string;
+  is_inheritable?: boolean;
+  description: string;
+}
+
+export interface TestPermissionResult {
+  target_type: 'DOCUMENT' | 'DIRECTORY';
+  target_id: string;
+  target_path: string;
+  subject_type: 'USER' | 'TEAM';
+  subject_id: string;
+  subject_name: string;
+  effective_level: string;
+  is_admin: boolean;
+  is_owner: boolean;
+  effective_teams: string[];
+  matched_rules: TestRuleMatch[];
 }
 
 export interface AssignablePrincipals {

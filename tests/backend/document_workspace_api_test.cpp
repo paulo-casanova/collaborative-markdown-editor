@@ -89,12 +89,14 @@ int main() {
     auto mig_res = cme::db::MigrationRunner::apply_migrations(conn_res->get(), "migrations");
     assert(mig_res.has_value());
 
-    // Clean & Seed test user
+    // Clean & Seed test user & team
     std::string user_id;
+    std::string team_id;
     {
         pqxx::work tx(conn_res->get());
         tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%';");
         tx.exec("DELETE FROM users WHERE username = 'doc_author';");
+        tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         std::string pw_hash = cme::auth::hash_password_bcrypt("pass123", 10);
         auto res = tx.exec_params(
             "INSERT INTO users (username, password_hash, display_name, is_system_admin) "
@@ -103,6 +105,10 @@ int main() {
             pw_hash
         );
         user_id = res[0][0].as<std::string>();
+        auto t_res = tx.exec_params(
+            "INSERT INTO teams (name, description) VALUES ('doc_reviewers_team', 'Reviewers Team') RETURNING id;"
+        );
+        team_id = t_res[0][0].as<std::string>();
         tx.commit();
     }
 
@@ -510,7 +516,52 @@ int main() {
 
             auto del_p_resp = http_curl("DELETE", base_url + "/api/v1/workspaces/permissions/" + std::to_string(grant_id), auth_header);
             assert(del_p_resp.status_code == 200);
-            std::cout << "  - POST & DELETE /api/v1/workspaces/permissions managed ACL grant successfully.\n";
+            std::cout << "  - POST & DELETE /api/v1/workspaces/permissions managed user ACL grant successfully.\n";
+        }
+
+        // Test granting COMMENT access to a TEAM with is_inheritable = false
+        if (!team_id.empty()) {
+            nlohmann::json add_tp = {
+                {"target_type", "DIRECTORY"},
+                {"directory_path", "empty_folder"},
+                {"grantee_type", "TEAM"},
+                {"grantee_id", team_id},
+                {"access_level", "COMMENT"},
+                {"is_inheritable", false}
+            };
+            auto add_tp_resp = http_curl("POST", base_url + "/api/v1/workspaces/permissions", auth_header, add_tp.dump());
+            assert(add_tp_resp.status_code == 200);
+            auto tp_json = nlohmann::json::parse(add_tp_resp.body);
+            bool found_team_comment = false;
+            for (const auto& g : tp_json["explicit_grants"]) {
+                if (g["grantee_type"] == "TEAM" && g["access_level"] == "COMMENT") {
+                    assert(g["is_inheritable"] == false);
+                    found_team_comment = true;
+                }
+            }
+            assert(found_team_comment);
+            std::cout << "  - POST /api/v1/workspaces/permissions granted COMMENT to TEAM with non-inheriting ACL successfully (no prepared statement error).\n";
+
+            // Test Permission Inspector POST
+            nlohmann::json test_post_req = {
+                {"target_type", "DIRECTORY"},
+                {"directory_path", "empty_folder"},
+                {"subject_type", "TEAM"},
+                {"subject_id", team_id}
+            };
+            auto test_post_resp = http_curl("POST", base_url + "/api/v1/workspaces/permissions/test", auth_header, test_post_req.dump());
+            assert(test_post_resp.status_code == 200);
+            auto test_post_json = nlohmann::json::parse(test_post_resp.body);
+            assert(test_post_json["effective_level"] == "COMMENT");
+            assert(!test_post_json["matched_rules"].empty());
+            std::cout << "  - POST /api/v1/workspaces/permissions/test verified effective permissions for team.\n";
+
+            // Test Permission Inspector GET
+            auto test_get_resp = http_curl("GET", base_url + "/api/v1/workspaces/permissions/test?target_type=DIRECTORY&directory_path=empty_folder&subject_type=TEAM&subject_id=" + team_id, auth_header);
+            assert(test_get_resp.status_code == 200);
+            auto test_get_json = nlohmann::json::parse(test_get_resp.body);
+            assert(test_get_json["effective_level"] == "COMMENT");
+            std::cout << "  - GET /api/v1/workspaces/permissions/test verified effective permissions via query parameters.\n";
         }
 
         // 2.19 Document Bundle & Asset Management
@@ -569,6 +620,7 @@ int main() {
         pqxx::work clean_tx(conn);
         clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/getting-started.md%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'guides/manual.md%';");
         clean_tx.exec("DELETE FROM users WHERE username IN ('doc_author', 'doc_reader');");
+        clean_tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         clean_tx.commit();
     } catch (...) {}
 

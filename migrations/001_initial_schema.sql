@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS permissions (
     grantee_type VARCHAR(16) NOT NULL CHECK (grantee_type IN ('USER', 'TEAM')),
     grantee_id UUID NOT NULL,
     access_level VARCHAR(16) NOT NULL CHECK (access_level IN ('READ', 'COMMENT', 'EDIT', 'ADMIN')),
+    is_inheritable BOOLEAN NOT NULL DEFAULT TRUE,
     CONSTRAINT chk_target_spec CHECK (
         (target_type = 'DOCUMENT' AND target_id IS NOT NULL) OR
         (target_type = 'DIRECTORY' AND directory_path IS NOT NULL)
