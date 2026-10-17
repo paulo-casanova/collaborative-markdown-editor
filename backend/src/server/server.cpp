@@ -462,6 +462,10 @@ Result<void> Server::start() {
         nlohmann::json resp = user.to_json();
         resp["user"] = user.to_json();
         resp["effective_teams"] = effective_teams;
+        resp["authn_provider"] = config_.authn.provider;
+        resp["can_change_password"] = (config_.authn.provider == "challenge");
+        resp["user"]["authn_provider"] = config_.authn.provider;
+        resp["user"]["can_change_password"] = (config_.authn.provider == "challenge");
 
         send_json(res, "200 OK", resp);
     });
@@ -1858,6 +1862,144 @@ Result<void> Server::start() {
 
         send_json(res, "200 OK", {{"recents", recents_res.value()}});
     });
+
+    // PATCH /api/v1/users/me & PUT /api/v1/users/me: Self-service profile and password update
+    auto handle_update_me = [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        std::string req_origin = std::string(req->getHeader("origin"));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {
+                {"error", "Unauthorized"},
+                {"message", "Authentication required"}
+            }, {}, req_origin);
+            return;
+        }
+
+        auto user = *auth_res.value();
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, user, req_origin](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            admin::UpdateUserRequest update_req;
+            std::string current_password;
+            std::string new_password;
+
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("display_name") && json["display_name"].is_string()) {
+                    std::string dn = json["display_name"].get<std::string>();
+                    while (!dn.empty() && std::isspace(static_cast<unsigned char>(dn.front()))) dn.erase(dn.begin());
+                    while (!dn.empty() && std::isspace(static_cast<unsigned char>(dn.back()))) dn.pop_back();
+                    if (dn.empty()) {
+                        send_json(res, "400 Bad Request", {{"error", "InvalidDisplayName"}, {"message", "Display name cannot be empty"}}, {}, req_origin);
+                        return;
+                    }
+                    if (dn.size() > 128) {
+                        send_json(res, "400 Bad Request", {{"error", "InvalidDisplayName"}, {"message", "Display name cannot exceed 128 characters"}}, {}, req_origin);
+                        return;
+                    }
+                    update_req.display_name = dn;
+                }
+                if (json.contains("avatar_color") && json["avatar_color"].is_string()) {
+                    std::string ac = json["avatar_color"].get<std::string>();
+                    if (ac.size() == 7 && ac[0] == '#') {
+                        update_req.avatar_color = ac;
+                    }
+                }
+                if (json.contains("current_password") && json["current_password"].is_string()) {
+                    current_password = json["current_password"].get<std::string>();
+                }
+                if (json.contains("new_password") && json["new_password"].is_string()) {
+                    new_password = json["new_password"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "InvalidPayload"}, {"message", "Invalid JSON payload"}}, {}, req_origin);
+                return;
+            }
+
+            // Password update validation
+            if (!new_password.empty()) {
+                if (config_.authn.provider != "challenge") {
+                    send_json(res, "400 Bad Request", {
+                        {"error", "PasswordChangeNotAllowed"},
+                        {"message", "Password changes are disabled because authentication is delegated to an external identity provider."}
+                    }, {}, req_origin);
+                    return;
+                }
+
+                if (current_password.empty()) {
+                    send_json(res, "400 Bad Request", {
+                        {"error", "CurrentPasswordRequired"},
+                        {"message", "Current password is required to set a new password."}
+                    });
+                    return;
+                }
+
+                if (!challenge_provider_) {
+                    send_json(res, "500 Internal Server Error", {{"error", "Challenge provider unavailable"}}, {}, req_origin);
+                    return;
+                }
+
+                auto verify_res = challenge_provider_->authenticate_credentials(user.username, current_password);
+                if (!verify_res.has_value() || !verify_res.value().has_value()) {
+                    send_json(res, "400 Bad Request", {
+                        {"error", "InvalidPassword"},
+                        {"message", "Current password is incorrect."}
+                    }, {}, req_origin);
+                    return;
+                }
+
+                if (new_password.size() < 6) {
+                    send_json(res, "400 Bad Request", {
+                        {"error", "PasswordTooShort"},
+                        {"message", "New password must be at least 6 characters long."}
+                    }, {}, req_origin);
+                    return;
+                }
+
+                update_req.password = new_password;
+            }
+
+            if (!update_req.display_name.has_value() && !update_req.avatar_color.has_value() && !update_req.password.has_value()) {
+                send_json(res, "400 Bad Request", {{"error", "NoUpdates"}, {"message", "No valid fields provided for update."}}, {}, req_origin);
+                return;
+            }
+
+            auto upd_res = user_service_->update_user(user.user_id, update_req);
+            if (!upd_res.has_value()) {
+                if (upd_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "UserNotFound"}, {"message", "User not found"}}, {}, req_origin);
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "UpdateFailed"}, {"message", "Failed to update profile"}}, {}, req_origin);
+                }
+                return;
+            }
+
+            nlohmann::json resp;
+            resp["status"] = "updated";
+            resp["user"] = upd_res->to_json();
+            resp["user"]["authn_provider"] = config_.authn.provider;
+            resp["user"]["can_change_password"] = (config_.authn.provider == "challenge");
+            resp["display_name"] = upd_res->display_name;
+            send_json(res, "200 OK", resp, {}, req_origin);
+        });
+    };
+
+    app.patch("/api/v1/users/me", handle_update_me);
+    app.put("/api/v1/users/me", handle_update_me);
 
     // GET /api/v1/search
     app.get("/api/v1/search", [this](auto *res, auto *req) {

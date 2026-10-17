@@ -445,6 +445,45 @@ int main() {
         std::cout << "  - POST /api/v1/auth/logout revoked session; subsequent requests rejected with 401.\n";
     }
 
+    // 4.9. Self-Service Profile: PATCH /api/v1/users/me (using active pat_token)
+    {
+        // 4.9.1 Verify authn_provider and can_change_password in GET /api/v1/auth/me
+        auto me_resp = http_curl("GET", base_url + "/api/v1/auth/me", {"Authorization: Bearer " + pat_token});
+        assert(me_resp.status_code == 200);
+        auto me_json = nlohmann::json::parse(me_resp.body);
+        assert(me_json["authn_provider"] == "delegated");
+        assert(me_json["can_change_password"] == false);
+        std::cout << "  - GET /api/v1/auth/me exposed authn_provider='delegated' and can_change_password=false.\n";
+
+        // 4.9.2 Change own display name
+        std::string update_body = "{\"display_name\":\"Bob The Builder\",\"avatar_color\":\"#10b981\"}";
+        auto patch_resp = http_curl("PATCH", base_url + "/api/v1/users/me",
+            {"Authorization: Bearer " + pat_token, "Content-Type: application/json"},
+            update_body);
+        assert(patch_resp.status_code == 200);
+        auto patch_json = nlohmann::json::parse(patch_resp.body);
+        assert(patch_json["status"] == "updated");
+        assert(patch_json["user"]["display_name"] == "Bob The Builder");
+        assert(patch_json["user"]["avatar_color"] == "#10b981");
+
+        // Verify updated display name is reflected in GET /api/v1/auth/me
+        auto verify_me = http_curl("GET", base_url + "/api/v1/auth/me", {"Authorization: Bearer " + pat_token});
+        assert(verify_me.status_code == 200);
+        auto verify_json = nlohmann::json::parse(verify_me.body);
+        assert(verify_json["user"]["display_name"] == "Bob The Builder");
+        std::cout << "  - PATCH /api/v1/users/me successfully updated display name and avatar color.\n";
+
+        // 4.9.3 Password change rejected under delegated auth
+        std::string pw_body = "{\"current_password\":\"password123\",\"new_password\":\"newpass456\"}";
+        auto pw_resp = http_curl("PATCH", base_url + "/api/v1/users/me",
+            {"Authorization: Bearer " + pat_token, "Content-Type: application/json"},
+            pw_body);
+        assert(pw_resp.status_code == 400);
+        auto pw_json = nlohmann::json::parse(pw_resp.body);
+        assert(pw_json["error"] == "PasswordChangeNotAllowed");
+        std::cout << "  - PATCH /api/v1/users/me password change correctly rejected with 400 under delegated auth.\n";
+    }
+
     // Stop server
     std::cout << "\n[TEST] Stopping server...\n";
     server->stop();
@@ -599,6 +638,83 @@ int main() {
         srv_c->stop();
         th_c.join();
         std::filesystem::remove_all(cors_storage_c);
+    }
+
+    // -------------------------------------------------------------------------
+    // 7. Self-Service Password Change Verification (Challenge Auth)
+    // -------------------------------------------------------------------------
+    std::cout << "\n[TEST 7] Testing Self-Service Password Change on Challenge Server...\n";
+    {
+        std::filesystem::path challenge_storage = std::filesystem::temp_directory_path() / "cme_challenge_test_storage";
+        std::filesystem::remove_all(challenge_storage);
+
+        cme::config::AppConfig ch_cfg;
+        ch_cfg.server.bind = "127.0.0.1";
+        ch_cfg.server.port = 18085;
+        ch_cfg.storage.root_path = challenge_storage.string();
+        ch_cfg.database.url = db_url;
+        ch_cfg.authn.provider = "challenge";
+
+        auto ch_server = std::make_shared<cme::server::Server>(ch_cfg);
+        std::thread ch_thread([ch_server]() { auto r = ch_server->start(); (void)r; });
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        std::string ch_base = "http://127.0.0.1:18085";
+
+        // 7.1. Login as bob_auth_test (original password: password123)
+        auto login_resp = http_curl("POST", ch_base + "/api/v1/auth/login",
+            {"Content-Type: application/json"},
+            "{\"username\":\"bob_auth_test\",\"password\":\"password123\"}");
+        assert(login_resp.status_code == 200);
+        auto login_json = nlohmann::json::parse(login_resp.body);
+        std::string ch_token = login_json["token"].get<std::string>();
+
+        // 7.2. Verify GET /api/v1/auth/me shows can_change_password=true
+        auto me_resp = http_curl("GET", ch_base + "/api/v1/auth/me", {"Authorization: Bearer " + ch_token});
+        assert(me_resp.status_code == 200);
+        auto me_json = nlohmann::json::parse(me_resp.body);
+        assert(me_json["authn_provider"] == "challenge");
+        assert(me_json["can_change_password"] == true);
+        std::cout << "  - GET /api/v1/auth/me on challenge server reports can_change_password=true.\n";
+
+        // 7.3. Attempt password change with wrong current password -> HTTP 400
+        auto wrong_resp = http_curl("PATCH", ch_base + "/api/v1/users/me",
+            {"Authorization: Bearer " + ch_token, "Content-Type: application/json"},
+            "{\"current_password\":\"wrong_password_attempt\",\"new_password\":\"brandNewPass789!\"}");
+        assert(wrong_resp.status_code == 400);
+        auto wrong_json = nlohmann::json::parse(wrong_resp.body);
+        assert(wrong_json["error"] == "InvalidPassword");
+        std::cout << "  - PATCH /api/v1/users/me with incorrect current password rejected with 400.\n";
+
+        // 7.4. Change password with correct current password -> HTTP 200
+        auto ok_resp = http_curl("PATCH", ch_base + "/api/v1/users/me",
+            {"Authorization: Bearer " + ch_token, "Content-Type: application/json"},
+            "{\"current_password\":\"password123\",\"new_password\":\"brandNewPass789!\"}");
+        assert(ok_resp.status_code == 200);
+        std::cout << "  - PATCH /api/v1/users/me successfully updated password.\n";
+
+        // 7.5. Verify old password no longer works
+        auto old_login = http_curl("POST", ch_base + "/api/v1/auth/login",
+            {"Content-Type: application/json"},
+            "{\"username\":\"bob_auth_test\",\"password\":\"password123\"}");
+        assert(old_login.status_code == 401);
+
+        // 7.6. Verify new password logs in successfully
+        auto new_login = http_curl("POST", ch_base + "/api/v1/auth/login",
+            {"Content-Type: application/json"},
+            "{\"username\":\"bob_auth_test\",\"password\":\"brandNewPass789!\"}");
+        assert(new_login.status_code == 200);
+        std::cout << "  - Login with updated password succeeded (old password rejected with 401).\n";
+
+        // Restore password back to password123 for other tests
+        auto restore_resp = http_curl("PATCH", ch_base + "/api/v1/users/me",
+            {"Authorization: Bearer " + nlohmann::json::parse(new_login.body)["token"].get<std::string>(), "Content-Type: application/json"},
+            "{\"current_password\":\"brandNewPass789!\",\"new_password\":\"password123\"}");
+        assert(restore_resp.status_code == 200);
+
+        ch_server->stop();
+        ch_thread.join();
+        std::filesystem::remove_all(challenge_storage);
     }
 
     // Clean up temporary files

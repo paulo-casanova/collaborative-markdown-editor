@@ -1,5 +1,5 @@
 import { apiRequest, TOKEN_STORAGE_KEY } from './client';
-import { UserIdentity, PatToken } from '../types/auth';
+import { UserIdentity, PatToken, UpdateProfileRequest } from '../types/auth';
 
 export function normalizeUser(data: any): UserIdentity {
   const u = (data && data.user) ? data.user : data;
@@ -13,6 +13,8 @@ export function normalizeUser(data: any): UserIdentity {
     id: u?.id || u?.user_id || '',
     effective_teams: data?.effective_teams || u?.effective_teams || [],
     created_at: u?.created_at,
+    authn_provider: data?.authn_provider || u?.authn_provider,
+    can_change_password: Boolean(data?.can_change_password ?? u?.can_change_password ?? false),
   };
 }
 
@@ -54,4 +56,12 @@ export async function createToken(name?: string): Promise<{ token: string; name?
     method: 'POST',
     body: JSON.stringify({ name: name || 'API Token' }),
   });
+}
+
+export async function updateCurrentUserProfile(req: UpdateProfileRequest): Promise<UserIdentity> {
+  const result = await apiRequest<{ status: string; user: any }>('/api/v1/users/me', {
+    method: 'PATCH',
+    body: JSON.stringify(req),
+  });
+  return normalizeUser(result.user || result);
 }

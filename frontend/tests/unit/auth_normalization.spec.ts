@@ -92,4 +92,33 @@ describe('User Identity Normalization (Auth & Roles)', () => {
     expect(identity.is_admin).toBe(false);
     expect(identity.effective_teams).toEqual([]);
   });
+
+  it('correctly maps authn_provider and can_change_password flags', () => {
+    const challengePayload = {
+      user: {
+        id: 'challenge-user-id',
+        username: 'challenger',
+        display_name: 'Challenger',
+        is_admin: false,
+      },
+      authn_provider: 'challenge',
+      can_change_password: true,
+    };
+    const challengeUser = normalizeUser(challengePayload);
+    expect(challengeUser.authn_provider).toBe('challenge');
+    expect(challengeUser.can_change_password).toBe(true);
+
+    const delegatedPayload = {
+      user: {
+        id: 'delegated-user-id',
+        username: 'delegated_user',
+        display_name: 'Delegated User',
+      },
+      authn_provider: 'delegated',
+      can_change_password: false,
+    };
+    const delegatedUser = normalizeUser(delegatedPayload);
+    expect(delegatedUser.authn_provider).toBe('delegated');
+    expect(delegatedUser.can_change_password).toBe(false);
+  });
 });

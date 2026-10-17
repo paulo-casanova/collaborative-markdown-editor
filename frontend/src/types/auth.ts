@@ -8,6 +8,15 @@ export interface UserIdentity {
   id?: string;
   effective_teams?: string[];
   created_at?: string;
+  authn_provider?: string;
+  can_change_password?: boolean;
+}
+
+export interface UpdateProfileRequest {
+  display_name?: string;
+  avatar_color?: string;
+  current_password?: string;
+  new_password?: string;
 }
 
 export interface PatToken {
