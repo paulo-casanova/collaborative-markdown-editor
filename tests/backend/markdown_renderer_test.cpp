@@ -152,7 +152,24 @@ int main() {
         assert(html.find("<img src=\"diagram.png\" alt=\"System Architecture\" style=\"max-width: 100%; width: 50%; height: auto;\" />") != std::string::npos);
         assert(html.find("<img src=\"diagram.png\" alt=\"System Architecture\" style=\"max-width: 100%; height: 250px; object-fit: contain;\" />") != std::string::npos);
         assert(html.find("<img src=\"diagram.png\" alt=\"\" style=\"max-width: 100%; width: 600px; height: 400px; object-fit: contain;\" />") != std::string::npos);
-        std::cout << "     [PASS] Image dimensions and native sizing rendered accurately.\n";
+
+        // Images with spaces in paths (unencoded, point-bracketed, encoded, and wikilink embeds)
+        std::string spaces_md =
+            "![](Foo Bar.png)\n\n"
+            "![System Architecture|400](Foo Bar.png)\n\n"
+            "![[Foo Bar.png|300]]\n\n"
+            "![](<Foo Bar.png>)\n\n"
+            "![](Foo%20Bar.png)\n\n"
+            "![Architecture](Foo Bar.png \"My Diagram\")\n\n"
+            "![Architecture](Foo Bar.png =400x300)\n";
+
+        std::string spaces_html = cme::renderer::MarkdownRenderer::render_to_html(spaces_md, opts);
+        assert(spaces_html.find("<img src=\"Foo Bar.png\" alt=\"\" style=\"max-width: 100%; height: auto;\" />") != std::string::npos);
+        assert(spaces_html.find("<img src=\"Foo Bar.png\" alt=\"System Architecture\" style=\"max-width: 100%; width: 400px; height: auto;\" />") != std::string::npos);
+        assert(spaces_html.find("<img src=\"Foo Bar.png\" alt=\"\" style=\"max-width: 100%; width: 300px; height: auto;\" />") != std::string::npos);
+        assert(spaces_html.find("<img src=\"Foo Bar.png\" alt=\"Architecture\" title=\"My Diagram\" style=\"max-width: 100%; height: auto;\" />") != std::string::npos);
+        assert(spaces_html.find("<img src=\"Foo Bar.png\" alt=\"Architecture\" style=\"max-width: 100%; width: 400px; height: 300px; object-fit: contain;\" />") != std::string::npos);
+        std::cout << "     [PASS] Image dimensions, native sizing, and spaces in paths rendered accurately.\n";
     }
 
     // =========================================================================

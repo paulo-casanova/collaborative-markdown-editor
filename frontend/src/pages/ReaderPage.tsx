@@ -46,7 +46,7 @@ import {
   subscribeLinkValidation,
 } from '../utils/linkValidator';
 import { parsePillSyntax, resolvePillStyle } from '../utils/pillUtils';
-import { parseImageDimensionAndAlt, getImageStyles } from '../utils/imageDimensions';
+import { parseImageDimensionAndAlt, getImageStyles, parseImageTarget } from '../utils/imageDimensions';
 
 type FontMode = 'sans' | 'serif' | 'mono';
 type WidthMode = 'standard' | 'full';
@@ -1361,11 +1361,15 @@ function renderInlineFormatted(
     if (part.startsWith('![[') && part.endsWith(']]')) {
       const inner = part.slice(3, -2);
       const pipeIdx = inner.indexOf('|');
-      const target = (pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner).trim();
+      const rawTarget = (pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner).trim();
       const altOrSize = (pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : '').trim();
       const parsed = parseImageDimensionAndAlt(altOrSize);
-      const displayAlt = parsed.altText || target;
-      const resolvedSrc = isExternalUrl(target) ? target : getWorkspaceFileUrl(target, currentDocPath);
+      const targetInfo = parseImageTarget(rawTarget);
+      const cleanSrc = targetInfo.cleanSrc;
+      const displayAlt = parsed.altText || targetInfo.title || cleanSrc;
+      const resolvedSrc = isExternalUrl(cleanSrc)
+        ? (cleanSrc.includes(' ') ? encodeURI(cleanSrc) : cleanSrc)
+        : getWorkspaceFileUrl(cleanSrc, currentDocPath);
       const { linkStyle, imgStyle } = getImageStyles(parsed);
 
       return (
@@ -1390,7 +1394,7 @@ function renderInlineFormatted(
               if (parent && !parent.querySelector('.broken-image-fallback')) {
                 const fallback = document.createElement('span');
                 fallback.className = 'broken-image-fallback inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono rounded border border-rose-500/40 bg-rose-500/10 text-rose-500';
-                fallback.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${target}</span>`;
+                fallback.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${cleanSrc}</span>`;
                 parent.appendChild(fallback);
               }
             }}
@@ -1406,9 +1410,12 @@ function renderInlineFormatted(
         const rawAlt = imgMatch[1].trim();
         const rawSrc = imgMatch[2].trim();
         const parsed = parseImageDimensionAndAlt(rawAlt, rawSrc);
-        const cleanSrc = rawSrc.split(/\s+/)[0];
-        const displayAlt = parsed.altText || cleanSrc;
-        const resolvedSrc = isExternalUrl(cleanSrc) ? cleanSrc : getWorkspaceFileUrl(cleanSrc, currentDocPath);
+        const targetInfo = parseImageTarget(rawSrc);
+        const cleanSrc = targetInfo.cleanSrc;
+        const displayAlt = parsed.altText || targetInfo.title || cleanSrc;
+        const resolvedSrc = isExternalUrl(cleanSrc)
+          ? (cleanSrc.includes(' ') ? encodeURI(cleanSrc) : cleanSrc)
+          : getWorkspaceFileUrl(cleanSrc, currentDocPath);
         const { linkStyle, imgStyle } = getImageStyles(parsed);
 
         return (
@@ -1487,7 +1494,7 @@ function renderInlineFormatted(
         label = (alias || '').trim();
       } else if (mdMatch) {
         label = mdMatch[1].trim();
-        cleanTarget = mdMatch[2].trim().split(/\s+/)[0];
+        cleanTarget = parseImageTarget(mdMatch[2]).cleanSrc;
       }
 
       const external = isExternalUrl(cleanTarget);

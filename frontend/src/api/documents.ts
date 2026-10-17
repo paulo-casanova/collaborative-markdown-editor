@@ -56,41 +56,69 @@ export function resolveWorkspaceRelativePath(target: string, currentDocPath?: st
 }
 
 export function findWorkspacePath(target: string, currentDocPath?: string): string {
-  const clean = (target || '').trim().replace(/^\/+/, '');
+  let clean = (target || '').trim().replace(/^\/+/, '');
   if (!clean) return '';
+  if (clean.startsWith('<') && clean.endsWith('>')) {
+    clean = clean.slice(1, -1).trim();
+  }
+  let decoded = clean;
+  try {
+    decoded = decodeURIComponent(clean);
+  } catch {
+    // ignore
+  }
 
   // 1. If relative to currentDocPath exists in cache
   if (currentDocPath) {
-    const rel = resolveWorkspaceRelativePath(target, currentDocPath);
-    if (workspacePathLookup.has(rel.toLowerCase())) {
-      return workspacePathLookup.get(rel.toLowerCase())!;
+    const relClean = resolveWorkspaceRelativePath(clean, currentDocPath);
+    if (workspacePathLookup.has(relClean.toLowerCase())) {
+      return workspacePathLookup.get(relClean.toLowerCase())!;
+    }
+    const relDecoded = resolveWorkspaceRelativePath(decoded, currentDocPath);
+    if (workspacePathLookup.has(relDecoded.toLowerCase())) {
+      return workspacePathLookup.get(relDecoded.toLowerCase())!;
     }
   }
 
-  // 2. Direct match in lookup
+  // 2. Direct match in lookup (clean or decoded)
   if (workspacePathLookup.has(clean.toLowerCase())) {
     return workspacePathLookup.get(clean.toLowerCase())!;
   }
+  if (workspacePathLookup.has(decoded.toLowerCase())) {
+    return workspacePathLookup.get(decoded.toLowerCase())!;
+  }
 
   // 3. Basename match in lookup
-  const lastSlash = clean.lastIndexOf('/');
-  const basename = lastSlash >= 0 ? clean.slice(lastSlash + 1) : clean;
+  const lastSlash = decoded.lastIndexOf('/');
+  const basename = lastSlash >= 0 ? decoded.slice(lastSlash + 1) : decoded;
   if (workspacePathLookup.has(basename.toLowerCase())) {
     return workspacePathLookup.get(basename.toLowerCase())!;
   }
 
-  // 4. Default to resolved relative path if currentDocPath provided, else clean
-  return currentDocPath ? resolveWorkspaceRelativePath(target, currentDocPath) : clean;
+  // 4. Default to resolved relative path if currentDocPath provided, else decoded/clean
+  return currentDocPath ? resolveWorkspaceRelativePath(decoded, currentDocPath) : decoded;
 }
 
 export function getWorkspaceFileUrl(path: string, currentDocPath?: string): string {
   if (!path) return '';
-  const trimmed = path.trim();
+  let trimmed = path.trim();
+  if (trimmed.startsWith('<') && trimmed.endsWith('>')) {
+    trimmed = trimmed.slice(1, -1).trim();
+  }
   if (/^(https?:\/\/|data:|blob:)/i.test(trimmed)) {
-    return trimmed;
+    try {
+      return encodeURI(decodeURI(trimmed));
+    } catch {
+      return encodeURI(trimmed);
+    }
   }
   const resolved = findWorkspacePath(trimmed, currentDocPath);
-  const cleanPath = (resolved || trimmed).replace(/^\/+/, '');
+  let cleanPath = (resolved || trimmed).replace(/^\/+/, '');
+  try {
+    cleanPath = decodeURIComponent(cleanPath);
+  } catch {
+    // ignore
+  }
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
   const base = `/api/v1/workspaces/files?path=${encodeURIComponent(cleanPath)}`;
   return token ? `${base}&token=${encodeURIComponent(token)}` : base;

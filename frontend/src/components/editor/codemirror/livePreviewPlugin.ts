@@ -24,6 +24,7 @@ import {
   PillWidget,
 } from './livePreviewWidgets';
 import { parsePillSyntax } from '../../../utils/pillUtils';
+import { parseImageTarget } from '../../../utils/imageDimensions';
 import { slugify } from '../../navigation/DocumentOutline';
 import {
   validateLinkTarget,
@@ -589,7 +590,7 @@ export function buildLivePreviewDecorations(
       if (isOverlappingReplaced(mFrom, mTo)) continue;
 
       const label = mdMatch[1].trim();
-      const rawTarget = mdMatch[2].trim().split(/\s+/)[0];
+      const rawTarget = parseImageTarget(mdMatch[2]).cleanSrc;
 
       const cursorInLink = cursorTo >= mFrom && cursorFrom <= mTo;
       if (!cursorInLink && rawTarget) {

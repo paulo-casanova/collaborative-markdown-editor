@@ -871,6 +871,148 @@ std::string render_pills_in_html(std::string_view html) {
     return result;
 }
 
+inline std::string normalize_markdown_links_with_spaces(std::string_view input) {
+    std::string output;
+    output.reserve(input.size() + 64);
+
+    std::istringstream stream{std::string(input)};
+    std::string line;
+    bool in_fence = false;
+
+    // Matches !?[alt](destination)
+    static const std::regex link_re(R"((!?\[[^\]]*\])\(([^)\n]+)\))");
+    // Matches ![[target]] or ![[target|altOrSize]]
+    static const std::regex embed_re(R"(!\[\[([^\]|]+)(?:\|([^\]]+))?\]\])");
+
+    while (std::getline(stream, line)) {
+        // Check for fence start/end (``` or ~~~)
+        auto trimmed_start = line.find_first_not_of(" \t");
+        if (trimmed_start != std::string::npos && (line.compare(trimmed_start, 3, "```") == 0 || line.compare(trimmed_start, 3, "~~~") == 0)) {
+            in_fence = !in_fence;
+            output.append(line);
+            output.push_back('\n');
+            continue;
+        }
+
+        if (in_fence) {
+            output.append(line);
+            output.push_back('\n');
+            continue;
+        }
+
+        // 1. Transform Obsidian image embeds ![[image.png|altOrSize]] to standard Markdown images ![altOrSize](<image.png>)
+        std::string line_with_embeds;
+        {
+            auto search_start = line.cbegin();
+            std::smatch match;
+            while (std::regex_search(search_start, line.cend(), match, embed_re)) {
+                line_with_embeds.append(search_start, match[0].first);
+                std::string target = match[1].str();
+                std::string alt = match[2].matched ? match[2].str() : "";
+
+                auto t_start = target.find_first_not_of(" \t");
+                auto t_end = target.find_last_not_of(" \t");
+                if (t_start != std::string::npos) target = target.substr(t_start, t_end - t_start + 1);
+
+                std::string lower_target = target;
+                for (auto& c : lower_target) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+                if (lower_target.ends_with(".png") || lower_target.ends_with(".jpg") ||
+                    lower_target.ends_with(".jpeg") || lower_target.ends_with(".gif") ||
+                    lower_target.ends_with(".svg") || lower_target.ends_with(".webp") ||
+                    lower_target.ends_with(".bmp") || lower_target.ends_with(".ico")) {
+                    line_with_embeds.append("![");
+                    line_with_embeds.append(alt);
+                    line_with_embeds.append("](<");
+                    line_with_embeds.append(target);
+                    line_with_embeds.append(">)");
+                } else {
+                    line_with_embeds.append(match[0].str());
+                }
+                search_start = match[0].second;
+            }
+            line_with_embeds.append(search_start, line.cend());
+        }
+
+        // 2. Normalize standard markdown links/images: !?[alt](dest with spaces) -> !?[alt](<dest with spaces>)
+        std::string transformed;
+        auto search_start = line_with_embeds.cbegin();
+        std::smatch match;
+        while (std::regex_search(search_start, line_with_embeds.cend(), match, link_re)) {
+            transformed.append(search_start, match[0].first);
+            std::string prefix = match[1].str();
+            std::string raw_dest = match[2].str();
+
+            auto start_pos = raw_dest.find_first_not_of(" \t");
+            if (start_pos != std::string::npos && raw_dest[start_pos] != '<') {
+                std::string target = raw_dest.substr(start_pos);
+                auto end_pos = target.find_last_not_of(" \t");
+                if (end_pos != std::string::npos) target = target.substr(0, end_pos + 1);
+
+                std::string dest_part = target;
+                std::string extra_part;
+
+                // Check for trailing title in quotes: "title" or 'title'
+                static const std::regex title_re(R"(\s+(["'][^"']*["'])\s*$)");
+                std::smatch tm;
+                if (std::regex_search(target, tm, title_re)) {
+                    dest_part = target.substr(0, static_cast<size_t>(tm.position(0)));
+                    extra_part = " " + tm[1].str();
+                }
+
+                // Check for trailing dimension: =300x200 or =50%
+                static const std::regex dim_re(R"(\s+(=(?:(?:\d+(?:\.\d+)?(?:px|%)?)\s*[xX]\s*(?:\d+(?:\.\d+)?(?:px|%)?)|(?:\d+(?:\.\d+)?)(?:px|%)?|[xX]\s*(?:\d+(?:\.\d+)?)(?:px|%)?))\s*$)");
+                std::smatch dm;
+                bool had_dim = false;
+                if (std::regex_search(dest_part, dm, dim_re)) {
+                    had_dim = true;
+                    std::string dim_str = dm[1].str();
+                    dest_part = dest_part.substr(0, static_cast<size_t>(dm.position(0)));
+                    if (dim_str.starts_with("=")) dim_str = dim_str.substr(1);
+                    if (!prefix.empty() && prefix.back() == ']') {
+                        prefix.pop_back();
+                        if (prefix.size() > 2 && prefix.back() != '[') {
+                            prefix += "|" + dim_str + "]";
+                        } else {
+                            prefix += dim_str + "]";
+                        }
+                    }
+                }
+
+                if (dest_part.find(' ') != std::string::npos) {
+                    transformed.append(prefix);
+                    transformed.push_back('(');
+                    transformed.push_back('<');
+                    transformed.append(dest_part);
+                    transformed.push_back('>');
+                    transformed.append(extra_part);
+                    transformed.push_back(')');
+                } else if (had_dim) {
+                    transformed.append(prefix);
+                    transformed.push_back('(');
+                    transformed.append(dest_part);
+                    transformed.append(extra_part);
+                    transformed.push_back(')');
+                } else {
+                    transformed.append(match[0].str());
+                }
+            } else {
+                transformed.append(match[0].str());
+            }
+
+            search_start = match[0].second;
+        }
+        transformed.append(search_start, line_with_embeds.cend());
+        output.append(transformed);
+        output.push_back('\n');
+    }
+
+    if (!input.empty() && input.back() != '\n' && !output.empty() && output.back() == '\n') {
+        output.pop_back();
+    }
+    return output;
+}
+
 } // namespace
 
 std::string MarkdownRenderer::render_to_html(
@@ -878,6 +1020,7 @@ std::string MarkdownRenderer::render_to_html(
     const RenderOptions& options,
     const ReviewBundle& reviews
 ) {
+    std::string normalized_input = normalize_markdown_links_with_spaces(markdown_text);
     MD_PARSER parser = {
         0,
         MD_DIALECT_GITHUB | MD_FLAG_LATEXMATHSPANS | MD_FLAG_WIKILINKS | MD_FLAG_UNDERLINE,
@@ -891,7 +1034,7 @@ std::string MarkdownRenderer::render_to_html(
     };
 
     RenderContext ctx;
-    md_parse(markdown_text.data(), static_cast<MD_SIZE>(markdown_text.size()), &parser, &ctx);
+    md_parse(normalized_input.data(), static_cast<MD_SIZE>(normalized_input.size()), &parser, &ctx);
 
     std::string processed_output = render_pills_in_html(ctx.output);
 

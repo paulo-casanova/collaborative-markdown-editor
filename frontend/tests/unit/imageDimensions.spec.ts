@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
   parseDimensionString,
   parseImageDimensionAndAlt,
+  parseImageTarget,
   getImageStyles,
 } from '../../src/utils/imageDimensions';
 import { ImageEmbedWidget } from '../../src/components/editor/codemirror/livePreviewWidgets';
@@ -51,6 +52,72 @@ function createMockElement(tagName: string): MockElement {
 }
 
 describe('Image Dimension & Alt Parsing', () => {
+  describe('parseImageTarget', () => {
+    it('handles empty and whitespace-only targets', () => {
+      expect(parseImageTarget('')).toEqual({ cleanSrc: '' });
+      expect(parseImageTarget('   ')).toEqual({ cleanSrc: '' });
+    });
+
+    it('parses standard targets without spaces', () => {
+      expect(parseImageTarget('diagram.png')).toEqual({ cleanSrc: 'diagram.png' });
+      expect(parseImageTarget('assets/diagram.png')).toEqual({ cleanSrc: 'assets/diagram.png' });
+    });
+
+    it('parses targets with unencoded spaces', () => {
+      expect(parseImageTarget('Foo Bar.png')).toEqual({ cleanSrc: 'Foo Bar.png' });
+      expect(parseImageTarget('images/Sub Folder/My Diagram 2026.png')).toEqual({
+        cleanSrc: 'images/Sub Folder/My Diagram 2026.png',
+      });
+    });
+
+    it('parses point-bracketed targets: <Foo Bar.png>', () => {
+      expect(parseImageTarget('<Foo Bar.png>')).toEqual({ cleanSrc: 'Foo Bar.png' });
+      expect(parseImageTarget('<images/Sub Folder/Foo Bar.png>')).toEqual({
+        cleanSrc: 'images/Sub Folder/Foo Bar.png',
+      });
+    });
+
+    it('parses targets with trailing titles in double or single quotes', () => {
+      expect(parseImageTarget('Foo Bar.png "My Diagram"')).toEqual({
+        cleanSrc: 'Foo Bar.png',
+        title: 'My Diagram',
+      });
+      expect(parseImageTarget('Foo Bar.png \'Single Quoted Title\'')).toEqual({
+        cleanSrc: 'Foo Bar.png',
+        title: 'Single Quoted Title',
+      });
+      expect(parseImageTarget('<Foo Bar.png> "Point Bracketed Title"')).toEqual({
+        cleanSrc: 'Foo Bar.png',
+        title: 'Point Bracketed Title',
+      });
+    });
+
+    it('parses targets with trailing dimensions =WxH or =W', () => {
+      expect(parseImageTarget('Foo Bar.png =400x300')).toEqual({
+        cleanSrc: 'Foo Bar.png',
+        dimension: '=400x300',
+      });
+      expect(parseImageTarget('Foo Bar.png =50%')).toEqual({
+        cleanSrc: 'Foo Bar.png',
+        dimension: '=50%',
+      });
+      expect(parseImageTarget('<Foo Bar.png> =400x300')).toEqual({
+        cleanSrc: 'Foo Bar.png',
+        dimension: '=400x300',
+      });
+    });
+
+    it('parses percent-encoded paths', () => {
+      expect(parseImageTarget('Foo%20Bar.png')).toEqual({
+        cleanSrc: 'Foo%20Bar.png',
+      });
+      expect(parseImageTarget('Foo%20Bar.png =400x300')).toEqual({
+        cleanSrc: 'Foo%20Bar.png',
+        dimension: '=400x300',
+      });
+    });
+  });
+
   describe('parseDimensionString', () => {
     it('parses pixel widths with or without px suffix', () => {
       expect(parseDimensionString('300')).toEqual({ width: '300px' });
@@ -155,6 +222,20 @@ describe('Image Dimension & Alt Parsing', () => {
       expect(res.width).toBe('400px');
       expect(res.height).toBe('300px');
     });
+
+    it('supports image paths with unencoded spaces and =WxH: ![alt](Foo Bar.png =400x300)', () => {
+      const res = parseImageDimensionAndAlt('Architecture Diagram', 'Foo Bar.png =400x300');
+      expect(res.altText).toBe('Architecture Diagram');
+      expect(res.width).toBe('400px');
+      expect(res.height).toBe('300px');
+    });
+
+    it('supports point-bracketed paths with spaces and =WxH: ![alt](<Foo Bar.png> =400x300)', () => {
+      const res = parseImageDimensionAndAlt('Architecture Diagram', '<Foo Bar.png> =400x300');
+      expect(res.altText).toBe('Architecture Diagram');
+      expect(res.width).toBe('400px');
+      expect(res.height).toBe('300px');
+    });
   });
 
   describe('getImageStyles', () => {
@@ -206,6 +287,39 @@ describe('Image Dimension & Alt Parsing', () => {
       expect(img.style.width).toBeUndefined();
       expect(img.style.height).toBe('auto');
       expect(img.alt).toBe('My Diagram');
+    });
+
+    it('renders images with unencoded spaces in path', () => {
+      const widget = new ImageEmbedWidget('Foo Bar Diagram', 'Foo Bar.png', 0, 10);
+      const fakeView = { dispatch: () => {}, focus: () => {} } as any;
+      const dom = widget.toDOM(fakeView) as any;
+
+      const img = dom.querySelector('img') as MockElement;
+      expect(img).toBeTruthy();
+      expect(img.src).toBe('/api/v1/workspaces/files?path=Foo%20Bar.png');
+      expect(img.alt).toBe('Foo Bar Diagram');
+    });
+
+    it('renders point-bracketed image paths with spaces: <Foo Bar.png>', () => {
+      const widget = new ImageEmbedWidget('Foo Bar Diagram', '<Foo Bar.png>', 0, 10);
+      const fakeView = { dispatch: () => {}, focus: () => {} } as any;
+      const dom = widget.toDOM(fakeView) as any;
+
+      const img = dom.querySelector('img') as MockElement;
+      expect(img).toBeTruthy();
+      expect(img.src).toBe('/api/v1/workspaces/files?path=Foo%20Bar.png');
+    });
+
+    it('renders image paths with spaces and =WxH dimension: Foo Bar.png =400x300', () => {
+      const widget = new ImageEmbedWidget('Foo Bar Diagram', 'Foo Bar.png =400x300', 0, 10);
+      const fakeView = { dispatch: () => {}, focus: () => {} } as any;
+      const dom = widget.toDOM(fakeView) as any;
+
+      const img = dom.querySelector('img') as MockElement;
+      expect(img).toBeTruthy();
+      expect(img.src).toBe('/api/v1/workspaces/files?path=Foo%20Bar.png');
+      expect(img.style.width).toBe('400px');
+      expect(img.style.height).toBe('300px');
     });
 
     it('applies pixel width when specified via alt: My Diagram|400', () => {

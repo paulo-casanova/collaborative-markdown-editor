@@ -1,5 +1,5 @@
 /**
- * Utilities for parsing image dimensions and alt text for Markdown and Obsidian embeds.
+ * Utilities for parsing image dimensions, alt text, and file targets for Markdown and Obsidian embeds.
  * Supports:
  * - Native size by default (no constraints)
  * - Explicit width in pixels: "300", "300px", "alt|300", "alt|300px"
@@ -8,6 +8,7 @@
  * - Percentage width: "50%", "alt|50%"
  * - Obsidian embed multi-pipe ordering: "target|Diagram|500" or "target|500|Diagram"
  * - Target URL size extension: "img.png =300x200" or "img.png =50%"
+ * - Unencoded and encoded spaces in image paths: "Foo Bar.png", "<Foo Bar.png>", "Foo%20Bar.png"
  */
 
 import React from 'react';
@@ -21,6 +22,69 @@ export interface ParsedImageInfo {
 export interface ImageElementStyles {
   linkStyle: React.CSSProperties;
   imgStyle: React.CSSProperties;
+}
+
+export interface ParsedImageTarget {
+  cleanSrc: string;
+  title?: string;
+  dimension?: string;
+}
+
+/**
+ * Parses raw destination string from Markdown (inside the parenthesis: destination [title] [=dim]).
+ * Correctly preserves paths with unencoded spaces (e.g. "Foo Bar.png" or "<Foo Bar.png>").
+ */
+export function parseImageTarget(rawTarget: string): ParsedImageTarget {
+  let str = (rawTarget || '').trim();
+  if (!str) return { cleanSrc: '' };
+
+  let src = '';
+  let title: string | undefined;
+  let dimension: string | undefined;
+
+  // 1. Point brackets: <path with spaces>
+  if (str.startsWith('<')) {
+    const endBracket = str.indexOf('>');
+    if (endBracket !== -1) {
+      src = str.slice(1, endBracket).trim();
+      str = str.slice(endBracket + 1).trim();
+    }
+  }
+
+  if (!src) {
+    // 2. Trailing title in quotes: "title" or 'title'
+    const titleMatch = str.match(/\s+["']([^"']*)["']\s*$/);
+    if (titleMatch) {
+      title = titleMatch[1];
+      str = str.slice(0, titleMatch.index).trim();
+    }
+
+    // 3. Trailing dimension =WxH or =W
+    const dimMatch = str.match(/\s+(=(?:(?:\d+(?:\.\d+)?(?:px|%)?)\s*[xX]\s*(?:\d+(?:\.\d+)?(?:px|%)?)|(?:\d+(?:\.\d+)?)(?:px|%)?|[xX]\s*(?:\d+(?:\.\d+)?)(?:px|%)?))\s*$/);
+    if (dimMatch) {
+      dimension = dimMatch[1];
+      str = str.slice(0, dimMatch.index).trim();
+    }
+
+    src = str.trim();
+  } else {
+    // If <src> was present, check remaining str for title or dimension
+    const titleMatch = str.match(/["']([^"']*)["']/);
+    if (titleMatch) {
+      title = titleMatch[1];
+    }
+    const dimMatch = str.match(/(=(?:(?:\d+(?:\.\d+)?(?:px|%)?)\s*[xX]\s*(?:\d+(?:\.\d+)?(?:px|%)?)|(?:\d+(?:\.\d+)?)(?:px|%)?|[xX]\s*(?:\d+(?:\.\d+)?)(?:px|%)?))/);
+    if (dimMatch) {
+      dimension = dimMatch[1];
+    }
+  }
+
+  // Remove wrapping quotes if somehow remaining
+  if ((src.startsWith('"') && src.endsWith('"')) || (src.startsWith("'") && src.endsWith("'"))) {
+    src = src.slice(1, -1).trim();
+  }
+
+  return { cleanSrc: src, title, dimension };
 }
 
 /**
@@ -66,17 +130,14 @@ export function parseImageDimensionAndAlt(rawAlt?: string, rawSrc?: string): Par
   let width: string | undefined;
   let height: string | undefined;
 
-  // 1. Check rawSrc for optional =WxH or =W (e.g., "img.png =300x200")
+  // 1. Check rawSrc for optional =WxH or =W (e.g., "img.png =300x200" or "Foo Bar.png =300x200")
   if (rawSrc) {
-    const srcParts = rawSrc.trim().split(/\s+/);
-    for (let i = 1; i < srcParts.length; i++) {
-      const part = srcParts[i];
-      if (part.startsWith('=')) {
-        const dim = parseDimensionString(part.slice(1));
-        if (dim) {
-          if (dim.width) width = dim.width;
-          if (dim.height) height = dim.height;
-        }
+    const targetInfo = parseImageTarget(rawSrc);
+    if (targetInfo.dimension && targetInfo.dimension.startsWith('=')) {
+      const dim = parseDimensionString(targetInfo.dimension.slice(1));
+      if (dim) {
+        if (dim.width) width = dim.width;
+        if (dim.height) height = dim.height;
       }
     }
   }

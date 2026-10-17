@@ -13,7 +13,7 @@ import {
   setSnippetState,
 } from '../../../utils/snippetSync';
 import { resolvePillStyle } from '../../../utils/pillUtils';
-import { parseImageDimensionAndAlt } from '../../../utils/imageDimensions';
+import { parseImageDimensionAndAlt, parseImageTarget } from '../../../utils/imageDimensions';
 
 export class MathBlockWidget extends WidgetType {
   constructor(
@@ -283,12 +283,13 @@ export class ImageEmbedWidget extends WidgetType {
     wrapper.className = 'cme-image-embed inline-flex flex-col items-start gap-1 my-1 select-none max-w-full';
 
     const parsed = parseImageDimensionAndAlt(this.alt, this.src);
-    const cleanSrc = this.src.trim().split(/\s+/)[0];
-    const displayAlt = parsed.altText || cleanSrc;
+    const targetInfo = parseImageTarget(this.src);
+    const cleanSrc = targetInfo.cleanSrc;
+    const displayAlt = parsed.altText || targetInfo.title || cleanSrc;
 
     const resolvedUrl =
       isExternalUrl(cleanSrc) || cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')
-        ? cleanSrc
+        ? (cleanSrc.includes(' ') ? encodeURI(cleanSrc) : cleanSrc)
         : getWorkspaceFileUrl(cleanSrc, this.docPath);
 
     const link = document.createElement('a');
