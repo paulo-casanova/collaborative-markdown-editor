@@ -8,10 +8,9 @@
  *
  * Features:
  * - Parses code fence headers: lang, source URL or workspace file path, marker name.
- * - Robust marker boundary extractor:
- *     - Custom comment markers: [marker] ... [/marker] (or [snippet:marker] ... [/snippet:marker])
- *     - Doxygen style: //! [marker] ... //! [marker]
- *     - Tag style: <marker> ... </marker>, @start:marker ... @end:marker
+ * - Marker boundary extractor:
+ *     - Finds lines containing [marker] anywhere on the line for start and end boundaries.
+ *     - Requires exactly 2 lines matching [marker]; any other number reports an error.
  * - In editor mode: fetches source in background, extracts code, updates code block.
  * - Non-destructive warning badge when offline or marker missing, preserving existing code.
  */
@@ -113,64 +112,30 @@ export function extractSnippetFromText(
 
   const lines = sourceText.split(/\r?\n/);
   const escaped = cleanMarker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const markerRegex = new RegExp(`\\[\\s*${escaped}\\s*\\]`, 'i');
 
-  // Start marker pattern:
-  // [marker], <marker>, @start:marker, [snippet:marker], @snippet marker
-  const startRegex = new RegExp(
-    `\\[\\s*${escaped}\\s*\\]|` +
-    `<\\s*${escaped}\\s*>|` +
-    `@start\\s*:\\s*${escaped}|` +
-    `\\[\\s*snippet\\s*:\\s*${escaped}\\s*\\]|` +
-    `@snippet\\s+${escaped}`,
-    'i'
-  );
-
-  // Closing marker pattern:
-  // [/marker], </marker>, @end:marker, [/snippet:marker]
-  const closeRegex = new RegExp(
-    `\\[\\s*\\/\\s*${escaped}\\s*\\]|` +
-    `<\\s*\\/\\s*${escaped}\\s*>|` +
-    `@end\\s*:\\s*${escaped}|` +
-    `\\[\\s*\\/\\s*snippet\\s*:\\s*${escaped}\\s*\\]`,
-    'i'
-  );
-
-  // Find start line index
-  let startIndex = -1;
+  const matchingLineIndices: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (startRegex.test(lines[i])) {
-      startIndex = i;
-      break;
+    if (markerRegex.test(lines[i])) {
+      matchingLineIndices.push(i);
     }
   }
 
-  if (startIndex === -1) {
+  if (matchingLineIndices.length !== 2) {
+    if (matchingLineIndices.length === 0) {
+      return {
+        code: '',
+        error: `Marker '${cleanMarker}' not found in source`,
+      };
+    }
     return {
       code: '',
-      error: `Marker '${cleanMarker}' not found in source`,
+      error: `Expected exactly 2 lines matching '[${cleanMarker}]', found ${matchingLineIndices.length}`,
     };
   }
 
-  // Find end line index
-  let endIndex = -1;
-  for (let i = startIndex + 1; i < lines.length; i++) {
-    const line = lines[i];
-    // Check explicit close marker
-    if (closeRegex.test(line)) {
-      endIndex = i;
-      break;
-    }
-    // Doxygen style: repeated [marker]
-    if (new RegExp(`\\[\\s*${escaped}\\s*\\]`, 'i').test(line)) {
-      endIndex = i;
-      break;
-    }
-  }
-
-  if (endIndex === -1) {
-    endIndex = lines.length;
-  }
-
+  const startIndex = matchingLineIndices[0];
+  const endIndex = matchingLineIndices[1];
   const snippetLines = lines.slice(startIndex + 1, endIndex);
 
   // Strip minimum common indentation for clean display

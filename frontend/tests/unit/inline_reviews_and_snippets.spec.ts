@@ -129,7 +129,7 @@ describe('Step 8.4: Dynamic External Code Snippet Synchronization', () => {
     expect(res3.marker).toBe('');
   });
 
-  it('extracts snippet enclosed by [marker] ... [/marker] boundaries', () => {
+  it('extracts snippet enclosed by exactly 2 lines matching [marker]', () => {
     const sourceCode = `
 #include <iostream>
 
@@ -139,7 +139,7 @@ while (count < 10) {
     std::cout << count << std::endl;
     count++;
 }
-// [/main_loop]
+// [main_loop]
 
 int helper() { return 42; }
 `;
@@ -149,10 +149,9 @@ int helper() { return 42; }
     expect(res.code).toContain('std::cout << count << std::endl;');
     expect(res.code).not.toContain('helper');
     expect(res.code).not.toContain('// [main_loop]');
-    expect(res.code).not.toContain('// [/main_loop]');
   });
 
-  it('extracts snippet enclosed by Doxygen style repeated [marker]', () => {
+  it('extracts snippet enclosed by Doxygen / arbitrary comments containing [marker]', () => {
     const doxygenSource = `
 //! [calc]
 def add(a, b):
@@ -165,13 +164,48 @@ def add(a, b):
     expect(res.code).toContain('return a + b');
   });
 
-  it('returns clean error without throwing when marker is missing in source', () => {
+  it('returns clean error without throwing when marker is missing in source (0 matches)', () => {
     const sourceCode = `
 int a = 1;
 int b = 2;
 `;
     const res = extractSnippetFromText(sourceCode, 'non_existent_marker');
     expect(res.error).toBe("Marker 'non_existent_marker' not found in source");
+    expect(res.code).toBe('');
+  });
+
+  it('reports an error when marker appears only once (1 match)', () => {
+    const sourceCode = `
+// [single_marker]
+const x = 10;
+`;
+    const res = extractSnippetFromText(sourceCode, 'single_marker');
+    expect(res.error).toBe("Expected exactly 2 lines matching '[single_marker]', found 1");
+    expect(res.code).toBe('');
+  });
+
+  it('reports an error when marker appears more than twice (3 matches)', () => {
+    const sourceCode = `
+// [triplicate]
+line 1
+// [triplicate]
+line 2
+// [triplicate]
+`;
+    const res = extractSnippetFromText(sourceCode, 'triplicate');
+    expect(res.error).toBe("Expected exactly 2 lines matching '[triplicate]', found 3");
+    expect(res.code).toBe('');
+  });
+
+  it('does not match [/marker] as [marker]', () => {
+    const sourceCode = `
+// [my_code]
+const a = 1;
+// [/my_code]
+`;
+    const res = extractSnippetFromText(sourceCode, 'my_code');
+    // Only the first line matches [my_code], the second is [/my_code]
+    expect(res.error).toBe("Expected exactly 2 lines matching '[my_code]', found 1");
     expect(res.code).toBe('');
   });
 
