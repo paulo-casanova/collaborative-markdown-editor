@@ -535,7 +535,7 @@ Result<DocumentRecord> DocumentService::get_document_by_id(
             return std::unexpected(ErrorCode::PermissionDenied);
         }
 
-        bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+        bool is_bundle = fs_path.ends_with(".bundle") && storage_->is_bundle(fs_path).value_or(false);
         std::string content_path = is_bundle ? (fs_path + "/index.md") : fs_path;
 
         auto read_res = storage_->read_file(content_path);
@@ -598,6 +598,16 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             "FROM documents WHERE fs_path = $1;",
             norm_path
         );
+
+        if (!rows.empty()) {
+            std::string existing_fs = rows[0][1].as<std::string>();
+            auto info_res = storage_->get_node_info(existing_fs);
+            if (info_res.has_value() && info_res->is_directory && !existing_fs.ends_with(".bundle")) {
+                // Stale directory row in documents table! Purge it.
+                tx.exec_params("DELETE FROM documents WHERE id = $1::uuid;", rows[0][0].as<std::string>());
+                rows = pqxx::result();
+            }
+        }
 
         // 2. Exact fs_path with .md extension if not already ending with .md
         if (rows.empty() && !norm_path.ends_with(".md") && !norm_path.ends_with(".bundle")) {
@@ -727,8 +737,19 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         if (rows.empty()) {
             // Check storage on disk (Auto-reconciliation)
             std::string disk_target_path = norm_path;
-            auto disk_exists = storage_->exists(disk_target_path);
-            if (!disk_exists.value_or(false)) {
+            auto info_res = storage_->get_node_info(disk_target_path);
+            bool is_pure_dir = info_res.has_value() && info_res->is_directory && !disk_target_path.ends_with(".bundle");
+
+            if (is_pure_dir) {
+                // A pure directory is not a document; resolve to <dir>/<dir>.md or <dir>/index.md if present
+                if (storage_->exists(disk_target_path + "/" + basename + ".md").value_or(false)) {
+                    disk_target_path = disk_target_path + "/" + basename + ".md";
+                } else if (storage_->exists(disk_target_path + "/index.md").value_or(false)) {
+                    disk_target_path = disk_target_path + "/index.md";
+                } else {
+                    return std::unexpected(ErrorCode::NotFound);
+                }
+            } else if (!info_res.has_value()) {
                 if (!disk_target_path.ends_with(".md") && storage_->exists(disk_target_path + ".md").value_or(false)) {
                     disk_target_path += ".md";
                 } else {
@@ -748,12 +769,16 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
                 }
             }
 
-            if (!storage_->exists(disk_target_path).value_or(false)) {
+            auto final_info = storage_->get_node_info(disk_target_path);
+            if (!final_info.has_value()) {
+                return std::unexpected(ErrorCode::NotFound);
+            }
+            if (final_info->is_directory && !disk_target_path.ends_with(".bundle")) {
                 return std::unexpected(ErrorCode::NotFound);
             }
 
             actual_fs_path = disk_target_path;
-            bool is_bundle = storage_->is_bundle(actual_fs_path).value_or(false);
+            bool is_bundle = disk_target_path.ends_with(".bundle") && storage_->is_bundle(actual_fs_path).value_or(false);
             std::string content_file = is_bundle ? (actual_fs_path + "/index.md") : actual_fs_path;
             auto content_res = storage_->read_file(content_file);
             std::string disk_content = content_res.has_value() ? content_res.value() : "";
@@ -796,7 +821,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             return std::unexpected(ErrorCode::PermissionDenied);
         }
 
-        bool is_bundle = storage_->is_bundle(actual_fs_path).value_or(false);
+        bool is_bundle = actual_fs_path.ends_with(".bundle") && storage_->is_bundle(actual_fs_path).value_or(false);
         std::string content_file = is_bundle ? (actual_fs_path + "/index.md") : actual_fs_path;
         auto read_res = storage_->read_file(content_file);
         std::string content = read_res.has_value() ? read_res.value() : "";
@@ -1115,7 +1140,7 @@ Result<std::string> DocumentService::upload_asset(
             return std::unexpected(ErrorCode::PermissionDenied);
         }
 
-        bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+        bool is_bundle = fs_path.ends_with(".bundle") && storage_->is_bundle(fs_path).value_or(false);
         std::string asset_path;
         if (is_bundle) {
             asset_path = fs_path + "/images/" + clean_fn;
@@ -1389,7 +1414,7 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
         // Auto-reconcile unindexed documents & files found on disk
         std::vector<std::string> unindexed_paths;
         for (const auto& node : list_res.value()) {
-            if (!node.is_directory || node.is_bundle) {
+            if (!node.is_directory || (node.is_bundle && node.relative_path.ends_with(".bundle"))) {
                 if (node.relative_path.find(".bundle/") == std::string::npos &&
                     !indexed_docs.contains(node.relative_path)) {
                     unindexed_paths.push_back(node.relative_path);
@@ -1401,7 +1426,7 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
             try {
                 pqxx::work wtx(conn_res->get());
                 for (const auto& path : unindexed_paths) {
-                    bool is_bundle = storage_->is_bundle(path).value_or(false);
+                    bool is_bundle = path.ends_with(".bundle") && storage_->is_bundle(path).value_or(false);
                     std::string lower_path = to_lower_string(path);
                     bool is_md = is_bundle || lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
                     std::string title;
@@ -1453,22 +1478,23 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
             continue; // Exclude node user is not permitted to see
         }
 
+        bool is_bundle_node = node.is_bundle && node.relative_path.ends_with(".bundle");
         nlohmann::json item;
         item["name"] = node.name;
         item["path"] = node.relative_path;
         item["is_directory"] = node.is_directory;
-        item["is_bundle"] = node.is_bundle;
+        item["is_bundle"] = is_bundle_node;
         item["size_bytes"] = node.size_bytes;
 
-        if (indexed_docs.contains(node.relative_path)) {
+        if (indexed_docs.contains(node.relative_path) && (!node.is_directory || is_bundle_node)) {
             const auto& meta = indexed_docs[node.relative_path];
             item["id"] = meta.id;
             item["title"] = meta.title;
             item["owner_user_id"] = meta.owner_id;
             item["updated_at"] = meta.updated_at;
-        } else if (!node.is_directory || node.is_bundle) {
+        } else if (!node.is_directory || is_bundle_node) {
             std::string lower_path = to_lower_string(node.relative_path);
-            bool is_md = node.is_bundle || lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
+            bool is_md = is_bundle_node || lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
             item["title"] = is_md ? derive_title("", node.relative_path) : node.name;
         }
 
@@ -1619,7 +1645,7 @@ Result<nlohmann::json> DocumentService::get_recent_documents(
             std::string fs_path = r[1].as<std::string>();
             auto access = check_access(user, doc_id, fs_path);
             if (access.has_value() && access.value() >= db::AccessLevel::Read) {
-                bool is_bundle = storage_ ? storage_->is_bundle(fs_path).value_or(false) : false;
+                bool is_bundle = fs_path.ends_with(".bundle") && (storage_ ? storage_->is_bundle(fs_path).value_or(false) : false);
                 results.push_back({
                     {"id", doc_id},
                     {"path", fs_path},
@@ -1967,7 +1993,7 @@ Result<nlohmann::json> DocumentService::list_document_assets(
         return std::unexpected(ErrorCode::PermissionDenied);
     }
 
-    bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+    bool is_bundle = fs_path.ends_with(".bundle") && storage_->is_bundle(fs_path).value_or(false);
     std::string scan_dir = is_bundle ? fs_path : std::filesystem::path(fs_path).parent_path().string();
 
     nlohmann::json assets = nlohmann::json::array();
@@ -1979,8 +2005,7 @@ Result<nlohmann::json> DocumentService::list_document_assets(
             // Skip main document file
             std::string lower_node = to_lower_string(node.relative_path);
             if (lower_node == to_lower_string(fs_path) ||
-                lower_node == to_lower_string(fs_path + "/index.md") ||
-                lower_node == to_lower_string(fs_path + "/" + std::filesystem::path(fs_path).filename().string() + ".md")) {
+                lower_node == to_lower_string(fs_path + "/index.md")) {
                 continue;
             }
 
@@ -2183,20 +2208,21 @@ Result<nlohmann::json> DocumentService::get_directory_dashboard(
             continue;
         }
 
+        bool is_bundle_node = node.is_bundle && node.relative_path.ends_with(".bundle");
         nlohmann::json item;
         item["name"] = node.name;
         item["path"] = node.relative_path;
         item["is_directory"] = node.is_directory;
-        item["is_bundle"] = node.is_bundle;
+        item["is_bundle"] = is_bundle_node;
         item["size_bytes"] = node.size_bytes;
 
         std::string type = "file";
-        if (node.is_bundle) type = "bundle";
+        if (is_bundle_node) type = "bundle";
         else if (node.is_directory) type = "directory";
         else if (node.name.ends_with(".md") || node.name.ends_with(".markdown")) type = "document";
         item["type"] = type;
 
-        if (doc_metas.contains(node.relative_path)) {
+        if (doc_metas.contains(node.relative_path) && (!node.is_directory || is_bundle_node)) {
             const auto& m = doc_metas[node.relative_path];
             item["id"] = m.id;
             item["title"] = m.title;

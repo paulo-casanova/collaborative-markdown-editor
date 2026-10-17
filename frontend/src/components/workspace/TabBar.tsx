@@ -167,7 +167,7 @@ export const TabBar: React.FC = () => {
                 <Pin className="w-3 h-3 text-amber-500 flex-shrink-0" />
               ) : tab.is_directory || tab.id.startsWith('dir:') ? (
                 <Folder className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-              ) : tab.is_bundle ? (
+              ) : (tab.is_bundle && tab.path?.endsWith('.bundle')) ? (
                 <Package className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" />
               ) : (
                 <FileText className="w-3.5 h-3.5 text-cme-text-subtle flex-shrink-0" />

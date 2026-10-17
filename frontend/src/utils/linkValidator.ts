@@ -185,7 +185,8 @@ export function updateKnownWorkspaceNodes(nodes: WorkspaceNode[]) {
   updateWorkspaceNodesCache(nodes);
   const next = new Set<string>();
   for (const n of nodes) {
-    if (!n.is_directory || n.is_bundle) {
+    const isBundle = Boolean(n.is_bundle && n.path.endsWith('.bundle'));
+    if (!n.is_directory || isBundle) {
       const norm = normalizeWorkspacePath(n.path);
       next.add(norm);
       next.add(norm.toLowerCase());

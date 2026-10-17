@@ -62,14 +62,17 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           const isPlaceholderTitle =
             !newTab.title || newTab.title === 'Document' || newTab.title === newTab.id;
           const isPlaceholderPath = !newTab.path || newTab.path === newTab.id;
+          const finalPath = isPlaceholderPath && existing.path ? existing.path : newTab.path;
+          const rawBundle = newTab.is_bundle ?? existing.is_bundle;
+          const isBundle = Boolean(rawBundle && finalPath?.endsWith('.bundle'));
           updatedTabs[existingIndex] = {
             ...existing,
-            path: isPlaceholderPath && existing.path ? existing.path : newTab.path,
+            path: finalPath,
             title:
               isPlaceholderTitle && existing.title && existing.title !== 'Document'
                 ? existing.title
                 : newTab.title,
-            is_bundle: newTab.is_bundle ?? existing.is_bundle,
+            is_bundle: isBundle,
             is_directory: newTab.is_directory ?? existing.is_directory,
           };
           set({
@@ -82,6 +85,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
           const updatedTabs = [...tabs];
           updatedTabs.splice(pinnedCount, 0, {
             ...newTab,
+            is_bundle: Boolean(newTab.is_bundle && newTab.path?.endsWith('.bundle')),
             isPinned: false,
             isDirty: false,
           });
@@ -103,7 +107,14 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       updateTabMetadata: (tabId, metadata) => {
         const { tabs } = get();
         set({
-          tabs: tabs.map((t) => (t.id === tabId ? { ...t, ...metadata } : t)),
+          tabs: tabs.map((t) => {
+            if (t.id !== tabId) return t;
+            const updated = { ...t, ...metadata };
+            if (metadata.is_bundle !== undefined || metadata.path !== undefined) {
+              updated.is_bundle = Boolean(updated.is_bundle && updated.path?.endsWith('.bundle'));
+            }
+            return updated;
+          }),
         });
       },
 
@@ -259,7 +270,12 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
-          state.tabs = (state.tabs || []).filter((t) => t.id && t.id !== 'by-path');
+          state.tabs = (state.tabs || [])
+            .filter((t) => t.id && t.id !== 'by-path')
+            .map((t) => ({
+              ...t,
+              is_bundle: Boolean(t.is_bundle && t.path?.endsWith('.bundle')),
+            }));
           if (state.activeTabId === 'by-path') {
             state.activeTabId = state.tabs.length > 0 ? state.tabs[0].id : null;
           }

@@ -52,11 +52,11 @@ function isImagePath(path: string): boolean {
   );
 }
 
-interface TreeNode extends WorkspaceNode {
+export interface TreeNode extends WorkspaceNode {
   children?: TreeNode[];
 }
 
-function buildTree(nodes: WorkspaceNode[]): TreeNode[] {
+export function buildTree(nodes: WorkspaceNode[]): TreeNode[] {
   const rootNodes: TreeNode[] = [];
   const map = new Map<string, TreeNode>();
 
@@ -83,23 +83,34 @@ function buildTree(nodes: WorkspaceNode[]): TreeNode[] {
       }
     }
 
-    const isFolder = node.is_directory && !node.is_bundle;
-    const treeNode: TreeNode = {
-      ...node,
-      children: isFolder ? [] : undefined,
-    };
-    map.set(node.path, treeNode);
+    const isBundle = Boolean(node.is_bundle && node.path.endsWith('.bundle'));
+    const isFolder = node.is_directory && !isBundle;
 
-    const parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
-    if (parentPath && map.has(parentPath)) {
-      const parent = map.get(parentPath)!;
-      if (!parent.children) parent.children = [];
-      if (!parent.children.some((c) => c.path === treeNode.path)) {
-        parent.children.push(treeNode);
-      }
+    const existing = map.get(node.path);
+    if (existing) {
+      Object.assign(existing, node, {
+        is_bundle: isBundle,
+        children: isFolder ? (existing.children || []) : undefined,
+      });
     } else {
-      if (!rootNodes.some((r) => r.path === treeNode.path)) {
-        rootNodes.push(treeNode);
+      const treeNode: TreeNode = {
+        ...node,
+        is_bundle: isBundle,
+        children: isFolder ? [] : undefined,
+      };
+      map.set(node.path, treeNode);
+
+      const parentPath = node.path.substring(0, node.path.lastIndexOf('/'));
+      if (parentPath && map.has(parentPath)) {
+        const parent = map.get(parentPath)!;
+        if (!parent.children) parent.children = [];
+        if (!parent.children.some((c) => c.path === treeNode.path)) {
+          parent.children.push(treeNode);
+        }
+      } else {
+        if (!rootNodes.some((r) => r.path === treeNode.path)) {
+          rootNodes.push(treeNode);
+        }
       }
     }
   }
@@ -607,7 +618,8 @@ export const FileTree: React.FC = () => {
   };
 
   const renderNode = (node: TreeNode, depth: number = 0) => {
-    const isDoc = !node.is_directory || node.is_bundle;
+    const isBundle = Boolean(node.is_bundle && node.path.endsWith('.bundle'));
+    const isDoc = !node.is_directory || isBundle;
     const isExpanded = expandedPaths.has(node.path);
     // Folders have a 14px chevron + 6px gap (20px) before their folder icon.
     // Offset documents by +20px (28px at depth 0, 48px at depth 1, etc.) so child file icons
@@ -616,7 +628,7 @@ export const FileTree: React.FC = () => {
     const isDragTarget = dragOverPath === node.path;
 
     if (isDoc) {
-      const isMarkdown = isMarkdownPath(node.path, node.is_bundle);
+      const isMarkdown = isMarkdownPath(node.path, isBundle);
       const isImage = !isMarkdown && isImagePath(node.path);
 
       if (!isMarkdown) {
@@ -686,14 +698,14 @@ export const FileTree: React.FC = () => {
                   id: node.id,
                   path: node.path,
                   title: node.title || node.name.replace(/\.(md|bundle)$/, ''),
-                  is_bundle: node.is_bundle,
+                  is_bundle: isBundle,
                 });
               }
             }}
             className="flex items-center gap-2 min-w-0 flex-1 truncate"
             title={node.title || node.name}
           >
-            {node.is_bundle ? (
+            {isBundle ? (
               <Package className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" />
             ) : (
               <FileText className="w-3.5 h-3.5 text-cme-text-subtle flex-shrink-0" />

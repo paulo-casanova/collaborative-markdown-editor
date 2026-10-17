@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { isMarkdownPath, findWorkspacePath, resolveWorkspaceRelativePath } from '../../src/api/documents';
 import { DocumentAsset, DirectoryDashboardItem, NodePermissions } from '../../src/types/document';
+import { buildTree } from '../../src/components/navigation/FileTree';
 
 describe('Bundle Assets & Additive ACL types and logic', () => {
   it('correctly identifies bundle documents as markdown paths', () => {
@@ -197,10 +198,61 @@ describe('Bundle Assets & Additive ACL types and logic', () => {
     expect(isBundleName('project.bundle')).toBe(true);
     expect(isBundleName('.bundle')).toBe(true);
 
-    // Regular directories even if containing index.md or other files are NOT bundles
+    // Regular directories even if containing index.md or dirname.md are NOT bundles
     expect(isBundleName('guides')).toBe(false);
     expect(isBundleName('index.md')).toBe(false);
     expect(isBundleName('specs')).toBe(false);
     expect(isBundleName('project-gamma')).toBe(false);
+    expect(isBundleName('Church Livestream')).toBe(false);
+  });
+
+  it('buildTree preserves folders containing <dirname>.md and all sibling files in any processing order', () => {
+    // Case 1: Directory node comes first
+    const inputOrder1 = [
+      { name: 'Church Livestream', path: 'Church Livestream', is_directory: true, is_bundle: false },
+      { name: 'Church Livestream.md', path: 'Church Livestream/Church Livestream.md', is_directory: false, is_bundle: false },
+      { name: 'Design.md', path: 'Church Livestream/Design.md', is_directory: false, is_bundle: false },
+      { name: 'v4l2 Camera Controls.md', path: 'Church Livestream/v4l2 Camera Controls.md', is_directory: false, is_bundle: false },
+    ];
+
+    const tree1 = buildTree(inputOrder1);
+    expect(tree1).toHaveLength(1);
+    expect(tree1[0].name).toBe('Church Livestream');
+    expect(tree1[0].is_directory).toBe(true);
+    expect(tree1[0].is_bundle).toBe(false);
+    expect(tree1[0].children).toHaveLength(3);
+    const childNames1 = tree1[0].children!.map((c) => c.name);
+    expect(childNames1).toContain('Church Livestream.md');
+    expect(childNames1).toContain('Design.md');
+    expect(childNames1).toContain('v4l2 Camera Controls.md');
+
+    // Case 2: Child file comes first before directory node
+    const inputOrder2 = [
+      { name: 'Church Livestream.md', path: 'Church Livestream/Church Livestream.md', is_directory: false, is_bundle: false },
+      { name: 'Church Livestream', path: 'Church Livestream', is_directory: true, is_bundle: false },
+      { name: 'Design.md', path: 'Church Livestream/Design.md', is_directory: false, is_bundle: false },
+      { name: 'v4l2 Camera Controls.md', path: 'Church Livestream/v4l2 Camera Controls.md', is_directory: false, is_bundle: false },
+    ];
+
+    const tree2 = buildTree(inputOrder2);
+    expect(tree2).toHaveLength(1);
+    expect(tree2[0].name).toBe('Church Livestream');
+    expect(tree2[0].is_directory).toBe(true);
+    expect(tree2[0].is_bundle).toBe(false);
+    expect(tree2[0].children).toHaveLength(3);
+    const childNames2 = tree2[0].children!.map((c) => c.name);
+    expect(childNames2).toContain('Church Livestream.md');
+    expect(childNames2).toContain('Design.md');
+    expect(childNames2).toContain('v4l2 Camera Controls.md');
+
+    // Case 3: Folder with is_bundle mistakenly set to true from legacy data is corrected if not ending in .bundle
+    const inputLegacy = [
+      { name: 'Church Livestream', path: 'Church Livestream', is_directory: true, is_bundle: true },
+      { name: 'Church Livestream.md', path: 'Church Livestream/Church Livestream.md', is_directory: false, is_bundle: false },
+    ];
+    const tree3 = buildTree(inputLegacy);
+    expect(tree3[0].is_directory).toBe(true);
+    expect(tree3[0].is_bundle).toBe(false);
+    expect(tree3[0].children).toHaveLength(1);
   });
 });

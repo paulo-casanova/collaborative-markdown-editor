@@ -18,7 +18,8 @@ const workspacePathLookup = new Map<string, string>();
 export function updateWorkspaceNodesCache(nodes: WorkspaceNode[]) {
   workspacePathLookup.clear();
   for (const n of nodes) {
-    if (!n.is_directory || n.is_bundle) {
+    const isBundle = Boolean(n.is_bundle && n.path.endsWith('.bundle'));
+    if (!n.is_directory || isBundle) {
       const norm = (n.path || '').replace(/^\/+/, '').replace(/\/+$/, '');
       if (!norm) continue;
       workspacePathLookup.set(norm.toLowerCase(), norm);

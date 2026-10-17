@@ -101,7 +101,7 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
         id: newDoc.id,
         path: newDoc.path,
         title: newDoc.title || newDoc.path,
-        is_bundle: newDoc.is_bundle,
+        is_bundle: Boolean(newDoc.is_bundle && newDoc.path.endsWith('.bundle')),
       });
       navigate(`/documents/${newDoc.id}`);
     },
@@ -204,7 +204,7 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
       id: item.id,
       path: item.path,
       title: item.title || item.name,
-      is_bundle: item.is_bundle,
+      is_bundle: Boolean(item.is_bundle && item.path.endsWith('.bundle')),
     });
     navigate(`/documents/${item.id}`);
   };
@@ -590,8 +590,8 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
               </tr>
             ) : (
               filteredAndSortedItems.map((item) => {
-                const isDir = item.is_directory;
-                const isBundle = item.is_bundle;
+                const isBundle = Boolean(item.is_bundle && item.path.endsWith('.bundle'));
+                const isDir = item.is_directory && !isBundle;
                 return (
                   <tr
                     key={item.path}

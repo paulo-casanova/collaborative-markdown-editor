@@ -87,7 +87,7 @@ export const RecentDocuments: React.FC = () => {
                       id: doc.id,
                       path: doc.path,
                       title: doc.title || doc.path,
-                      is_bundle: doc.is_bundle,
+                      is_bundle: Boolean(doc.is_bundle && doc.path?.endsWith('.bundle')),
                     });
                   }}
                   className={`flex items-center justify-between py-1.5 px-2 rounded-lg text-xs transition-colors group ${
@@ -99,7 +99,7 @@ export const RecentDocuments: React.FC = () => {
                   data-testid="recent-doc-item"
                 >
                   <div className="flex items-center gap-2 min-w-0 flex-1 truncate mr-2">
-                    {doc.is_bundle ? (
+                    {(doc.is_bundle && doc.path?.endsWith('.bundle')) ? (
                       <Package className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" />
                     ) : (
                       <FileText className="w-3.5 h-3.5 text-cme-text-subtle flex-shrink-0" />
