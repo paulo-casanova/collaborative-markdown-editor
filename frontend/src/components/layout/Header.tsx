@@ -112,13 +112,13 @@ export const Header: React.FC = () => {
         {/* Global Search Shortcut */}
         <button
           onClick={() => setSearchModalOpen(true)}
-          className="hidden md:flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-subtle hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-xs transition-colors"
+          className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-subtle hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-xs transition-colors"
           title="Search documents (Ctrl+K / Cmd+K)"
           data-testid="header-search-btn"
         >
           <Search className="w-3.5 h-3.5" />
-          <span className="text-[11px]">Search</span>
-          <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-cme-bg-surface border border-cme-border-base text-cme-text-subtle">
+          <span className="hidden sm:inline text-[11px]">Search</span>
+          <kbd className="hidden sm:inline-block text-[10px] font-mono px-1 py-0.2 rounded bg-cme-bg-surface border border-cme-border-base text-cme-text-subtle">
             ⌘K
           </kbd>
         </button>

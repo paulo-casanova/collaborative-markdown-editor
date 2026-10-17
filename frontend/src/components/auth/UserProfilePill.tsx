@@ -125,11 +125,11 @@ export const UserProfilePill: React.FC = () => {
                   <Users className="w-3 h-3" />
                   <span>Effective Teams ({user.effective_teams.length})</span>
                 </div>
-                <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
                   {user.effective_teams.map((team) => (
                     <span
                       key={team}
-                      className="px-1.5 py-0.5 text-[10px] rounded bg-cme-bg-surface border border-cme-border-base text-cme-text-base font-mono"
+                      className="px-2 py-0.5 text-[11px] rounded bg-cme-bg-surface border border-cme-border-base text-cme-text-base font-medium"
                     >
                       {team}
                     </span>

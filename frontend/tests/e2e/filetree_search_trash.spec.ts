@@ -88,7 +88,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     await page.goto('/');
 
     // Trigger Search Modal via header button or Ctrl+K
-    const searchBtn = page.locator('[data-testid="sidebar-search-btn"]');
+    const searchBtn = page.locator('[data-testid="header-search-btn"]');
     await expect(searchBtn).toBeVisible();
     await searchBtn.click();
 

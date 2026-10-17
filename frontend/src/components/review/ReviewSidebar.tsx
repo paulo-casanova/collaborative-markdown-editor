@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import {
   MessageSquare,
   X,
@@ -32,9 +32,37 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
     setShowInTextReviews,
     setSidebarOpen,
     isLoading,
+    sidebarWidth,
+    setSidebarWidth,
   } = useReviewStore();
 
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = sidebarWidth || 384;
+      setIsResizing(true);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const deltaX = startX - moveEvent.clientX;
+        setSidebarWidth(startWidth + deltaX);
+      };
+
+      const handleMouseUp = () => {
+        setIsResizing(false);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    },
+    [sidebarWidth, setSidebarWidth]
+  );
 
   // Compute counts
   const openComments = useMemo(
@@ -108,8 +136,18 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
   return (
     <aside
       data-testid="review-sidebar"
-      className="review-sidebar-root w-80 sm:w-96 flex flex-col h-full border-l border-cme-border-base bg-cme-bg-surface flex-shrink-0 select-none"
+      style={{ width: `${sidebarWidth || 384}px` }}
+      className="relative review-sidebar-root flex flex-col h-full border-l border-cme-border-base bg-cme-bg-surface flex-shrink-0 select-none"
     >
+      {/* Left-edge Resize Handle */}
+      <div
+        onMouseDown={handleResizeStart}
+        className={`absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-20 transition-colors ${
+          isResizing ? 'bg-cme-primary' : 'hover:bg-cme-primary/50'
+        }`}
+        title="Drag to resize review panel"
+        data-testid="review-sidebar-resizer"
+      />
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-cme-border-base bg-cme-bg-elevated/40">
         <div className="flex items-center gap-2">

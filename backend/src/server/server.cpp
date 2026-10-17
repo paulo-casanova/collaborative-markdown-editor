@@ -397,10 +397,30 @@ Result<void> Server::start() {
                 "; Path=/; Max-Age=" + std::to_string(max_age_seconds) +
                 "; HttpOnly; SameSite=Lax";
 
+            std::vector<std::string> effective_team_names;
+            std::vector<std::string> effective_team_ids;
+            if (db_pool_) {
+                auto conn_res = db_pool_->acquire();
+                if (conn_res.has_value()) {
+                    auto names_res = db::PermissionEngine::get_effective_team_names(conn_res->get(), user.user_id);
+                    if (names_res.has_value()) {
+                        effective_team_names = names_res.value();
+                    }
+                    auto ids_res = db::PermissionEngine::get_effective_teams(conn_res->get(), user.user_id);
+                    if (ids_res.has_value()) {
+                        effective_team_ids = ids_res.value();
+                    }
+                }
+            }
+
             nlohmann::json resp;
             resp["token"] = session.raw_token;
             resp["expires_at"] = session.expires_at;
             resp["user"] = user.to_json();
+            resp["effective_teams"] = effective_team_names;
+            resp["effective_team_ids"] = effective_team_ids;
+            resp["user"]["effective_teams"] = effective_team_names;
+            resp["user"]["effective_team_ids"] = effective_team_ids;
 
             send_json(res, "200 OK", resp, {{"Set-Cookie", cookie_val}});
         });
@@ -448,24 +468,32 @@ Result<void> Server::start() {
         }
 
         auto user = *auth_res.value();
-        std::vector<std::string> effective_teams;
+        std::vector<std::string> effective_team_names;
+        std::vector<std::string> effective_team_ids;
         if (db_pool_) {
             auto conn_res = db_pool_->acquire();
             if (conn_res.has_value()) {
-                auto teams_res = db::PermissionEngine::get_effective_teams(conn_res->get(), user.user_id);
-                if (teams_res.has_value()) {
-                    effective_teams = teams_res.value();
+                auto names_res = db::PermissionEngine::get_effective_team_names(conn_res->get(), user.user_id);
+                if (names_res.has_value()) {
+                    effective_team_names = names_res.value();
+                }
+                auto ids_res = db::PermissionEngine::get_effective_teams(conn_res->get(), user.user_id);
+                if (ids_res.has_value()) {
+                    effective_team_ids = ids_res.value();
                 }
             }
         }
 
         nlohmann::json resp = user.to_json();
         resp["user"] = user.to_json();
-        resp["effective_teams"] = effective_teams;
+        resp["effective_teams"] = effective_team_names;
+        resp["effective_team_ids"] = effective_team_ids;
         resp["authn_provider"] = config_.authn.provider;
         resp["can_change_password"] = (config_.authn.provider == "challenge");
         resp["user"]["authn_provider"] = config_.authn.provider;
         resp["user"]["can_change_password"] = (config_.authn.provider == "challenge");
+        resp["user"]["effective_teams"] = effective_team_names;
+        resp["user"]["effective_team_ids"] = effective_team_ids;
 
         send_json(res, "200 OK", resp);
     });

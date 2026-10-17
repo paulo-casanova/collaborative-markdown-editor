@@ -40,6 +40,46 @@ Result<std::vector<std::string>> PermissionEngine::get_effective_teams(
     }
 }
 
+Result<std::vector<std::string>> PermissionEngine::get_effective_team_names(
+    pqxx::connection& conn,
+    const std::string& user_id
+) {
+    try {
+        pqxx::read_transaction tx(conn);
+        auto rows = tx.exec_params(
+            R"(
+            WITH RECURSIVE effective_teams AS (
+                -- Direct team memberships
+                SELECT team_id FROM team_members WHERE user_id = $1::uuid
+                UNION
+                -- Transitive parent team memberships (multi-parent DAG traversal)
+                SELECT tp.parent_team_id
+                FROM team_parents tp
+                JOIN effective_teams et ON tp.child_team_id = et.team_id
+            )
+            SELECT et.team_id::text, t.name
+            FROM effective_teams et
+            JOIN teams t ON et.team_id = t.id
+            ORDER BY t.name ASC;
+            )",
+            user_id
+        );
+
+        std::vector<std::string> names;
+        names.reserve(rows.size());
+        for (const auto& row : rows) {
+            std::string name = row[1].is_null() || row[1].as<std::string>().empty()
+                ? row[0].as<std::string>()
+                : row[1].as<std::string>();
+            names.push_back(name);
+        }
+        return names;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] Failed to query effective team names: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 Result<AccessLevel> PermissionEngine::check_permission(
     pqxx::connection& conn,
     const std::string& user_id,

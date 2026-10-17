@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useWorkspaceStore } from '../../src/stores/workspaceStore';
 import { useUIStore } from '../../src/stores/uiStore';
+import { useReviewStore } from '../../src/stores/reviewStore';
 
 describe('WorkspaceStore & UIStore behavior', () => {
   beforeEach(() => {
@@ -130,5 +131,18 @@ describe('WorkspaceStore & UIStore behavior', () => {
 
     useUIStore.getState().toggleNumberHeaders();
     expect(useUIStore.getState().numberHeaders).toBe(false);
+  });
+
+  it('updates and clamps review sidebarWidth in ReviewStore between 260 and 700', () => {
+    expect(useReviewStore.getState().sidebarWidth).toBe(384);
+
+    useReviewStore.getState().setSidebarWidth(450);
+    expect(useReviewStore.getState().sidebarWidth).toBe(450);
+
+    useReviewStore.getState().setSidebarWidth(150);
+    expect(useReviewStore.getState().sidebarWidth).toBe(260);
+
+    useReviewStore.getState().setSidebarWidth(950);
+    expect(useReviewStore.getState().sidebarWidth).toBe(700);
   });
 });

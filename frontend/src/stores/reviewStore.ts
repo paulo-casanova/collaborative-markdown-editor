@@ -24,6 +24,7 @@ export interface ReviewState {
   showResolved: boolean;
   showInTextReviews: boolean;
   isSidebarOpen: boolean;
+  sidebarWidth: number;
   suggestingMode: boolean;
   isLoading: boolean;
 
@@ -40,6 +41,7 @@ export interface ReviewState {
   toggleInTextReviews: () => void;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
+  setSidebarWidth: (width: number) => void;
   toggleSuggestingMode: () => void;
   setSuggestingMode: (mode: boolean) => void;
   setPendingCommentSelection: (sel: PendingSelection | null) => void;
@@ -62,6 +64,20 @@ export interface ReviewState {
   deleteTask: (taskId: string) => Promise<void>;
 }
 
+const getInitialReviewSidebarWidth = (): number => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saved = Number(window.localStorage.getItem('cme_review_sidebar_width'));
+      if (!Number.isNaN(saved) && saved >= 260 && saved <= 700) {
+        return saved;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return 384;
+};
+
 export const useReviewStore = create<ReviewState>((set, get) => ({
   documentId: null,
   comments: [],
@@ -72,8 +88,21 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   showResolved: true,
   showInTextReviews: true,
   isSidebarOpen: false,
+  sidebarWidth: getInitialReviewSidebarWidth(),
   suggestingMode: false,
   isLoading: false,
+
+  setSidebarWidth: (width: number) => {
+    const clamped = Math.min(700, Math.max(260, Math.round(width)));
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('cme_review_sidebar_width', String(clamped));
+      }
+    } catch {
+      // ignore
+    }
+    set({ sidebarWidth: clamped });
+  },
 
   pendingCommentSelection: null,
   pendingSuggestionSelection: null,

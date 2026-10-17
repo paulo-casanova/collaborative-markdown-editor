@@ -73,6 +73,18 @@ public:
     );
 
     /**
+     * @brief Resolves all effective team names for a user across multi-parent DAG hierarchies.
+     * 
+     * @param conn Active PostgreSQL connection.
+     * @param user_id UUID string of the user.
+     * @return Result<std::vector<std::string>> Vector of human-readable team names, or DatabaseError.
+     */
+    static Result<std::vector<std::string>> get_effective_team_names(
+        pqxx::connection& conn,
+        const std::string& user_id
+    );
+
+    /**
      * @brief Evaluates whether a user has permission to perform an operation on a document.
      * 
      * Follows the 6-stage priority waterfall:
