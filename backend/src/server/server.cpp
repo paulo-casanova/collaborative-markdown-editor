@@ -682,6 +682,187 @@ Result<void> Server::start() {
         });
     });
 
+    // PATCH /api/v1/workspaces/directories (and POST /move, /rename)
+    auto handle_rename_dir = [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string old_path;
+            std::string new_path;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("old_path") && json["old_path"].is_string()) {
+                    old_path = json["old_path"].get<std::string>();
+                } else if (json.contains("path") && json["path"].is_string()) {
+                    old_path = json["path"].get<std::string>();
+                }
+                if (json.contains("new_path") && json["new_path"].is_string()) {
+                    new_path = json["new_path"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (old_path.empty() || new_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Fields 'old_path' (or 'path') and 'new_path' are required"}});
+                return;
+            }
+
+            auto rename_res = document_service_->rename_directory(old_path, new_path, *auth_res.value());
+            if (!rename_res.has_value()) {
+                if (rename_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (rename_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Directory not found"}});
+                } else if (rename_res.error() == ErrorCode::AlreadyExists) {
+                    send_json(res, "409 Conflict", {{"error", "Destination path already exists"}});
+                } else if (rename_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid path specification"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to rename directory"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", {
+                {"status", "success"},
+                {"old_path", old_path},
+                {"new_path", rename_res.value()}
+            });
+        });
+    };
+
+    app.patch("/api/v1/workspaces/directories", handle_rename_dir);
+    app.post("/api/v1/workspaces/directories/move", handle_rename_dir);
+    app.post("/api/v1/workspaces/directories/rename", handle_rename_dir);
+
+    // DELETE /api/v1/workspaces/directories (and POST /delete)
+    auto handle_delete_dir = [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
+
+        std::string query_path = url_decode(req->getQuery("path"));
+        if (query_path.empty()) {
+            query_path = url_decode(req->getQuery("directory_path"));
+        }
+
+        if (!query_path.empty()) {
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            auto del_res = document_service_->delete_directory(query_path, *auth_res.value());
+            if (!del_res.has_value()) {
+                if (del_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (del_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Directory not found"}});
+                } else if (del_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid path specification"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to delete directory"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", {
+                {"status", "success"},
+                {"path", query_path},
+                {"trash_id", del_res.value()}
+            });
+            return;
+        }
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string dir_path;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("path") && json["path"].is_string()) {
+                    dir_path = json["path"].get<std::string>();
+                } else if (json.contains("directory_path") && json["directory_path"].is_string()) {
+                    dir_path = json["directory_path"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (dir_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Field 'path' is required"}});
+                return;
+            }
+
+            auto del_res = document_service_->delete_directory(dir_path, *auth_res.value());
+            if (!del_res.has_value()) {
+                if (del_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (del_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Directory not found"}});
+                } else if (del_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid path specification"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to delete directory"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", {
+                {"status", "success"},
+                {"path", dir_path},
+                {"trash_id", del_res.value()}
+            });
+        });
+    };
+
+    app.del("/api/v1/workspaces/directories", handle_delete_dir);
+    app.post("/api/v1/workspaces/directories/delete", handle_delete_dir);
+
     // POST /api/v1/workspaces/files?path=<relative_path>
     app.post("/api/v1/workspaces/files", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;

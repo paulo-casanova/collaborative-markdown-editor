@@ -95,6 +95,23 @@ public:
     );
 
     /**
+     * @brief Renames or moves a directory in storage and updates database references.
+     */
+    Result<std::string> rename_directory(
+        const std::string& old_path,
+        const std::string& new_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Soft-deletes a directory and all nested documents to trash, cleaning up database records and CRDT state.
+     */
+    Result<std::string> delete_directory(
+        const std::string& relative_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
      * @brief Fetches a document by its database UUID.
      */
     Result<DocumentRecord> get_document_by_id(

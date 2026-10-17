@@ -178,6 +178,30 @@ export async function createDirectory(path: string): Promise<{ path: string; is_
   });
 }
 
+export async function renameDirectory(
+  oldPath: string,
+  newPath: string
+): Promise<{ status: string; old_path: string; new_path: string }> {
+  return apiRequest<{ status: string; old_path: string; new_path: string }>(
+    '/api/v1/workspaces/directories',
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ old_path: oldPath, new_path: newPath }),
+    }
+  );
+}
+
+export async function deleteDirectory(
+  path: string
+): Promise<{ status: string; path: string; trash_id: string }> {
+  return apiRequest<{ status: string; path: string; trash_id: string }>(
+    `/api/v1/workspaces/directories?path=${encodeURIComponent(path)}`,
+    {
+      method: 'DELETE',
+    }
+  );
+}
+
 export async function updateDocument(id: string, payload: { title?: string; content?: string; number_headers?: boolean }): Promise<DocumentRecord> {
   return apiRequest<DocumentRecord>(`/api/v1/documents/${id}`, {
     method: 'PATCH',

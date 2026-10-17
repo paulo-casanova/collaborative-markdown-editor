@@ -20,11 +20,14 @@ import {
   ArrowUpDown,
   Home,
   X,
+  Edit2,
 } from 'lucide-react';
 import {
   fetchDirectoryDashboard,
   createDocument,
   createDirectory,
+  renameDirectory,
+  deleteDirectory,
   deleteDocument,
 } from '../../api/documents';
 import { DirectoryDashboard, DirectoryDashboardItem } from '../../types/document';
@@ -41,7 +44,7 @@ type SortOrder = 'asc' | 'desc';
 export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { openTab } = useWorkspaceStore();
+  const { openTab, closeTab } = useWorkspaceStore();
   const cleanPath = (path || '').replace(/^\/+/, '').replace(/\/+$/, '');
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -136,6 +139,47 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
     },
     onError: (err: any) => {
       alert(`Failed to delete document: ${err?.message || 'Unknown error'}`);
+    },
+  });
+
+  // Delete Directory mutation
+  const deleteDirMutation = useMutation({
+    mutationFn: async (dirPath: string) => {
+      return deleteDirectory(dirPath);
+    },
+    onSuccess: (_data, deletedPath) => {
+      queryClient.invalidateQueries({ queryKey: ['directory-details'] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['trash-items'] });
+
+      // If we deleted the current directory we are viewing, close tab & navigate away
+      if (cleanPath === deletedPath || cleanPath.startsWith(deletedPath + '/')) {
+        closeTab(`dir:${cleanPath}`);
+        const parent = deletedPath.substring(0, deletedPath.lastIndexOf('/'));
+        openDirectoryTab(parent);
+      }
+    },
+    onError: (err: any) => {
+      alert(`Failed to delete folder: ${err?.message || 'Unknown error'}`);
+    },
+  });
+
+  // Rename Directory mutation
+  const renameDirMutation = useMutation({
+    mutationFn: async ({ oldPath, newPath }: { oldPath: string; newPath: string }) => {
+      return renameDirectory(oldPath, newPath);
+    },
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['directory-details'] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+
+      if (cleanPath === res.old_path) {
+        closeTab(`dir:${cleanPath}`);
+        openDirectoryTab(res.new_path);
+      }
+    },
+    onError: (err: any) => {
+      alert(`Failed to rename directory: ${err?.message || 'Unknown error'}`);
     },
   });
 
@@ -320,6 +364,42 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
             <FolderPlus className="w-3.5 h-3.5" />
             <span>New Folder</span>
           </button>
+
+          {cleanPath && (
+            <>
+              <button
+                onClick={() => {
+                  const segments = cleanPath.split('/').filter(Boolean);
+                  const currentName = segments[segments.length - 1];
+                  const newName = prompt(`Rename folder "${currentName}" to:`, currentName);
+                  if (newName && newName.trim() && newName.trim() !== currentName) {
+                    const parent = cleanPath.substring(0, cleanPath.lastIndexOf('/'));
+                    const newPath = parent ? `${parent}/${newName.trim()}` : newName.trim();
+                    renameDirMutation.mutate({ oldPath: cleanPath, newPath });
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-cme-border-base bg-cme-bg-base hover:bg-cme-bg-hover text-cme-text-base transition-colors"
+                title="Rename folder"
+                data-testid="dir-header-rename-btn"
+              >
+                <Edit2 className="w-3.5 h-3.5 text-sky-500" />
+                <span>Rename</span>
+              </button>
+              <button
+                onClick={() => {
+                  if (confirm(`Move folder "${cleanPath}" and all its contents to trash?`)) {
+                    deleteDirMutation.mutate(cleanPath);
+                  }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-rose-500/30 bg-cme-bg-base hover:bg-rose-500/10 text-rose-500 transition-colors"
+                title="Delete folder to trash"
+                data-testid="dir-header-delete-btn"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete</span>
+              </button>
+            </>
+          )}
 
           <button
             onClick={() =>
@@ -642,7 +722,37 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
                           <Shield className="w-3.5 h-3.5" />
                         </button>
 
-                        {item.id && !isDir && (
+                        {isDir ? (
+                          <>
+                            <button
+                              onClick={() => {
+                                const newName = prompt(`Rename folder "${item.name}" to:`, item.name);
+                                if (newName && newName.trim() && newName.trim() !== item.name) {
+                                  const parent = item.path.substring(0, item.path.lastIndexOf('/'));
+                                  const newPath = parent ? `${parent}/${newName.trim()}` : newName.trim();
+                                  renameDirMutation.mutate({ oldPath: item.path, newPath });
+                                }
+                              }}
+                              className="p-1 rounded hover:bg-cme-bg-surface text-cme-text-muted hover:text-sky-500 transition-colors"
+                              title="Rename folder"
+                              data-testid={`dir-row-rename-${item.name}`}
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Move folder "${item.name}" and all its contents to trash?`)) {
+                                  deleteDirMutation.mutate(item.path);
+                                }
+                              }}
+                              className="p-1 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors"
+                              title="Delete folder"
+                              data-testid={`dir-row-delete-${item.name}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : item.id ? (
                           <button
                             onClick={() => {
                               if (confirm(`Move "${item.name}" to trash?`)) {
@@ -651,10 +761,11 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
                             }}
                             className="p-1 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors"
                             title="Delete document"
+                            data-testid={`dir-row-delete-${item.name}`}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        )}
+                        ) : null}
                       </div>
                     </td>
                   </tr>

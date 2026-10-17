@@ -174,4 +174,33 @@ describe('Bundle Assets & Additive ACL types and logic', () => {
     expect(testResult.effective_teams).toContain('Engineering');
     expect(testResult.matched_rules[1].level).toBe('COMMENT');
   });
+
+  it('supports directory rename and delete path transformations', () => {
+    const oldPath = 'ops/monitoring';
+    const newPath = 'infrastructure/observability';
+    const childDocPath = 'ops/monitoring/alerts/pagerduty.md';
+
+    expect(childDocPath.startsWith(oldPath + '/')).toBe(true);
+    const suffix = childDocPath.substring(oldPath.length);
+    const transformedPath = newPath + suffix;
+    expect(transformedPath).toBe('infrastructure/observability/alerts/pagerduty.md');
+
+    // Directory tabs
+    const dirTabId = `dir:${oldPath}`;
+    expect(dirTabId.replace(`dir:${oldPath}`, `dir:${newPath}`)).toBe(`dir:${newPath}`);
+  });
+
+  it('strictly recognizes bundles only when named with .bundle suffix', () => {
+    const isBundleName = (name: string) => name.endsWith('.bundle');
+
+    expect(isBundleName('architecture.bundle')).toBe(true);
+    expect(isBundleName('project.bundle')).toBe(true);
+    expect(isBundleName('.bundle')).toBe(true);
+
+    // Regular directories even if containing index.md or other files are NOT bundles
+    expect(isBundleName('guides')).toBe(false);
+    expect(isBundleName('index.md')).toBe(false);
+    expect(isBundleName('specs')).toBe(false);
+    expect(isBundleName('project-gamma')).toBe(false);
+  });
 });

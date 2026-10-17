@@ -94,7 +94,9 @@ int main() {
     std::string team_id;
     {
         pqxx::work tx(conn_res->get());
-        tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%';");
+        tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%';");
+        tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%';");
+        tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%';");
         tx.exec("DELETE FROM users WHERE username = 'doc_author';");
         tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         std::string pw_hash = cme::auth::hash_password_bcrypt("pass123", 10);
@@ -605,6 +607,124 @@ int main() {
         std::cout << "  - Document bundle asset upload, listing, and deletion verified.\n";
     }
 
+    // 2.20 Directory Rename and Delete Lifecycle + Non-Bundle Recognition
+    std::cout << "\n[STEP 2.20] Testing Directory Rename, Delete, and Non-Bundle Recognition...\n";
+    {
+        // Create nested directory
+        nlohmann::json dir_create = {{"path", "ops_dir/sub_dir"}};
+        auto dir_resp = http_curl("POST", base_url + "/api/v1/workspaces/directories", auth_header, dir_create.dump());
+        assert(dir_resp.status_code == 201);
+
+        // Create document inside nested directory
+        nlohmann::json doc_create = {
+            {"path", "ops_dir/sub_dir/runbook.md"},
+            {"title", "Ops Runbook"},
+            {"content", "# Operations Runbook\nDetailed steps."}
+        };
+        auto doc_resp = http_curl("POST", base_url + "/api/v1/documents", auth_header, doc_create.dump());
+        assert(doc_resp.status_code == 201);
+        std::string runbook_id = nlohmann::json::parse(doc_resp.body)["id"].get<std::string>();
+
+        // Set permission on ops_dir
+        nlohmann::json perm_grant = {
+            {"target_type", "DIRECTORY"},
+            {"directory_path", "ops_dir"},
+            {"grantee_type", "USER"},
+            {"grantee_id", user_id},
+            {"access_level", "READ"},
+            {"is_inheritable", true}
+        };
+        auto p_grant_resp = http_curl("POST", base_url + "/api/v1/workspaces/permissions", auth_header, perm_grant.dump());
+        assert(p_grant_resp.status_code == 200);
+
+        // Rename directory ops_dir -> production_ops
+        nlohmann::json rename_payload = {
+            {"old_path", "ops_dir"},
+            {"new_path", "production_ops"}
+        };
+        auto rename_resp = http_curl("PATCH", base_url + "/api/v1/workspaces/directories", auth_header, rename_payload.dump());
+        assert(rename_resp.status_code == 200);
+        auto rename_json = nlohmann::json::parse(rename_resp.body);
+        assert(rename_json["status"] == "success");
+        assert(rename_json["new_path"] == "production_ops");
+
+        // Verify document path was updated
+        auto doc_get_resp = http_curl("GET", base_url + "/api/v1/documents/by-path?path=production_ops/sub_dir/runbook.md", auth_header);
+        assert(doc_get_resp.status_code == 200);
+        auto doc_get_json = nlohmann::json::parse(doc_get_resp.body);
+        assert(doc_get_json["id"] == runbook_id);
+        assert(doc_get_json["path"] == "production_ops/sub_dir/runbook.md");
+
+        // Verify workspace tree contains new path and does not contain old path
+        auto tree_check_resp = http_curl("GET", base_url + "/api/v1/workspaces/tree", auth_header);
+        assert(tree_check_resp.status_code == 200);
+        auto tree_check_json = nlohmann::json::parse(tree_check_resp.body);
+        bool found_new_tree = false;
+        bool found_old_tree = false;
+        for (const auto& item : tree_check_json["tree"]) {
+            if (item["path"] == "production_ops/sub_dir/runbook.md") found_new_tree = true;
+            if (item["path"] == "ops_dir/sub_dir/runbook.md" || item["path"] == "ops_dir") found_old_tree = true;
+        }
+        assert(found_new_tree);
+        assert(!found_old_tree);
+
+        // Verify directory permissions moved to new path
+        auto perm_check_resp = http_curl("GET", base_url + "/api/v1/workspaces/permissions?target_type=DIRECTORY&directory_path=production_ops", auth_header);
+        assert(perm_check_resp.status_code == 200);
+        auto perm_check_json = nlohmann::json::parse(perm_check_resp.body);
+        assert(!perm_check_json["explicit_grants"].empty());
+
+        // Delete directory production_ops to trash
+        auto del_dir_resp = http_curl("DELETE", base_url + "/api/v1/workspaces/directories?path=production_ops", auth_header);
+        assert(del_dir_resp.status_code == 200);
+        auto del_dir_json = nlohmann::json::parse(del_dir_resp.body);
+        assert(del_dir_json["status"] == "success");
+        std::string dir_trash_id = del_dir_json["trash_id"].get<std::string>();
+        assert(!dir_trash_id.empty());
+
+        // Document should no longer be accessible
+        auto doc_after_del = http_curl("GET", base_url + "/api/v1/documents/" + runbook_id, auth_header);
+        assert(doc_after_del.status_code == 404);
+
+        // Trash should list the deleted directory
+        auto trash_list_resp = http_curl("GET", base_url + "/api/v1/trash", auth_header);
+        assert(trash_list_resp.status_code == 200);
+        auto trash_list_json = nlohmann::json::parse(trash_list_resp.body);
+        bool found_in_trash = false;
+        for (const auto& item : trash_list_json["trash"]) {
+            if (item["id"] == dir_trash_id) {
+                found_in_trash = true;
+                assert(item["is_directory"] == true);
+                break;
+            }
+        }
+        assert(found_in_trash);
+
+        // Verify directory with index.md is NOT recognized as bundle unless named .bundle
+        nlohmann::json standard_dir = {{"path", "standard_folder"}};
+        auto std_dir_resp = http_curl("POST", base_url + "/api/v1/workspaces/directories", auth_header, standard_dir.dump());
+        assert(std_dir_resp.status_code == 201);
+
+        nlohmann::json idx_doc = {
+            {"path", "standard_folder/index.md"},
+            {"content", "# Standard Folder Index\nNot a bundle!"}
+        };
+        auto idx_resp = http_curl("POST", base_url + "/api/v1/documents", auth_header, idx_doc.dump());
+        assert(idx_resp.status_code == 201);
+
+        // Inspect in tree
+        auto tree_resp = http_curl("GET", base_url + "/api/v1/workspaces/tree", auth_header);
+        assert(tree_resp.status_code == 200);
+        auto tree_json = nlohmann::json::parse(tree_resp.body);
+        for (const auto& item : tree_json["tree"]) {
+            if (item["path"] == "standard_folder") {
+                assert(item["is_directory"] == true);
+                assert(item["is_bundle"] == false);
+            }
+        }
+        std::cout << "  - Directory rename, delete to trash, and .bundle naming enforcement verified.\n";
+    }
+
     // Stop server
     std::cout << "\n[TEST] Stopping server...\n";
     server->stop();
@@ -618,7 +738,9 @@ int main() {
     try {
         pqxx::connection conn(db_url);
         pqxx::work clean_tx(conn);
-        clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/getting-started.md%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'guides/manual.md%';");
+        clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%';");
+        clean_tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%';");
+        clean_tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%';");
         clean_tx.exec("DELETE FROM users WHERE username IN ('doc_author', 'doc_reader');");
         clean_tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         clean_tx.commit();

@@ -23,6 +23,8 @@ import {
   fetchWorkspaceTree,
   createDocument,
   createDirectory,
+  renameDirectory,
+  deleteDirectory,
   moveDocument,
   deleteDocument,
   uploadWorkspaceFile,
@@ -371,6 +373,99 @@ export const FileTree: React.FC = () => {
     },
   });
 
+  const renameDirMutation = useMutation({
+    mutationFn: ({ oldPath, newPath }: { oldPath: string; newPath: string }) =>
+      renameDirectory(oldPath, newPath),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
+      queryClient.invalidateQueries({ queryKey: ['directory-details'] });
+
+      const oldPath = res.old_path;
+      const newPath = res.new_path;
+
+      const currentTabs = useWorkspaceStore.getState().tabs;
+      for (const t of currentTabs) {
+        if (t.id === `dir:${oldPath}`) {
+          const segments = newPath.split('/').filter(Boolean);
+          const title = segments.length > 0 ? segments[segments.length - 1] : 'Root';
+          updateTabMetadata(t.id, {
+            path: newPath,
+            title,
+          });
+        } else if (t.path === oldPath || t.path.startsWith(oldPath + '/')) {
+          const suffix = t.path.substring(oldPath.length);
+          updateTabMetadata(t.id, {
+            path: newPath + suffix,
+          });
+        }
+      }
+
+      setExpandedPaths((prev) => {
+        const next = new Set<string>();
+        for (const p of prev) {
+          if (p === oldPath) {
+            next.add(newPath);
+          } else if (p.startsWith(oldPath + '/')) {
+            next.add(newPath + p.substring(oldPath.length));
+          } else {
+            next.add(p);
+          }
+        }
+        return next;
+      });
+
+      setModalMode(null);
+      setInputValue('');
+    },
+    onError: (err: any) => {
+      alert(`Failed to rename directory: ${err.message || 'Unknown error'}`);
+    },
+  });
+
+  const deleteDirMutation = useMutation({
+    mutationFn: (path: string) => deleteDirectory(path),
+    onSuccess: (_data, deletedPath) => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
+      queryClient.invalidateQueries({ queryKey: ['trash-items'] });
+      queryClient.invalidateQueries({ queryKey: ['directory-details'] });
+      setContextMenu(null);
+
+      const currentTabs = useWorkspaceStore.getState().tabs;
+      const matchingTabs = currentTabs.filter(
+        (t) =>
+          t.id === `dir:${deletedPath}` ||
+          t.path === deletedPath ||
+          t.path.startsWith(deletedPath + '/')
+      );
+
+      for (const t of matchingTabs) {
+        closeTab(t.id);
+      }
+
+      const isViewingDeleted = matchingTabs.some(
+        (t) =>
+          location.pathname === `/documents/${t.id}` ||
+          location.pathname === `/docs/${t.id}`
+      );
+
+      if (isViewingDeleted) {
+        const nextActive = useWorkspaceStore.getState().activeTabId;
+        if (nextActive) {
+          navigate(`${baseDocRoute}/${nextActive}`);
+        } else {
+          navigate('/');
+        }
+      }
+    },
+    onError: (err: any) => {
+      alert(`Failed to delete directory: ${err.message || 'Unknown error'}`);
+    },
+  });
+
   // Handle right-click context menu
   const handleContextMenu = (e: React.MouseEvent, node: WorkspaceNode) => {
     e.preventDefault();
@@ -393,7 +488,13 @@ export const FileTree: React.FC = () => {
   const handleDragStart = (e: React.DragEvent, node: WorkspaceNode) => {
     e.dataTransfer.setData(
       'application/json',
-      JSON.stringify({ id: node.id, path: node.path, name: node.name })
+      JSON.stringify({
+        id: node.id,
+        path: node.path,
+        name: node.name,
+        is_directory: node.is_directory,
+        is_bundle: node.is_bundle,
+      })
     );
   };
 
@@ -425,15 +526,22 @@ export const FileTree: React.FC = () => {
       const dataStr = e.dataTransfer.getData('application/json');
       if (!dataStr) return;
       const draggedNode = JSON.parse(dataStr);
-      if (!draggedNode.id || draggedNode.path === targetNode.path) return;
+      if (draggedNode.path === targetNode.path) return;
 
       const targetPath = `${targetNode.path}/${draggedNode.name}`;
       if (draggedNode.path === targetPath) return;
 
-      moveDocMutation.mutate({
-        id: draggedNode.id,
-        newPath: targetPath,
-      });
+      if (draggedNode.is_directory && !draggedNode.is_bundle) {
+        renameDirMutation.mutate({
+          oldPath: draggedNode.path,
+          newPath: targetPath,
+        });
+      } else if (draggedNode.id) {
+        moveDocMutation.mutate({
+          id: draggedNode.id,
+          newPath: targetPath,
+        });
+      }
     } catch {
       // Ignore parse failure
     }
@@ -469,24 +577,32 @@ export const FileTree: React.FC = () => {
       const folderName = inputValue.trim().replace(/^\/+|\/+$/g, '');
       const fullPath = parentDir ? `${parentDir}/${folderName}` : folderName;
       createDirMutation.mutate(fullPath);
-    } else if (modalMode === 'rename' && activeNode && activeNode.id) {
-      const oldPath = activeNode.path;
-      const dir = oldPath.substring(0, oldPath.lastIndexOf('/'));
-      let newName = inputValue.trim();
-      if (!newName.includes('.')) {
-        newName += oldPath.endsWith('.bundle') ? '.bundle' : '.md';
+    } else if (modalMode === 'rename' && activeNode) {
+      if (activeNode.is_directory && !activeNode.is_bundle) {
+        const oldPath = activeNode.path;
+        const dir = oldPath.substring(0, oldPath.lastIndexOf('/'));
+        const newName = inputValue.trim().replace(/^\/+|\/+$/g, '');
+        const newPath = dir ? `${dir}/${newName}` : newName;
+        renameDirMutation.mutate({ oldPath, newPath });
+      } else if (activeNode.id) {
+        const oldPath = activeNode.path;
+        const dir = oldPath.substring(0, oldPath.lastIndexOf('/'));
+        let newName = inputValue.trim();
+        if (!newName.includes('.')) {
+          newName += oldPath.endsWith('.bundle') ? '.bundle' : '.md';
+        }
+        const newPath = dir ? `${dir}/${newName}` : newName;
+        const dotIndex = newName.lastIndexOf('.');
+        const titleCandidate =
+          isMarkdownPath(newPath, activeNode.is_bundle) && dotIndex > 0
+            ? newName.substring(0, dotIndex)
+            : newName;
+        moveDocMutation.mutate({
+          id: activeNode.id,
+          newPath,
+          title: titleCandidate,
+        });
       }
-      const newPath = dir ? `${dir}/${newName}` : newName;
-      const dotIndex = newName.lastIndexOf('.');
-      const titleCandidate =
-        isMarkdownPath(newPath, activeNode.is_bundle) && dotIndex > 0
-          ? newName.substring(0, dotIndex)
-          : newName;
-      moveDocMutation.mutate({
-        id: activeNode.id,
-        newPath,
-        title: titleCandidate,
-      });
     }
   };
 
@@ -600,6 +716,8 @@ export const FileTree: React.FC = () => {
       <div key={node.path} className="space-y-0.5">
         <div
           style={{ paddingLeft }}
+          draggable={true}
+          onDragStart={(e) => handleDragStart(e, node)}
           data-testid={`filetree-folder-${node.name}`}
           onContextMenu={(e) => handleContextMenu(e, node)}
           onDragOver={(e) => handleDragOver(e, node)}
@@ -806,7 +924,7 @@ export const FileTree: React.FC = () => {
             </>
           )}
 
-          {contextMenu.node.id && (
+          {(contextMenu.node.id || (contextMenu.node.is_directory && !contextMenu.node.is_bundle)) && (
             <>
               <button
                 data-testid="filetree-rename-btn"
@@ -824,15 +942,25 @@ export const FileTree: React.FC = () => {
               <button
                 data-testid="filetree-delete-btn"
                 onClick={() => {
-                  if (
-                    confirm(
-                      `Move "${contextMenu.node.name}" to Trash? You can restore it later.`
-                    )
-                  ) {
-                    deleteDocMutation.mutate({
-                      id: contextMenu.node.id!,
-                      path: contextMenu.node.path,
-                    });
+                  if (contextMenu.node.is_directory && !contextMenu.node.is_bundle) {
+                    if (
+                      confirm(
+                        `Move folder "${contextMenu.node.name}" and all its contents to Trash? You can restore it later.`
+                      )
+                    ) {
+                      deleteDirMutation.mutate(contextMenu.node.path);
+                    }
+                  } else if (contextMenu.node.id) {
+                    if (
+                      confirm(
+                        `Move "${contextMenu.node.name}" to Trash? You can restore it later.`
+                      )
+                    ) {
+                      deleteDocMutation.mutate({
+                        id: contextMenu.node.id,
+                        path: contextMenu.node.path,
+                      });
+                    }
                   }
                 }}
                 className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-rose-500/10 text-rose-500 text-left"

@@ -44,20 +44,20 @@ int main() {
     // Standalone file is not a bundle
     assert(!*backend.is_bundle("guides/intro.md"));
 
-    // Bundle type A: directory with .bundle extension
+    // Directory with .bundle extension is recognized as bundle
     backend.create_directory("projects/alpha.bundle");
     backend.write_file("projects/alpha.bundle/notes.txt", "Some notes");
     assert(*backend.is_bundle("projects/alpha.bundle"));
 
-    // Bundle type B: directory with index.md
+    // Directory with index.md but not named .bundle is NOT a bundle
     backend.create_directory("projects/beta");
     backend.write_file("projects/beta/index.md", "# Beta Document");
-    assert(*backend.is_bundle("projects/beta"));
+    assert(!*backend.is_bundle("projects/beta"));
 
-    // Bundle type C: directory with <dirname>.md (project-gamma/project-gamma.md)
+    // Directory with <dirname>.md but not named .bundle is NOT a bundle
     backend.create_directory("projects/project-gamma");
     backend.write_file("projects/project-gamma/project-gamma.md", "# Gamma Document");
-    assert(*backend.is_bundle("projects/project-gamma"));
+    assert(!*backend.is_bundle("projects/project-gamma"));
 
     // 4. Moving Nodes & Bundles
     std::cout << "[TEST] 4. Moving Nodes & Bundles...\n";

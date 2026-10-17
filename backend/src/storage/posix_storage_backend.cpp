@@ -87,21 +87,7 @@ bool PosixStorageBackend::is_bundle_path(const std::filesystem::path& full_path)
     }
 
     std::string filename = full_path.filename().string();
-    if (filename.ends_with(".bundle")) {
-        return true;
-    }
-
-    // Check for index.md
-    if (std::filesystem::exists(full_path / "index.md")) {
-        return true;
-    }
-
-    // Check for <dir_name>.md (e.g. project-alpha/project-alpha.md)
-    if (std::filesystem::exists(full_path / (filename + ".md"))) {
-        return true;
-    }
-
-    return false;
+    return filename.ends_with(".bundle");
 }
 
 NodeInfo PosixStorageBackend::make_node_info(

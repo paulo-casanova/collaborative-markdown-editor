@@ -135,7 +135,9 @@ Result<DocumentRecord> DocumentService::create_document(
     }
 
     bool is_bundle = req.is_bundle || norm_path.ends_with(".bundle");
-    if (!is_bundle && !norm_path.ends_with(".md")) {
+    if (is_bundle && !norm_path.ends_with(".bundle")) {
+        norm_path += ".bundle";
+    } else if (!is_bundle && !norm_path.ends_with(".md")) {
         norm_path += ".md";
     }
 
@@ -287,6 +289,205 @@ Result<std::string> DocumentService::create_directory(
     }
 
     return norm_path;
+}
+
+Result<std::string> DocumentService::rename_directory(
+    const std::string& old_path,
+    const std::string& new_path,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    std::string norm_old = normalize_rel_path(old_path);
+    std::string norm_new = normalize_rel_path(new_path);
+
+    if (norm_old.empty() || norm_new.empty() ||
+        has_path_traversal(norm_old) || has_path_traversal(norm_new)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    if (norm_old == norm_new) {
+        return norm_new;
+    }
+
+    // A directory cannot be moved into a subdirectory of itself
+    if (norm_new.starts_with(norm_old + "/")) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    // Check old directory exists and is a directory
+    auto info_res = storage_->get_node_info(norm_old);
+    if (!info_res.has_value()) {
+        return std::unexpected(info_res.error());
+    }
+    if (!info_res->is_directory) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    // Check if new path already exists
+    auto exists_res = storage_->exists(norm_new);
+    if (exists_res.has_value() && exists_res.value()) {
+        return std::unexpected(ErrorCode::AlreadyExists);
+    }
+
+    // Check permissions
+    auto access_old = check_access(user, "", norm_old);
+    if (!access_old.has_value() || access_old.value() < db::AccessLevel::Edit) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    std::filesystem::path fp_new(norm_new);
+    std::string new_parent = fp_new.parent_path().string();
+    if (!new_parent.empty()) {
+        auto access_new = check_access(user, "", new_parent);
+        if (!access_new.has_value() || access_new.value() < db::AccessLevel::Edit) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+    }
+
+    // Perform storage move
+    auto move_res = storage_->move_node(norm_old, norm_new);
+    if (!move_res.has_value()) {
+        return std::unexpected(move_res.error());
+    }
+
+    // Update database records in transaction
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        // Update documents table (exact match or children)
+        tx.exec_params(
+            R"(
+            UPDATE documents
+            SET fs_path = $2 || SUBSTRING(fs_path FROM LENGTH($1) + 1),
+                updated_at = NOW()
+            WHERE fs_path = $1 OR fs_path LIKE $1 || '/%';
+            )",
+            norm_old,
+            norm_new
+        );
+
+        // Update directory permissions
+        tx.exec_params(
+            R"(
+            UPDATE permissions
+            SET directory_path = $2 || SUBSTRING(directory_path FROM LENGTH($1) + 1)
+            WHERE target_type = 'DIRECTORY'
+              AND (directory_path = $1 OR directory_path LIKE $1 || '/%');
+            )",
+            norm_old,
+            norm_new
+        );
+
+        // Update directory_metadata
+        tx.exec_params(
+            R"(
+            UPDATE directory_metadata
+            SET directory_path = $2 || SUBSTRING(directory_path FROM LENGTH($1) + 1),
+                updated_at = NOW()
+            WHERE directory_path = $1 OR directory_path LIKE $1 || '/%';
+            )",
+            norm_old,
+            norm_new
+        );
+
+        tx.commit();
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] rename_directory DB update failed: " << e.what() << "\n";
+        // Attempt rollback storage move
+        storage_->move_node(norm_new, norm_old);
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    return norm_new;
+}
+
+Result<std::string> DocumentService::delete_directory(
+    const std::string& relative_path,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    std::string norm_path = normalize_rel_path(relative_path);
+    if (norm_path.empty() || has_path_traversal(norm_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    // Check directory exists and is a directory
+    auto info_res = storage_->get_node_info(norm_path);
+    if (!info_res.has_value()) {
+        return std::unexpected(info_res.error());
+    }
+    if (!info_res->is_directory) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    // Check permission
+    auto access_res = check_access(user, "", norm_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Edit) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    // Perform storage soft-delete to trash
+    auto trash_res = storage_->delete_to_trash(norm_path);
+    if (!trash_res.has_value()) {
+        return std::unexpected(trash_res.error());
+    }
+
+    std::string trash_id = trash_res.value();
+
+    // Clean up DB records
+    auto conn_res = db_pool_->acquire();
+    if (conn_res.has_value()) {
+        try {
+            pqxx::work tx(conn_res->get());
+
+            // Find all documents inside directory
+            auto doc_rows = tx.exec_params(
+                "SELECT id::text FROM documents WHERE fs_path = $1 OR fs_path LIKE $1 || '/%';",
+                norm_path
+            );
+
+            // Clean up CRDT state for each doc
+            for (const auto& r : doc_rows) {
+                storage_->delete_crdt_state(r[0].as<std::string>());
+            }
+
+            // Delete documents (cascades to permissions, comments, tasks, suggestions)
+            tx.exec_params(
+                "DELETE FROM documents WHERE fs_path = $1 OR fs_path LIKE $1 || '/%';",
+                norm_path
+            );
+
+            // Delete directory permissions
+            tx.exec_params(
+                "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND (directory_path = $1 OR directory_path LIKE $1 || '/%');",
+                norm_path
+            );
+
+            // Delete directory metadata
+            tx.exec_params(
+                "DELETE FROM directory_metadata WHERE directory_path = $1 OR directory_path LIKE $1 || '/%';",
+                norm_path
+            );
+
+            tx.commit();
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] delete_directory DB cleanup failed: " << e.what() << "\n";
+            return std::unexpected(ErrorCode::DatabaseError);
+        }
+    }
+
+    return trash_id;
 }
 
 Result<DocumentRecord> DocumentService::get_document_by_id(
@@ -1609,8 +1810,67 @@ Result<DocumentRecord> DocumentService::restore_trash_item(
         return std::unexpected(rest_res.error());
     }
 
-    std::string content;
     bool is_bundle = storage_->is_bundle(restore_dest).value_or(false);
+    auto info_res = storage_->get_node_info(restore_dest);
+    bool is_pure_dir = info_res.has_value() && info_res->is_directory && !is_bundle;
+
+    if (is_pure_dir) {
+        auto conn_res = db_pool_->acquire();
+        if (conn_res.has_value()) {
+            try {
+                pqxx::work tx(conn_res->get());
+                tx.exec_params(
+                    "INSERT INTO directory_metadata (directory_path, owner_user_id) "
+                    "VALUES ($1, $2::uuid) ON CONFLICT (directory_path) DO UPDATE SET updated_at = NOW();",
+                    restore_dest,
+                    user.user_id
+                );
+                auto list_res = storage_->list_directory(restore_dest, true);
+                if (list_res.has_value()) {
+                    for (const auto& child : list_res.value()) {
+                        if (child.is_directory && !child.is_bundle) continue;
+                        if (child.relative_path.find("/images/") != std::string::npos ||
+                            child.relative_path.find(".bundle/") != std::string::npos) {
+                            continue;
+                        }
+                        std::string doc_content;
+                        if (child.is_bundle) {
+                            auto r = storage_->read_file(child.relative_path + "/index.md");
+                            if (r) doc_content = *r;
+                        } else {
+                            auto r = storage_->read_file(child.relative_path);
+                            if (r) doc_content = *r;
+                        }
+                        std::string doc_title = derive_title(doc_content, child.relative_path);
+                        tx.exec_params(
+                            "INSERT INTO documents (fs_path, title, owner_user_id) "
+                            "VALUES ($1, $2, $3::uuid) "
+                            "ON CONFLICT (fs_path) DO UPDATE SET updated_at = NOW(), title = EXCLUDED.title;",
+                            child.relative_path,
+                            doc_title,
+                            user.user_id
+                        );
+                    }
+                }
+                tx.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "[ERROR] restore_trash_item directory re-indexing failed: " << e.what() << "\n";
+            }
+        }
+        return DocumentRecord{
+            .id = "",
+            .path = restore_dest,
+            .title = restore_dest,
+            .content = "",
+            .is_bundle = false,
+            .owner_user_id = user.user_id,
+            .number_headers = false,
+            .created_at = "",
+            .updated_at = ""
+        };
+    }
+
+    std::string content;
     if (is_bundle) {
         auto b_res = storage_->read_file(restore_dest + "/index.md");
         content = b_res.value_or("");
