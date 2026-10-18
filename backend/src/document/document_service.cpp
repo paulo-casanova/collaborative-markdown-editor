@@ -589,6 +589,17 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
     try {
         pqxx::work tx(conn_res->get());
 
+        auto validate_and_purge_dir_rows = [&](pqxx::result& r_set) {
+            if (r_set.empty()) return;
+            std::string existing_fs = r_set[0][1].as<std::string>();
+            auto info_res = storage_->get_node_info(existing_fs);
+            if (info_res.has_value() && info_res->is_directory && !existing_fs.ends_with(".bundle")) {
+                // Stale directory row in documents table! Purge it.
+                tx.exec_params("DELETE FROM documents WHERE id = $1::uuid;", r_set[0][0].as<std::string>());
+                r_set = pqxx::result();
+            }
+        };
+
         // 1. Exact fs_path match
         auto rows = tx.exec_params(
             "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
@@ -598,40 +609,47 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             "FROM documents WHERE fs_path = $1;",
             norm_path
         );
+        validate_and_purge_dir_rows(rows);
 
-        if (!rows.empty()) {
-            std::string existing_fs = rows[0][1].as<std::string>();
-            auto info_res = storage_->get_node_info(existing_fs);
-            if (info_res.has_value() && info_res->is_directory && !existing_fs.ends_with(".bundle")) {
-                // Stale directory row in documents table! Purge it.
-                tx.exec_params("DELETE FROM documents WHERE id = $1::uuid;", rows[0][0].as<std::string>());
-                rows = pqxx::result();
-            }
-        }
-
-        // 2. Exact fs_path with .md extension if not already ending with .md
+        // 2. Exact fs_path with .md extension or folder note resolution (<dir>/<basename>.md or <dir>/index.md)
         if (rows.empty() && !norm_path.ends_with(".md") && !norm_path.ends_with(".bundle")) {
             rows = tx.exec_params(
                 "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
                 "       COALESCE(number_headers, false), "
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
-                "FROM documents WHERE fs_path = $1;",
-                norm_path + ".md"
+                "FROM documents "
+                "WHERE fs_path = $1 "
+                "   OR fs_path = $2 "
+                "   OR fs_path = $3 "
+                "ORDER BY CASE "
+                "   WHEN fs_path = $1 THEN 1 "
+                "   WHEN fs_path = $2 THEN 2 "
+                "   ELSE 3 "
+                "END "
+                "LIMIT 1;",
+                norm_path + ".md",
+                norm_path + "/" + basename + ".md",
+                norm_path + "/index.md"
             );
+            validate_and_purge_dir_rows(rows);
         }
 
-        // 3. Exact title match (norm_path or stem)
+        // 3. Exact title match (norm_path or stem) on valid document files/bundles
         if (rows.empty()) {
             rows = tx.exec_params(
                 "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
                 "       COALESCE(number_headers, false), "
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
-                "FROM documents WHERE title = $1 OR title = $2 LIMIT 1;",
+                "FROM documents "
+                "WHERE (title = $1 OR title = $2) "
+                "  AND (fs_path LIKE '%.md' OR fs_path LIKE '%.bundle') "
+                "LIMIT 1;",
                 norm_path,
                 stem
             );
+            validate_and_purge_dir_rows(rows);
         }
 
         // 4. Vault-wide basename match (e.g. [[Test File Modified]] matches specs/Test File Modified.md)
@@ -642,18 +660,24 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
                 "FROM documents "
-                "WHERE fs_path = $1 "
+                "WHERE (fs_path LIKE '%.md' OR fs_path LIKE '%.bundle') "
+                "  AND (fs_path = $1 "
                 "   OR fs_path = $1 || '.md' "
+                "   OR fs_path = $1 || '.bundle' "
                 "   OR fs_path LIKE '%/' || $1 "
                 "   OR fs_path LIKE '%/' || $1 || '.md' "
+                "   OR fs_path LIKE '%/' || $1 || '.bundle' "
                 "   OR fs_path = $2 "
                 "   OR fs_path = $2 || '.md' "
+                "   OR fs_path = $2 || '.bundle' "
                 "   OR fs_path LIKE '%/' || $2 "
                 "   OR fs_path LIKE '%/' || $2 || '.md' "
+                "   OR fs_path LIKE '%/' || $2 || '.bundle') "
                 "LIMIT 1;",
                 basename,
                 stem
             );
+            validate_and_purge_dir_rows(rows);
         }
 
         // 5. Case-insensitive match on fs_path, basename, or title (ILIKE)
@@ -664,20 +688,26 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
                 "FROM documents "
-                "WHERE fs_path ILIKE $1 "
+                "WHERE (fs_path ILIKE '%.md' OR fs_path ILIKE '%.bundle') "
+                "  AND (fs_path ILIKE $1 "
                 "   OR fs_path ILIKE $1 || '.md' "
+                "   OR fs_path ILIKE $1 || '.bundle' "
                 "   OR fs_path ILIKE '%/' || $1 "
                 "   OR fs_path ILIKE '%/' || $1 || '.md' "
+                "   OR fs_path ILIKE '%/' || $1 || '.bundle' "
                 "   OR fs_path ILIKE $2 "
                 "   OR fs_path ILIKE $2 || '.md' "
+                "   OR fs_path ILIKE $2 || '.bundle' "
                 "   OR fs_path ILIKE '%/' || $2 "
                 "   OR fs_path ILIKE '%/' || $2 || '.md' "
+                "   OR fs_path ILIKE '%/' || $2 || '.bundle' "
                 "   OR title ILIKE $1 "
-                "   OR title ILIKE $2 "
+                "   OR title ILIKE $2) "
                 "LIMIT 1;",
                 basename,
                 stem
             );
+            validate_and_purge_dir_rows(rows);
         }
 
         // 6. Typo-tolerant / fuzzy match across all existing documents (Levenshtein distance <= 2 or 3)
@@ -687,7 +717,8 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
                 "       COALESCE(number_headers, false), "
                 "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
                 "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
-                "FROM documents;"
+                "FROM documents "
+                "WHERE fs_path LIKE '%.md' OR fs_path LIKE '%.bundle';"
             );
 
             size_t best_dist = std::numeric_limits<size_t>::max();
@@ -723,6 +754,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
                     "FROM documents WHERE id = $1::uuid;",
                     best_id
                 );
+                validate_and_purge_dir_rows(rows);
             }
         }
 
@@ -752,6 +784,10 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             } else if (!info_res.has_value()) {
                 if (!disk_target_path.ends_with(".md") && storage_->exists(disk_target_path + ".md").value_or(false)) {
                     disk_target_path += ".md";
+                } else if (storage_->exists(disk_target_path + "/" + basename + ".md").value_or(false)) {
+                    disk_target_path = disk_target_path + "/" + basename + ".md";
+                } else if (storage_->exists(disk_target_path + "/index.md").value_or(false)) {
+                    disk_target_path = disk_target_path + "/index.md";
                 } else {
                     auto list_res = storage_->list_directory("", true);
                     if (list_res.has_value()) {
@@ -759,7 +795,9 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
                             if (node.is_directory && !node.is_bundle) continue;
                             std::filesystem::path np(node.relative_path);
                             if (np.filename().string() == basename ||
+                                np.filename().string() == basename + ".md" ||
                                 np.stem().string() == stem ||
+                                to_lower_string(np.filename().string()) == to_lower_string(basename + ".md") ||
                                 to_lower_string(np.stem().string()) == to_lower_string(stem)) {
                                 disk_target_path = node.relative_path;
                                 break;
@@ -1392,6 +1430,7 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
             return std::unexpected(conn_res.error());
         }
 
+        std::vector<std::string> stale_ids;
         try {
             pqxx::read_transaction tx(conn_res->get());
             auto rows = tx.exec(
@@ -1400,7 +1439,14 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
                 "FROM documents;"
             );
             for (const auto& r : rows) {
-                indexed_docs[r[1].as<std::string>()] = DocMeta{
+                std::string p = r[1].as<std::string>();
+                bool is_bundle_path = p.ends_with(".bundle");
+                auto n_info = storage_->get_node_info(p);
+                if (n_info.has_value() && n_info->is_directory && !is_bundle_path) {
+                    stale_ids.push_back(r[0].as<std::string>());
+                    continue;
+                }
+                indexed_docs[p] = DocMeta{
                     .id = r[0].as<std::string>(),
                     .title = r[2].as<std::string>(),
                     .owner_id = r[3].as<std::string>(),
@@ -1409,6 +1455,18 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
             }
         } catch (const std::exception& e) {
             std::cerr << "[ERROR] get_workspace_tree DB fetch failed: " << e.what() << "\n";
+        }
+
+        if (!stale_ids.empty()) {
+            try {
+                pqxx::work wtx(conn_res->get());
+                for (const auto& sid : stale_ids) {
+                    wtx.exec_params("DELETE FROM documents WHERE id = $1::uuid;", sid);
+                }
+                wtx.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "[WARN] Purging stale directory records in get_workspace_tree failed: " << e.what() << "\n";
+            }
         }
 
         // Auto-reconcile unindexed documents & files found on disk

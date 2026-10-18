@@ -11,7 +11,7 @@ import {
   extractDocumentHeadings,
   matchesHeadingTarget,
 } from '../../../utils/linkValidator';
-import { getWorkspaceFileUrl, isMarkdownPath } from '../../../api/documents';
+import { findWorkspacePath, getWorkspaceFileUrl, isMarkdownPath } from '../../../api/documents';
 import {
   parseCodeFenceHeader,
   extractSnippetFromText,
@@ -412,9 +412,11 @@ export class WikiLinkWidget extends WidgetType {
         effectiveAnchor = rawAnchor || targetDoc;
       }
     }
+    const resolvedWorkspaceDoc = !external && !isSameDoc && targetDoc ? findWorkspacePath(targetDoc, this.docPath) : '';
+    const effectiveTargetDoc = resolvedWorkspaceDoc || targetDoc;
     const strippedAnchor = stripHeadingNumberPrefix(effectiveAnchor);
     const anchorSlug = effectiveAnchor ? slugify(strippedAnchor || effectiveAnchor) : '';
-    const isNonMarkdownAsset = !external && !isSameDoc && !isMarkdownPath(targetDoc);
+    const isNonMarkdownAsset = !external && !isSameDoc && !isMarkdownPath(effectiveTargetDoc);
 
     const pill = document.createElement('span');
     if (this.isValid) {
@@ -501,7 +503,7 @@ export class WikiLinkWidget extends WidgetType {
         return;
       }
       if (isNonMarkdownAsset) {
-        window.open(getWorkspaceFileUrl(targetDoc, this.docPath), '_blank', 'noopener,noreferrer');
+        window.open(getWorkspaceFileUrl(effectiveTargetDoc, this.docPath), '_blank', 'noopener,noreferrer');
         popover.classList.add('hidden');
         return;
       }
@@ -516,15 +518,15 @@ export class WikiLinkWidget extends WidgetType {
       window.addEventListener('cme-wikilink-handled', onHandled, { once: true });
       window.dispatchEvent(
         new CustomEvent('cme-open-wikilink', {
-          detail: { target: targetDoc, anchor: anchorSlug },
+          detail: { target: effectiveTargetDoc, anchor: anchorSlug },
         })
       );
       setTimeout(() => {
         window.removeEventListener('cme-wikilink-handled', onHandled);
         if (!handled && typeof window !== 'undefined') {
           const hashPart = anchorSlug ? `#${anchorSlug}` : '';
-          if (!window.location.search.includes(encodeURIComponent(targetDoc))) {
-            window.location.href = `/documents/by-path?path=${encodeURIComponent(targetDoc)}${hashPart}`;
+          if (!window.location.search.includes(encodeURIComponent(effectiveTargetDoc))) {
+            window.location.href = `/documents/by-path?path=${encodeURIComponent(effectiveTargetDoc)}${hashPart}`;
           }
         }
       }, 50);
@@ -1424,6 +1426,9 @@ function createTableCellLink(
     }
   }
 
+  const resolvedWorkspaceDoc = !external && !isSameDoc && targetDoc ? findWorkspacePath(targetDoc, docPath) : '';
+  const effectiveTargetDoc = resolvedWorkspaceDoc || targetDoc;
+
   const validation = validateLinkTarget(cleanTarget, docText, docPath);
   if (!validation.valid) {
     const broken = document.createElement('span');
@@ -1481,9 +1486,9 @@ function createTableCellLink(
       return;
     }
 
-    const isNonMarkdownAsset = !isMarkdownPath(targetDoc);
+    const isNonMarkdownAsset = !isMarkdownPath(effectiveTargetDoc);
     if (isNonMarkdownAsset) {
-      window.open(getWorkspaceFileUrl(targetDoc, docPath), '_blank', 'noopener,noreferrer');
+      window.open(getWorkspaceFileUrl(effectiveTargetDoc, docPath), '_blank', 'noopener,noreferrer');
       return;
     }
 
@@ -1495,15 +1500,15 @@ function createTableCellLink(
     window.addEventListener('cme-wikilink-handled', onHandled, { once: true });
     window.dispatchEvent(
       new CustomEvent('cme-open-wikilink', {
-        detail: { target: targetDoc, anchor: anchorSlug },
+        detail: { target: effectiveTargetDoc, anchor: anchorSlug },
       })
     );
     setTimeout(() => {
       window.removeEventListener('cme-wikilink-handled', onHandled);
       if (!handled && typeof window !== 'undefined') {
         const hashPart = anchorSlug ? `#${anchorSlug}` : '';
-        if (!window.location.search.includes(encodeURIComponent(targetDoc))) {
-          window.location.href = `/documents/by-path?path=${encodeURIComponent(targetDoc)}${hashPart}`;
+        if (!window.location.search.includes(encodeURIComponent(effectiveTargetDoc))) {
+          window.location.href = `/documents/by-path?path=${encodeURIComponent(effectiveTargetDoc)}${hashPart}`;
         }
       }
     }, 50);

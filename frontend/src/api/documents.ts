@@ -26,6 +26,14 @@ export function updateWorkspaceNodesCache(nodes: WorkspaceNode[]) {
       const lastSlash = norm.lastIndexOf('/');
       const basename = lastSlash >= 0 ? norm.slice(lastSlash + 1) : norm;
       workspacePathLookup.set(basename.toLowerCase(), norm);
+      if (basename.toLowerCase().endsWith('.md')) {
+        const stem = basename.slice(0, -3);
+        workspacePathLookup.set(stem.toLowerCase(), norm);
+      }
+      if (norm.toLowerCase().endsWith('.md')) {
+        const normWithoutMd = norm.slice(0, -3);
+        workspacePathLookup.set(normWithoutMd.toLowerCase(), norm);
+      }
     }
   }
 }
@@ -75,9 +83,15 @@ export function findWorkspacePath(target: string, currentDocPath?: string): stri
     if (workspacePathLookup.has(relClean.toLowerCase())) {
       return workspacePathLookup.get(relClean.toLowerCase())!;
     }
+    if (workspacePathLookup.has(`${relClean.toLowerCase()}.md`)) {
+      return workspacePathLookup.get(`${relClean.toLowerCase()}.md`)!;
+    }
     const relDecoded = resolveWorkspaceRelativePath(decoded, currentDocPath);
     if (workspacePathLookup.has(relDecoded.toLowerCase())) {
       return workspacePathLookup.get(relDecoded.toLowerCase())!;
+    }
+    if (workspacePathLookup.has(`${relDecoded.toLowerCase()}.md`)) {
+      return workspacePathLookup.get(`${relDecoded.toLowerCase()}.md`)!;
     }
   }
 
@@ -85,15 +99,24 @@ export function findWorkspacePath(target: string, currentDocPath?: string): stri
   if (workspacePathLookup.has(clean.toLowerCase())) {
     return workspacePathLookup.get(clean.toLowerCase())!;
   }
+  if (workspacePathLookup.has(`${clean.toLowerCase()}.md`)) {
+    return workspacePathLookup.get(`${clean.toLowerCase()}.md`)!;
+  }
   if (workspacePathLookup.has(decoded.toLowerCase())) {
     return workspacePathLookup.get(decoded.toLowerCase())!;
   }
+  if (workspacePathLookup.has(`${decoded.toLowerCase()}.md`)) {
+    return workspacePathLookup.get(`${decoded.toLowerCase()}.md`)!;
+  }
 
-  // 3. Basename match in lookup
+  // 3. Basename or stem match in lookup
   const lastSlash = decoded.lastIndexOf('/');
   const basename = lastSlash >= 0 ? decoded.slice(lastSlash + 1) : decoded;
   if (workspacePathLookup.has(basename.toLowerCase())) {
     return workspacePathLookup.get(basename.toLowerCase())!;
+  }
+  if (workspacePathLookup.has(`${basename.toLowerCase()}.md`)) {
+    return workspacePathLookup.get(`${basename.toLowerCase()}.md`)!;
   }
 
   // 4. Default to resolved relative path if currentDocPath provided, else decoded/clean

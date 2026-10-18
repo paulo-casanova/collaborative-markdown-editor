@@ -20,6 +20,7 @@ import {
   fetchDocument,
   fetchDocumentByPath,
   fetchDocumentTasks,
+  findWorkspacePath,
   getWorkspaceFileUrl,
   isMarkdownPath,
 } from '../api/documents';
@@ -1562,9 +1563,11 @@ function renderInlineFormatted(
           effectiveAnchor = rawAnchor || targetDoc;
         }
       }
+      const resolvedWorkspaceDoc = !external && !isSameDoc && targetDoc ? findWorkspacePath(targetDoc, currentDocPath) : '';
+      const effectiveTargetDoc = resolvedWorkspaceDoc || targetDoc;
       const strippedAnchor = stripHeadingNumberPrefix(effectiveAnchor);
       const anchorSlug = effectiveAnchor ? slugify(strippedAnchor || effectiveAnchor) : '';
-      const isNonMarkdownAsset = !external && !isSameDoc && !isMarkdownPath(targetDoc);
+      const isNonMarkdownAsset = !external && !isSameDoc && !isMarkdownPath(effectiveTargetDoc);
 
       const displayLabel = label || (isSameDoc ? (effectiveAnchor ? `#${effectiveAnchor}` : cleanTarget) : cleanTarget);
 
@@ -1656,7 +1659,7 @@ function renderInlineFormatted(
       }
 
       if (isNonMarkdownAsset) {
-        const assetUrl = getWorkspaceFileUrl(targetDoc, currentDocPath);
+        const assetUrl = getWorkspaceFileUrl(effectiveTargetDoc, currentDocPath);
         return (
           <a
             key={idx}
@@ -1672,7 +1675,7 @@ function renderInlineFormatted(
         );
       }
 
-      const docLink = `/docs/${encodeURIComponent(targetDoc)}${anchorSlug ? `#${anchorSlug}` : ''}`;
+      const docLink = `/docs/${encodeURIComponent(effectiveTargetDoc)}${anchorSlug ? `#${anchorSlug}` : ''}`;
       return (
         <Link
           key={idx}
@@ -1684,7 +1687,7 @@ function renderInlineFormatted(
               e.preventDefault();
               window.dispatchEvent(
                 new CustomEvent('cme-open-wikilink', {
-                  detail: { target: targetDoc, anchor: anchorSlug },
+                  detail: { target: effectiveTargetDoc, anchor: anchorSlug },
                 })
               );
             }

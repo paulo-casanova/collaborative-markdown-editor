@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isMarkdownPath, findWorkspacePath, resolveWorkspaceRelativePath } from '../../src/api/documents';
+import { isMarkdownPath, findWorkspacePath, resolveWorkspaceRelativePath, updateWorkspaceNodesCache } from '../../src/api/documents';
 import { DocumentAsset, DirectoryDashboardItem, NodePermissions } from '../../src/types/document';
 import { buildTree } from '../../src/components/navigation/FileTree';
 
@@ -254,5 +254,42 @@ describe('Bundle Assets & Additive ACL types and logic', () => {
     expect(tree3[0].is_directory).toBe(true);
     expect(tree3[0].is_bundle).toBe(false);
     expect(tree3[0].children).toHaveLength(1);
+  });
+
+  it('resolves wikilinks with stems or directory paths to the underlying markdown document', () => {
+    const nodes = [
+      { name: 'Highway', path: 'Highway', is_directory: true, is_bundle: false },
+      { name: 'Projects', path: 'Highway/Projects', is_directory: true, is_bundle: false },
+      { name: 'Nanobump US Equities', path: 'Highway/Projects/Nanobump US Equities', is_directory: true, is_bundle: false },
+      {
+        name: 'Nanobump US Equities.md',
+        path: 'Highway/Projects/Nanobump US Equities/Nanobump US Equities.md',
+        is_directory: false,
+        is_bundle: false,
+      },
+      { name: 'Foo.md', path: 'Foo.md', is_directory: false, is_bundle: false },
+      { name: 'Xpto', path: 'Xpto', is_directory: true, is_bundle: false },
+      { name: 'Bar', path: 'Xpto/Bar', is_directory: true, is_bundle: false },
+      { name: 'Bar.md', path: 'Xpto/Bar/Bar.md', is_directory: false, is_bundle: false },
+    ];
+
+    updateWorkspaceNodesCache(nodes as any);
+
+    // Stem alone resolves to full markdown file path
+    expect(findWorkspacePath('Nanobump US Equities', 'Highway/Projects/Foo.md')).toBe(
+      'Highway/Projects/Nanobump US Equities/Nanobump US Equities.md'
+    );
+    expect(findWorkspacePath('Nanobump US Equities')).toBe(
+      'Highway/Projects/Nanobump US Equities/Nanobump US Equities.md'
+    );
+
+    // Directory path resolves to folder note markdown file
+    expect(findWorkspacePath('Highway/Projects/Nanobump US Equities')).toBe(
+      'Highway/Projects/Nanobump US Equities/Nanobump US Equities.md'
+    );
+
+    // Sibling directory stem [[Bar]] from Foo.md
+    expect(findWorkspacePath('Bar', 'Foo.md')).toBe('Xpto/Bar/Bar.md');
+    expect(findWorkspacePath('Xpto/Bar', 'Foo.md')).toBe('Xpto/Bar/Bar.md');
   });
 });

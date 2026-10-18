@@ -94,9 +94,9 @@ int main() {
     std::string team_id;
     {
         pqxx::work tx(conn_res->get());
-        tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%';");
-        tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%';");
-        tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%';");
+        tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%' OR fs_path LIKE 'Highway%';");
+        tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
+        tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
         tx.exec("DELETE FROM users WHERE username = 'doc_author';");
         tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         std::string pw_hash = cme::auth::hash_password_bcrypt("pass123", 10);
@@ -725,6 +725,67 @@ int main() {
         std::cout << "  - Directory rename, delete to trash, and .bundle naming enforcement verified.\n";
     }
 
+    {
+        std::cout << "\n[STEP 2.21] Testing stem resolution, folder notes, and stale directory purging...\n";
+        // Create directory structure: Highway/Projects/Nanobump US Equities
+        nlohmann::json d1 = {{"path", "Highway"}};
+        http_curl("POST", base_url + "/api/v1/workspaces/directories", auth_header, d1.dump());
+        nlohmann::json d2 = {{"path", "Highway/Projects"}};
+        http_curl("POST", base_url + "/api/v1/workspaces/directories", auth_header, d2.dump());
+        nlohmann::json d3 = {{"path", "Highway/Projects/Nanobump US Equities"}};
+        http_curl("POST", base_url + "/api/v1/workspaces/directories", auth_header, d3.dump());
+
+        // Create the markdown document inside: Highway/Projects/Nanobump US Equities/Nanobump US Equities.md
+        nlohmann::json doc_body = {
+            {"path", "Highway/Projects/Nanobump US Equities/Nanobump US Equities.md"},
+            {"content", "# Nanobump US Equities\nDocument content."}
+        };
+        auto create_resp = http_curl("POST", base_url + "/api/v1/documents", auth_header, doc_body.dump());
+        assert(create_resp.status_code == 201);
+        auto doc_json = nlohmann::json::parse(create_resp.body);
+        std::string expected_doc_id = doc_json["id"];
+
+        // Artificially insert a stale pure directory record in documents table to simulate legacy DB state
+        {
+            pqxx::connection conn(db_url);
+            pqxx::work wtx(conn);
+            wtx.exec_params(
+                "INSERT INTO documents (fs_path, title) VALUES ($1, $2) ON CONFLICT DO NOTHING;",
+                "Highway/Projects/Nanobump US Equities",
+                "Nanobump US Equities"
+            );
+            wtx.commit();
+        }
+
+        // 1. Query by stem "Nanobump US Equities"
+        auto stem_resp = http_curl("GET", base_url + "/api/v1/documents/by-path?path=Nanobump%20US%20Equities", auth_header);
+        assert(stem_resp.status_code == 200);
+        auto stem_json = nlohmann::json::parse(stem_resp.body);
+        assert(stem_json["id"] == expected_doc_id);
+        assert(stem_json["path"] == "Highway/Projects/Nanobump US Equities/Nanobump US Equities.md");
+        assert(stem_json["is_bundle"] == false);
+
+        // 2. Query by directory path "Highway/Projects/Nanobump US Equities"
+        auto dir_path_resp = http_curl("GET", base_url + "/api/v1/documents/by-path?path=Highway/Projects/Nanobump%20US%20Equities", auth_header);
+        assert(dir_path_resp.status_code == 200);
+        auto dir_path_json = nlohmann::json::parse(dir_path_resp.body);
+        assert(dir_path_json["id"] == expected_doc_id);
+        assert(dir_path_json["path"] == "Highway/Projects/Nanobump US Equities/Nanobump US Equities.md");
+
+        // 3. Verify stale directory record was purged from documents table
+        {
+            pqxx::connection conn(db_url);
+            pqxx::work rtx(conn);
+            auto rows = rtx.exec_params(
+                "SELECT id FROM documents WHERE fs_path = $1;",
+                "Highway/Projects/Nanobump US Equities"
+            );
+            assert(rows.empty());
+        }
+
+        std::cout << "  - Stem and folder note resolution and directory purge verified.\n";
+    }
+
     // Stop server
     std::cout << "\n[TEST] Stopping server...\n";
     server->stop();
@@ -738,9 +799,9 @@ int main() {
     try {
         pqxx::connection conn(db_url);
         pqxx::work clean_tx(conn);
-        clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%';");
-        clean_tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%';");
-        clean_tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%';");
+        clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%' OR fs_path LIKE 'Highway%';");
+        clean_tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
+        clean_tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
         clean_tx.exec("DELETE FROM users WHERE username IN ('doc_author', 'doc_reader');");
         clean_tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         clean_tx.commit();

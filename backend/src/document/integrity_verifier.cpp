@@ -91,6 +91,15 @@ int IntegrityVerifier::run(const config::AppConfig& cfg) {
         for (const auto& r : doc_rows) {
             std::string doc_id = r[0].as<std::string>();
             std::string fs_path = r[1].as<std::string>();
+
+            auto n_info = storage->get_node_info(fs_path);
+            if (n_info.has_value() && n_info->is_directory && !fs_path.ends_with(".bundle")) {
+                std::cout << "  [DISCREPANCY] DB document '" << fs_path << "' (ID: " << doc_id
+                          << ") is a pure directory, not a document. Purging stale record...\n";
+                tx.exec("DELETE FROM documents WHERE id = " + tx.quote(doc_id) + "::uuid;");
+                continue;
+            }
+
             db_paths.insert(fs_path);
 
             auto ex_res = storage->exists(fs_path);
