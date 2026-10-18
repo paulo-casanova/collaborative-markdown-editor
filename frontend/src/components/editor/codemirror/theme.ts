@@ -93,6 +93,13 @@ export const cmeEditorTheme = EditorView.theme({
     fontStyle: 'italic',
     color: 'var(--cme-text-muted, #64748b)',
   },
+  '.cme-mono-line, .cme-mono-line *': {
+    fontFamily:
+      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important',
+  },
+  '.cme-mono-line': {
+    fontSize: '0.9em',
+  },
 
   // Collaborative Remote Cursors (matching test selectors)
   '.cm-ySelection': {

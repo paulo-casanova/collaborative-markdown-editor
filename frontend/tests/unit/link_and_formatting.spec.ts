@@ -407,7 +407,7 @@ Deep details.`;
       expect(html).toContain('</tbody></table>');
     });
 
-    it('parses, formats, and manipulates tables (addRow, deleteRow, addColumn, deleteColumn, setAlignment, updateCell)', async () => {
+    it('parses, formats, and manipulates tables (addRow, deleteRow, addColumn, deleteColumn, setAlignment, updateCell, moveColumn, moveRow)', async () => {
       const {
         parseMarkdownTable,
         formatMarkdownTable,
@@ -417,6 +417,8 @@ Deep details.`;
         deleteColumn,
         setColumnAlignment,
         updateCell,
+        moveColumn,
+        moveRow,
       } = await import('../../src/utils/tableUtils');
 
       const raw = [
@@ -495,6 +497,38 @@ Deep details.`;
       const withRawPipe = updateCell(table!, 0, 0, 'Alice | Senior');
       const formattedPipe = formatMarkdownTable(withRawPipe);
       expect(formattedPipe).toContain('Alice \\| Senior');
+
+      // 8. moveColumn
+      // Move column 0 right -> ['Status', 'Name', 'Score']
+      const colMovedRight = moveColumn(table!, 0, 'right');
+      expect(colMovedRight.headers).toEqual(['Status', 'Name', 'Score']);
+      expect(colMovedRight.alignments).toEqual(['center', 'left', 'right']);
+      expect(colMovedRight.rows[0]).toEqual(['[pill:green|Active]', 'Alice', '95']);
+      expect(colMovedRight.rows[1]).toEqual(['[pill:amber|Idle]', 'Bob', '80']);
+
+      // Move column 1 left -> back to original
+      const colMovedLeft = moveColumn(colMovedRight, 1, 'left');
+      expect(colMovedLeft.headers).toEqual(['Name', 'Status', 'Score']);
+      expect(colMovedLeft.alignments).toEqual(['left', 'center', 'right']);
+
+      // Boundary checks (move left at 0, move right at last index)
+      expect(moveColumn(table!, 0, 'left')).toEqual(table);
+      expect(moveColumn(table!, 2, 'right')).toEqual(table);
+
+      // 9. moveRow
+      // Move row 0 down -> Bob is first, Alice is second
+      const rowMovedDown = moveRow(table!, 0, 'down');
+      expect(rowMovedDown.rows[0]).toEqual(['Bob', '[pill:amber|Idle]', '80']);
+      expect(rowMovedDown.rows[1]).toEqual(['Alice', '[pill:green|Active]', '95']);
+
+      // Move row 1 up -> back to original
+      const rowMovedUp = moveRow(rowMovedDown, 1, 'up');
+      expect(rowMovedUp.rows[0]).toEqual(['Alice', '[pill:green|Active]', '95']);
+      expect(rowMovedUp.rows[1]).toEqual(['Bob', '[pill:amber|Idle]', '80']);
+
+      // Boundary checks (move up at 0, move down at last row)
+      expect(moveRow(table!, 0, 'up')).toEqual(table);
+      expect(moveRow(table!, 1, 'down')).toEqual(table);
     });
 
     it('TableBlockWidget handles eq, ignoreEvent, and setRawTablePos effect', async () => {

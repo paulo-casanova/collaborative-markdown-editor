@@ -173,8 +173,17 @@ export function buildLivePreviewDecorations(
           codeOrFenceRanges.push({ from: blockStartFrom, to: blockEndTo });
 
           const cursorInside = cursorTo >= blockStartFrom && cursorFrom <= blockEndTo;
-          if (rawInfo.toLowerCase() === 'mermaid' || rawInfo.toLowerCase().startsWith('mermaid ')) {
-            if (!cursorInside && code.trim().length > 0) {
+          if (cursorInside) {
+            for (let ln = curLineNum; ln <= endLineNum; ln++) {
+              const lObj = doc.line(ln);
+              items.push({
+                from: lObj.from,
+                to: lObj.from,
+                deco: Decoration.line({ class: 'cme-mono-line' }),
+              });
+            }
+          } else if (rawInfo.toLowerCase() === 'mermaid' || rawInfo.toLowerCase().startsWith('mermaid ')) {
+            if (code.trim().length > 0) {
               addReplace(
                 blockStartFrom,
                 blockEndTo,
@@ -186,16 +195,14 @@ export function buildLivePreviewDecorations(
             }
           } else {
             // Regular fenced code block (supports empty code blocks!)
-            if (!cursorInside) {
-              addReplace(
-                blockStartFrom,
-                blockEndTo,
-                Decoration.replace({
-                  widget: new CodeBlockWidget(rawInfo, code, blockStartFrom, blockEndTo, documentPath),
-                  block: true,
-                })
-              );
-            }
+            addReplace(
+              blockStartFrom,
+              blockEndTo,
+              Decoration.replace({
+                widget: new CodeBlockWidget(rawInfo, code, blockStartFrom, blockEndTo, documentPath),
+                block: true,
+              })
+            );
           }
 
           curLineNum = endLineNum + 1;
@@ -352,6 +359,15 @@ export function buildLivePreviewDecorations(
               block: true,
             })
           );
+        } else {
+          for (let ln = tableScanIdx; ln < curIdx; ln++) {
+            const lObj = doc.line(ln);
+            items.push({
+              from: lObj.from,
+              to: lObj.from,
+              deco: Decoration.line({ class: 'cme-mono-line' }),
+            });
+          }
         }
 
         tableScanIdx = curIdx;

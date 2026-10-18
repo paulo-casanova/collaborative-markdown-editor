@@ -30,6 +30,8 @@ import {
   addColumn,
   deleteColumn,
   setColumnAlignment,
+  moveColumn,
+  moveRow,
   TableData,
 } from '../../../utils/tableUtils';
 
@@ -962,6 +964,10 @@ const TABLE_ICONS = {
   alignLeft: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"></line><line x1="15" y1="12" x2="3" y2="12"></line><line x1="17" y1="18" x2="3" y2="18"></line></svg>`,
   alignCenter: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="6"></line><line x1="21" y1="12" x2="3" y2="12"></line><line x1="18" y1="18" x2="6" y2="18"></line></svg>`,
   alignRight: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="12" x2="9" y2="12"></line><line x1="21" y1="18" x2="7" y2="18"></line></svg>`,
+  chevronLeft: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`,
+  chevronRight: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`,
+  chevronUp: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`,
+  chevronDown: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`,
 };
 
 export class TableBlockWidget extends WidgetType {
@@ -1076,7 +1082,7 @@ export class TableBlockWidget extends WidgetType {
     tableWrapper.className = 'overflow-x-auto';
 
     const table = document.createElement('table');
-    table.className = 'w-full text-left text-sm border-collapse';
+    table.className = 'w-full text-left text-sm border-collapse font-mono';
 
     const colCount = tableData.headers.length;
     const rowCount = tableData.rows.length;
@@ -1109,7 +1115,7 @@ export class TableBlockWidget extends WidgetType {
       const input = document.createElement('input');
       input.type = 'text';
       input.className =
-        'cme-cell-input w-full px-1.5 py-0.5 text-xs font-normal rounded border border-cme-primary bg-cme-bg-surface text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary shadow-sm';
+        'cme-cell-input w-full px-1.5 py-0.5 text-xs font-mono font-normal rounded border border-cme-primary bg-cme-bg-surface text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary shadow-sm';
       input.value = rawVal;
       input.style.textAlign = tableData.alignments[colIdx] || 'left';
       cellElem.appendChild(input);
@@ -1214,7 +1220,7 @@ export class TableBlockWidget extends WidgetType {
     // Leading empty TH for row action handles
     const thRowGrip = document.createElement('th');
     thRowGrip.className =
-      'w-8 px-1 py-2 text-center text-xs border-r border-cme-border-base/40 text-cme-text-muted';
+      'w-20 px-1 py-2 text-center text-xs border-r border-cme-border-base/40 text-cme-text-muted select-none';
     thRowGrip.innerHTML = '<span class="text-[10px] opacity-40">#</span>';
     trHead.appendChild(thRowGrip);
 
@@ -1242,6 +1248,44 @@ export class TableBlockWidget extends WidgetType {
       colControls.className =
         'opacity-0 group-hover/col:opacity-100 flex items-center gap-0.5 transition-opacity ml-1';
 
+      // Move column left button
+      const moveLeftBtn = document.createElement('button');
+      moveLeftBtn.type = 'button';
+      moveLeftBtn.className =
+        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
+        (colIdx === 0 ? ' opacity-20 cursor-not-allowed' : '');
+      moveLeftBtn.title = 'Move column left';
+      moveLeftBtn.innerHTML = TABLE_ICONS.chevronLeft;
+      if (colIdx === 0) {
+        moveLeftBtn.disabled = true;
+      } else {
+        moveLeftBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const updated = moveColumn(tableData, colIdx, 'left');
+          dispatchTableChange(updated, { row: -1, col: colIdx - 1 });
+        });
+      }
+      colControls.appendChild(moveLeftBtn);
+
+      // Move column right button
+      const moveRightBtn = document.createElement('button');
+      moveRightBtn.type = 'button';
+      moveRightBtn.className =
+        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
+        (colIdx === colCount - 1 ? ' opacity-20 cursor-not-allowed' : '');
+      moveRightBtn.title = 'Move column right';
+      moveRightBtn.innerHTML = TABLE_ICONS.chevronRight;
+      if (colIdx === colCount - 1) {
+        moveRightBtn.disabled = true;
+      } else {
+        moveRightBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const updated = moveColumn(tableData, colIdx, 'right');
+          dispatchTableChange(updated, { row: -1, col: colIdx + 1 });
+        });
+      }
+      colControls.appendChild(moveRightBtn);
+
       // Alignment cycle button
       const alignBtn = document.createElement('button');
       alignBtn.type = 'button';
@@ -1263,17 +1307,17 @@ export class TableBlockWidget extends WidgetType {
       });
       colControls.appendChild(alignBtn);
 
-      // Insert column right button (+)
+      // Insert column left button (+)
       const insertColBtn = document.createElement('button');
       insertColBtn.type = 'button';
       insertColBtn.className =
         'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
-      insertColBtn.title = 'Insert column right';
+      insertColBtn.title = 'Insert column left';
       insertColBtn.innerHTML = TABLE_ICONS.plus;
       insertColBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const updated = addColumn(tableData, colIdx + 1);
-        dispatchTableChange(updated, { row: -1, col: colIdx + 1 });
+        const updated = addColumn(tableData, colIdx);
+        dispatchTableChange(updated, { row: -1, col: colIdx });
       });
       colControls.appendChild(insertColBtn);
 
@@ -1314,22 +1358,68 @@ export class TableBlockWidget extends WidgetType {
       // Leading action handle cell for row actions
       const tdRowGrip = document.createElement('td');
       tdRowGrip.className =
-        'w-8 px-1 py-1 text-center text-xs border-r border-cme-border-base/40 align-middle';
+        'w-20 px-1 py-1 text-center text-xs border-r border-cme-border-base/40 align-middle select-none relative';
+
+      // Default non-hovered view: row index number
+      const rowNumSpan = document.createElement('span');
+      rowNumSpan.className = 'group-hover/row:hidden text-[10px] text-cme-text-muted/60 font-mono';
+      rowNumSpan.textContent = String(r + 1);
+      tdRowGrip.appendChild(rowNumSpan);
+
+      // Hovered controls container
       const rowControls = document.createElement('div');
       rowControls.className =
-        'opacity-0 group-hover/row:opacity-100 flex items-center justify-center gap-0.5 transition-opacity';
+        'hidden group-hover/row:flex items-center justify-center gap-0.5 transition-opacity';
 
-      // Insert row below button (+)
+      // Move row up button
+      const moveUpBtn = document.createElement('button');
+      moveUpBtn.type = 'button';
+      moveUpBtn.className =
+        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
+        (r === 0 ? ' opacity-20 cursor-not-allowed' : '');
+      moveUpBtn.title = 'Move row up';
+      moveUpBtn.innerHTML = TABLE_ICONS.chevronUp;
+      if (r === 0) {
+        moveUpBtn.disabled = true;
+      } else {
+        moveUpBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const updated = moveRow(tableData, r, 'up');
+          dispatchTableChange(updated, { row: r - 1, col: 0 });
+        });
+      }
+      rowControls.appendChild(moveUpBtn);
+
+      // Move row down button
+      const moveDownBtn = document.createElement('button');
+      moveDownBtn.type = 'button';
+      moveDownBtn.className =
+        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
+        (r === rowCount - 1 ? ' opacity-20 cursor-not-allowed' : '');
+      moveDownBtn.title = 'Move row down';
+      moveDownBtn.innerHTML = TABLE_ICONS.chevronDown;
+      if (r === rowCount - 1) {
+        moveDownBtn.disabled = true;
+      } else {
+        moveDownBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const updated = moveRow(tableData, r, 'down');
+          dispatchTableChange(updated, { row: r + 1, col: 0 });
+        });
+      }
+      rowControls.appendChild(moveDownBtn);
+
+      // Insert row above button (+)
       const insertRowBtn = document.createElement('button');
       insertRowBtn.type = 'button';
       insertRowBtn.className =
         'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
-      insertRowBtn.title = 'Insert row below';
+      insertRowBtn.title = 'Insert row above';
       insertRowBtn.innerHTML = TABLE_ICONS.plus;
       insertRowBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const updated = addRow(tableData, r + 1);
-        dispatchTableChange(updated, { row: r + 1, col: 0 });
+        const updated = addRow(tableData, r);
+        dispatchTableChange(updated, { row: r, col: 0 });
       });
       rowControls.appendChild(insertRowBtn);
 

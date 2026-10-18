@@ -296,4 +296,54 @@ export function setColumnAlignment(
   return { ...data, alignments: newAlignments };
 }
 
+export function moveColumn(
+  data: TableData,
+  colIndex: number,
+  direction: 'left' | 'right'
+): TableData {
+  const targetIndex = direction === 'left' ? colIndex - 1 : colIndex + 1;
+  if (colIndex < 0 || colIndex >= data.headers.length) return data;
+  if (targetIndex < 0 || targetIndex >= data.headers.length) return data;
+
+  const newHeaders = [...data.headers];
+  const [movedHeader] = newHeaders.splice(colIndex, 1);
+  newHeaders.splice(targetIndex, 0, movedHeader);
+
+  const newAlignments = [...data.alignments];
+  const [movedAlign] = newAlignments.splice(colIndex, 1);
+  newAlignments.splice(targetIndex, 0, movedAlign);
+
+  const newRows = data.rows.map((row) => {
+    const updatedRow = [...row];
+    const [movedCell] = updatedRow.splice(colIndex, 1);
+    updatedRow.splice(targetIndex, 0, movedCell);
+    return updatedRow;
+  });
+
+  return {
+    headers: newHeaders,
+    alignments: newAlignments,
+    rows: newRows,
+  };
+}
+
+export function moveRow(
+  data: TableData,
+  rowIndex: number,
+  direction: 'up' | 'down'
+): TableData {
+  const targetIndex = direction === 'up' ? rowIndex - 1 : rowIndex + 1;
+  if (rowIndex < 0 || rowIndex >= data.rows.length) return data;
+  if (targetIndex < 0 || targetIndex >= data.rows.length) return data;
+
+  const newRows = [...data.rows];
+  const [movedRow] = newRows.splice(rowIndex, 1);
+  newRows.splice(targetIndex, 0, movedRow);
+
+  return {
+    ...data,
+    rows: newRows,
+  };
+}
+
 
