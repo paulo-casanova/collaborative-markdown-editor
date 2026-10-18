@@ -497,7 +497,6 @@ export function buildLivePreviewDecorations(
           deco: Decoration.mark({ class: headingClass }),
         });
       }
-      continue;
     }
 
     // 4c. Blockquote: > text
@@ -696,6 +695,38 @@ export function buildLivePreviewDecorations(
             ),
           })
         );
+      }
+    }
+
+    // 4h4. Bold Italic ***text*** and ___text___
+    const boldItalicRegex = /(?:\*\*\*([^\*\n]+)\*\*\*|(?<![a-zA-Z0-9_])___([^\s_\n](?:[^_\n]*?[^\s_\n])?)___(?![a-zA-Z0-9_]))/g;
+    let biMatch: RegExpExecArray | null;
+    while ((biMatch = boldItalicRegex.exec(lineText)) !== null) {
+      const biFrom = lineFrom + biMatch.index;
+      const biTo = biFrom + biMatch[0].length;
+
+      if (isOverlappingReplaced(biFrom, biTo)) continue;
+
+      const cursorInBI = cursorTo >= biFrom && cursorFrom <= biTo;
+      if (!cursorInBI) {
+        addReplace(biFrom, biFrom + 3, Decoration.replace({}));
+        items.push({
+          from: biFrom + 3,
+          to: biTo - 3,
+          deco: Decoration.mark({ class: 'cme-live-bold cme-live-italic font-bold italic' }),
+        });
+        addReplace(biTo - 3, biTo, Decoration.replace({}));
+      } else {
+        items.push({
+          from: biFrom,
+          to: biFrom + 3,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
+        items.push({
+          from: biTo - 3,
+          to: biTo,
+          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+        });
       }
     }
 

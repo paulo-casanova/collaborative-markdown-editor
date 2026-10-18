@@ -1360,10 +1360,11 @@ function renderInlineFormatted(
   // 6. Display Math: $$...$$
   // 7. Inline Math: $...$
   // 8. Strikethrough: ~~...~~
-  // 9. Bold: **...** or __...__
-  // 10. Italic: *...* or _..._
+  // 9. Bold Italic: ***...*** or ___...___
+  // 10. Bold: **...** or __...__
+  // 11. Italic: *...* or _..._
   const parts = text.split(
-    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g
+    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g
   );
 
   let currentOffset = 0;
@@ -1403,7 +1404,7 @@ function renderInlineFormatted(
       return (
         <code
           key={idx}
-          className="px-1.5 py-0.5 rounded bg-cme-bg-subtle font-mono text-xs text-cme-primary border border-cme-border-base"
+          className="px-1.5 py-0.5 rounded bg-cme-bg-subtle font-mono text-[0.88em] text-pink-600 dark:text-pink-400 border border-cme-border-base"
         >
           {part.slice(1, -1)}
         </code>
@@ -1771,15 +1772,35 @@ function renderInlineFormatted(
       );
     }
 
-    // 8. Bold **...**
-    // 8. Bold: **...** or __...__
+    // 8. Bold Italic: ***...*** or ___...___
+    if (
+      (((part.startsWith('***') && part.endsWith('***')) ||
+        (part.startsWith('___') && part.endsWith('___'))) &&
+        part.length > 6)
+    ) {
+      return (
+        <strong key={idx} className="font-bold font-black">
+          <em className="italic">
+            {renderInlineFormatted(
+              part.slice(3, -3),
+              currentDocTarget,
+              currentDocMarkdown,
+              currentDocPath,
+              inQuote
+            )}
+          </em>
+        </strong>
+      );
+    }
+
+    // 9. Bold: **...** or __...__
     if (
       (((part.startsWith('**') && part.endsWith('**')) ||
         (part.startsWith('__') && part.endsWith('__'))) &&
         part.length > 4)
     ) {
       return (
-        <strong key={idx}>
+        <strong key={idx} className="font-bold font-black">
           {renderInlineFormatted(
             part.slice(2, -2),
             currentDocTarget,
@@ -1791,14 +1812,14 @@ function renderInlineFormatted(
       );
     }
 
-    // 9. Italic: *...* or _..._
+    // 10. Italic: *...* or _..._
     if (
       (((part.startsWith('*') && part.endsWith('*')) ||
         (part.startsWith('_') && part.endsWith('_'))) &&
         part.length > 2)
     ) {
       return (
-        <em key={idx}>
+        <em key={idx} className="italic">
           {renderInlineFormatted(
             part.slice(1, -1),
             currentDocTarget,

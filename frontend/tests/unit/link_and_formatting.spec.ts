@@ -576,6 +576,144 @@ Deep details.`;
       }
     });
   });
+
+  describe('Inline formatting in Headers, Table Headers, and Table of Contents', () => {
+    it('extractHeadingsFromMarkdown preserves rawText for headings with inline formatting', async () => {
+      const { extractHeadingsFromMarkdown } = await import('../../src/components/navigation/DocumentOutline');
+      const md = [
+        '# Header with `code` and **bold** and *italic*',
+        '## Subheader with __bold underscore__ and _italic underscore_',
+        '### Deep with ***bold italic*** and ___both___',
+        '# Plain Header',
+      ].join('\n');
+
+      const headings = extractHeadingsFromMarkdown(md, false);
+      expect(headings.length).toBe(4);
+
+      // Clean text is preserved for accessibility / tooltips
+      expect(headings[0].text).toBe('Header with code and bold and italic');
+      // rawText retains formatting
+      expect(headings[0].rawText).toBe('Header with `code` and **bold** and *italic*');
+      expect(headings[0].id).toBe('header-with-code-and-bold-and-italic');
+
+      expect(headings[1].text).toBe('Subheader with bold underscore and italic underscore');
+      expect(headings[1].rawText).toBe('Subheader with __bold underscore__ and _italic underscore_');
+
+      expect(headings[2].text).toBe('Deep with bold italic and both');
+      expect(headings[2].rawText).toBe('Deep with ***bold italic*** and ___both___');
+
+      // Plain header does not need rawText
+      expect(headings[3].text).toBe('Plain Header');
+      expect(headings[3].rawText).toBeUndefined();
+    });
+
+    it('renderOutlineFormatted renders formatting tokens as rich React elements', async () => {
+      const { renderOutlineFormatted } = await import('../../src/components/navigation/DocumentOutline');
+      const formatted = renderOutlineFormatted(
+        'Header `inline_fn()` with **bold** and *italic* and ***bold italic*** and ~~strike~~'
+      ) as any[];
+      expect(Array.isArray(formatted)).toBe(true);
+
+      const types = formatted.map((part) => (typeof part === 'object' && part ? part.type : 'text'));
+      expect(types).toContain('code');
+      expect(types).toContain('strong');
+      expect(types).toContain('em');
+      expect(types).toContain('del');
+
+      // Code element
+      const codePart = formatted.find((p) => p && p.type === 'code');
+      expect(codePart.props.className).toContain('font-mono');
+      expect(codePart.props.className).toContain('text-[0.88em]');
+      expect(codePart.props.children).toBe('inline_fn()');
+
+      // Bold parts
+      const strongParts = formatted.filter((p) => p && p.type === 'strong');
+      expect(strongParts.length).toBeGreaterThanOrEqual(2);
+
+      // Plain bold
+      const biPart = strongParts.find((p) => p.props.children && p.props.children.type === 'em');
+      expect(biPart).toBeDefined();
+
+      const plainBold = strongParts.find((p) => p !== biPart);
+      expect(plainBold).toBeDefined();
+      expect(plainBold?.props.className).toContain('font-bold');
+    });
+
+    it('ReaderPage renderMarkdown renders formatted headings and table headers with bold, code, and italic', () => {
+      const md = [
+        '# Overview of `my_api()` with **Key Notes** and *Caveats*',
+        '',
+        '| Header `cmd` | **Bold Header** | *Italic Header* | ***Both*** |',
+        '| :--- | :--- | :--- | :--- |',
+        '| `print()` | **Active** | *Pending* | ***Urgent*** |',
+      ].join('\n');
+
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(2);
+
+      // 1. Heading element
+      const h1 = elements[0];
+      expect(h1.type).toBe('h1');
+      // h1.props.children is [numberBadge, <span>{headingContent}</span>]
+      const h1Span = h1.props.children[1];
+      const headingParts = h1Span.props.children as any[];
+
+      const codePart = headingParts.find((p) => p && p.type === 'code');
+      expect(codePart).toBeDefined();
+      expect(codePart.props.children).toBe('my_api()');
+      expect(codePart.props.className).toContain('font-mono');
+      expect(codePart.props.className).toContain('text-[0.88em]');
+
+      const boldPart = headingParts.find((p) => p && p.type === 'strong' && !p.props.children?.type);
+      expect(boldPart).toBeDefined();
+      expect(boldPart.props.className).toContain('font-black');
+
+      const italicPart = headingParts.find((p) => p && p.type === 'em');
+      expect(italicPart).toBeDefined();
+      expect(italicPart.props.className).toContain('italic');
+
+      // 2. Table element
+      const tableWrapper = elements[1];
+      expect(tableWrapper.props.className).toContain('cme-table-block-node');
+      const table = tableWrapper.props.children;
+      const [thead, tbody] = table.props.children;
+
+      // Table headers
+      const thList = thead.props.children.props.children as any[];
+      expect(thList.length).toBe(4);
+
+      // TH 0: `cmd`
+      const th0Content = thList[0].props.children as any[];
+      const th0Code = th0Content.find((p) => p && p.type === 'code');
+      expect(th0Code).toBeDefined();
+      expect(th0Code.props.children).toBe('cmd');
+
+      // TH 1: **Bold Header**
+      const th1Content = thList[1].props.children as any[];
+      const th1Bold = th1Content.find((p) => p && p.type === 'strong');
+      expect(th1Bold).toBeDefined();
+      expect(th1Bold.props.className).toContain('font-black');
+
+      // TH 2: *Italic Header*
+      const th2Content = thList[2].props.children as any[];
+      const th2Italic = th2Content.find((p) => p && p.type === 'em');
+      expect(th2Italic).toBeDefined();
+      expect(th2Italic.props.className).toContain('italic');
+
+      // TH 3: ***Both***
+      const th3Content = thList[3].props.children as any[];
+      const th3Both = th3Content.find((p) => p && p.type === 'strong');
+      expect(th3Both).toBeDefined();
+      expect(th3Both.props.children.type).toBe('em');
+
+      // Table body cells
+      const row0Cells = tbody.props.children[0].props.children as any[];
+      expect(row0Cells.length).toBe(4);
+      const td0Code = (row0Cells[0].props.children as any[]).find((p) => p && p.type === 'code');
+      expect(td0Code).toBeDefined();
+      expect(td0Code.props.children).toBe('print()');
+    });
+  });
 });
 
 

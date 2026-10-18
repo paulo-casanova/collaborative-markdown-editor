@@ -63,6 +63,13 @@ export const cmeEditorTheme = EditorView.theme({
     fontWeight: '700',
     color: 'var(--cme-text-base, #111827)',
   },
+  '.cme-live-h1 .cme-live-bold, .cme-live-h2 .cme-live-bold, .cme-live-h3 .cme-live-bold, .cme-live-h4 .cme-live-bold, .cme-live-h5 .cme-live-bold, .cme-live-h6 .cme-live-bold': {
+    fontWeight: '900 !important',
+  },
+  '.cme-live-h1 .cme-live-code, .cme-live-h2 .cme-live-code, .cme-live-h3 .cme-live-code, .cme-live-h4 .cme-live-code, .cme-live-h5 .cme-live-code, .cme-live-h6 .cme-live-code': {
+    fontSize: '0.82em',
+    verticalAlign: 'baseline',
+  },
   '.cme-live-italic': {
     fontStyle: 'italic',
   },

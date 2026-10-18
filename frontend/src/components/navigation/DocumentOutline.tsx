@@ -10,6 +10,7 @@ import { useUIStore } from '../../stores/uiStore';
 export interface OutlineItem {
   id: string;
   text: string;
+  rawText?: string;
   level: number;
   lineNumber?: number;
 }
@@ -61,6 +62,7 @@ export function extractHeadingsFromMarkdown(
         .trim();
       const rawText = fullHeading.replace(/[*_`~[\]]/g, '');
       const strippedText = stripHeadingNumberPrefix(rawText) || rawText;
+      const strippedFullHeading = stripHeadingNumberPrefix(fullHeading) || fullHeading;
       const baseSlug = slugify(strippedText);
       const count = slugCounts[baseSlug] || 0;
       slugCounts[baseSlug] = count + 1;
@@ -84,10 +86,14 @@ export function extractHeadingsFromMarkdown(
       const displayText = numberHeaders
         ? `${numberPrefix} ${strippedText}`
         : rawText;
+      const formattedText = numberHeaders
+        ? `${numberPrefix} ${strippedFullHeading}`
+        : fullHeading;
 
       headings.push({
         id,
         text: displayText,
+        rawText: fullHeading !== rawText ? formattedText : undefined,
         level,
         lineNumber: idx + 1,
       });
@@ -212,6 +218,70 @@ export function findHeadingElement(targetHeading: string): HTMLElement | null {
   }
 
   return null;
+}
+
+export function renderOutlineFormatted(text: string): React.ReactNode {
+  if (!text) return null;
+
+  const parts = text.split(
+    /(`[^`]+`|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g
+  );
+
+  return parts.map((part, idx) => {
+    // 1. Inline Code: `...`
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 1) {
+      return (
+        <code
+          key={idx}
+          className="font-mono text-[0.88em] px-1 py-0.5 rounded bg-cme-bg-subtle text-pink-600 dark:text-pink-400 border border-cme-border-base/50"
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    // 2. Bold Italic: ***...*** or ___...___
+    if (
+      (part.startsWith('***') && part.endsWith('***') && part.length > 6) ||
+      (part.startsWith('___') && part.endsWith('___') && part.length > 6)
+    ) {
+      return (
+        <strong key={idx} className="font-bold text-cme-text-base">
+          <em className="italic">{renderOutlineFormatted(part.slice(3, -3))}</em>
+        </strong>
+      );
+    }
+    // 3. Bold: **...** or __...__
+    if (
+      (part.startsWith('**') && part.endsWith('**') && part.length > 4) ||
+      (part.startsWith('__') && part.endsWith('__') && part.length > 4)
+    ) {
+      return (
+        <strong key={idx} className="font-bold text-cme-text-base">
+          {renderOutlineFormatted(part.slice(2, -2))}
+        </strong>
+      );
+    }
+    // 4. Italic: *...* or _..._
+    if (
+      (part.startsWith('*') && part.endsWith('*') && part.length > 2) ||
+      (part.startsWith('_') && part.endsWith('_') && part.length > 2)
+    ) {
+      return (
+        <em key={idx} className="italic">
+          {renderOutlineFormatted(part.slice(1, -1))}
+        </em>
+      );
+    }
+    // 5. Strikethrough: ~~...~~
+    if (part.startsWith('~~') && part.endsWith('~~') && part.length > 4) {
+      return (
+        <del key={idx} className="line-through opacity-70">
+          {renderOutlineFormatted(part.slice(2, -2))}
+        </del>
+      );
+    }
+    return part;
+  });
 }
 
 interface DocumentOutlineProps {
@@ -410,7 +480,7 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
               title={item.text}
             >
               <Hash className={`w-3 h-3 flex-shrink-0 opacity-40 group-hover:opacity-100 ${isActive ? 'text-cme-primary opacity-100' : ''}`} />
-              <span className="truncate">{item.text}</span>
+              <span className="truncate">{renderOutlineFormatted(item.rawText || item.text)}</span>
             </a>
           );
         })}

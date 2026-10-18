@@ -1082,7 +1082,7 @@ export class TableBlockWidget extends WidgetType {
     tableWrapper.className = 'overflow-x-auto';
 
     const table = document.createElement('table');
-    table.className = 'w-full text-left text-sm border-collapse font-mono';
+    table.className = 'w-full text-left text-sm border-collapse';
 
     const colCount = tableData.headers.length;
     const rowCount = tableData.rows.length;
@@ -1619,7 +1619,7 @@ function renderCellContent(
   }
 
   const tokenRegex =
-    /(`[^`]+`|(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!\!)\[\[([^\]]+)\]\]|(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)|~~[^~\n]+~~|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g;
+    /(`[^`]+`|(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!\!)\[\[([^\]]+)\]\]|(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -1644,7 +1644,8 @@ function renderCellContent(
     // 2. Inline Code: `...`
     else if (token.startsWith('`') && token.endsWith('`') && token.length > 1) {
       const code = document.createElement('code');
-      code.className = 'px-1 py-0.5 rounded bg-cme-bg-subtle text-[11px] font-mono text-pink-600 dark:text-pink-400';
+      code.className =
+        'px-1.5 py-0.5 rounded bg-cme-bg-subtle text-[11px] font-mono text-pink-600 dark:text-pink-400 border border-cme-border-base/40';
       code.textContent = token.slice(1, -1);
       container.appendChild(code);
     }
@@ -1696,21 +1697,37 @@ function renderCellContent(
     // 6. Strikethrough: ~~...~~
     else if (token.startsWith('~~') && token.endsWith('~~') && token.length > 4) {
       const del = document.createElement('del');
-      del.textContent = token.slice(2, -2);
+      del.className = 'line-through text-cme-text-muted';
+      renderCellContent(del, token.slice(2, -2), view, docPath);
       container.appendChild(del);
+    }
+    // 6.5 Bold Italic: ***...*** or ___...___
+    else if (
+      (token.startsWith('***') && token.endsWith('***') && token.length > 6) ||
+      (token.startsWith('___') && token.endsWith('___') && token.length > 6)
+    ) {
+      const strong = document.createElement('strong');
+      strong.className = 'font-bold font-black';
+      const em = document.createElement('em');
+      em.className = 'italic';
+      renderCellContent(em, token.slice(3, -3), view, docPath);
+      strong.appendChild(em);
+      container.appendChild(strong);
     }
     // 7. Bold: **...** or __...__
     else if ((token.startsWith('**') && token.endsWith('**') && token.length > 4) ||
              (token.startsWith('__') && token.endsWith('__') && token.length > 4)) {
       const strong = document.createElement('strong');
-      strong.textContent = token.slice(2, -2);
+      strong.className = 'font-bold font-black';
+      renderCellContent(strong, token.slice(2, -2), view, docPath);
       container.appendChild(strong);
     }
     // 8. Italic: *...* or _..._
     else if ((token.startsWith('*') && token.endsWith('*') && token.length > 2) ||
              (token.startsWith('_') && token.endsWith('_') && token.length > 2)) {
       const em = document.createElement('em');
-      em.textContent = token.slice(1, -1);
+      em.className = 'italic';
+      renderCellContent(em, token.slice(1, -1), view, docPath);
       container.appendChild(em);
     } else {
       container.appendChild(document.createTextNode(token));
