@@ -271,6 +271,32 @@ public:
     );
 
     /**
+     * @brief Exports a bundle or directory as a ZIP archive binary.
+     */
+    Result<std::string> export_bundle_zip(
+        const std::string& relative_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Exports a document bundle by its ID as a ZIP archive binary.
+     */
+    Result<std::string> export_document_bundle_zip(
+        const std::string& doc_id,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Copies an existing workspace file into a bundle's assets directory.
+     */
+    Result<std::string> import_asset_from_workspace(
+        const std::string& doc_id,
+        const std::string& source_path,
+        const std::string& target_filename,
+        const auth::UserIdentity& user
+    );
+
+    /**
      * @brief Retrieves detailed child metrics (type, owner, comments, suggestions, tasks) for a directory dashboard.
      */
     Result<nlohmann::json> get_directory_dashboard(

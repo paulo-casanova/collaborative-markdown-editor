@@ -387,6 +387,68 @@ export async function deleteDocumentAsset(docId: string, filename: string): Prom
   });
 }
 
+export async function downloadWorkspaceFile(path: string, filename?: string): Promise<void> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const url = `/api/v1/workspaces/files?path=${encodeURIComponent(path)}`;
+  const response = await fetch(url, { headers, credentials: 'include' });
+  if (!response.ok) {
+    throw new Error(`Failed to download file: HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  a.download = filename || path.split('/').pop() || 'download';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
+export async function downloadBundleZip(path: string, docId?: string, filename?: string): Promise<void> {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const headers: HeadersInit = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  const url = docId
+    ? `/api/v1/documents/${encodeURIComponent(docId)}/bundle.zip`
+    : `/api/v1/workspaces/bundles/zip?path=${encodeURIComponent(path)}`;
+  const response = await fetch(url, { headers, credentials: 'include' });
+  if (!response.ok) {
+    throw new Error(`Failed to download bundle zip: HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = blobUrl;
+  const defaultName = path.split('/').pop() || 'bundle';
+  const finalName = filename || (defaultName.endsWith('.zip') ? defaultName : `${defaultName}.zip`);
+  a.download = finalName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+}
+
+export async function importWorkspaceFileToBundleAsset(
+  docId: string,
+  sourcePath: string,
+  targetFilename?: string
+): Promise<{ filename: string; path: string }> {
+  return apiRequest<{ filename: string; path: string }>(`/api/v1/documents/${docId}/assets/import`, {
+    method: 'POST',
+    body: JSON.stringify({
+      source_path: sourcePath,
+      target_filename: targetFilename,
+    }),
+  });
+}
+
 export async function fetchDirectoryDashboard(path: string): Promise<DirectoryDashboard> {
   return apiRequest<DirectoryDashboard>(`/api/v1/workspaces/directory-details?path=${encodeURIComponent(path || '')}`);
 }

@@ -18,6 +18,7 @@ import {
   RefreshCw,
   MoreVertical,
   Shield,
+  Download,
 } from 'lucide-react';
 import {
   fetchWorkspaceTree,
@@ -30,6 +31,8 @@ import {
   uploadWorkspaceFile,
   getWorkspaceFileUrl,
   isMarkdownPath,
+  downloadWorkspaceFile,
+  downloadBundleZip,
 } from '../../api/documents';
 import { fetchCurrentUser } from '../../api/auth';
 import { WorkspaceNode } from '../../types/document';
@@ -495,18 +498,33 @@ export const FileTree: React.FC = () => {
     return () => window.removeEventListener('click', handleClick);
   }, []);
 
+  // Download file, bundle, or directory
+  const handleDownloadNode = async (node: WorkspaceNode) => {
+    try {
+      if (node.is_bundle) {
+        await downloadBundleZip(node.path, node.id, `${node.name}.zip`);
+      } else if (node.is_directory) {
+        await downloadBundleZip(node.path, undefined, `${node.name}.zip`);
+      } else {
+        await downloadWorkspaceFile(node.path, node.name);
+      }
+    } catch (err: any) {
+      alert(`Failed to download: ${err?.message || 'Unknown error'}`);
+    }
+  };
+
   // Drag and Drop handlers
   const handleDragStart = (e: React.DragEvent, node: WorkspaceNode) => {
-    e.dataTransfer.setData(
-      'application/json',
-      JSON.stringify({
-        id: node.id,
-        path: node.path,
-        name: node.name,
-        is_directory: node.is_directory,
-        is_bundle: node.is_bundle,
-      })
-    );
+    const payload = JSON.stringify({
+      id: node.id,
+      path: node.path,
+      name: node.name,
+      is_directory: node.is_directory,
+      is_bundle: node.is_bundle,
+    });
+    e.dataTransfer.setData('application/json', payload);
+    e.dataTransfer.setData('application/x-cme-node', payload);
+    e.dataTransfer.effectAllowed = 'copyMove';
   };
 
   const handleDragOver = (e: React.DragEvent, node: WorkspaceNode) => {
@@ -636,7 +654,7 @@ export const FileTree: React.FC = () => {
         return (
           <div
             key={node.path}
-            draggable={Boolean(node.id)}
+            draggable={true}
             onDragStart={(e) => handleDragStart(e, node)}
             onContextMenu={(e) => handleContextMenu(e, node)}
             style={{ paddingLeft }}
@@ -658,13 +676,26 @@ export const FileTree: React.FC = () => {
               <span className="truncate">{node.name}</span>
             </a>
 
-            <button
-              onClick={(e) => handleContextMenu(e, node)}
-              className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted transition-opacity"
-              title="Options"
-            >
-              <MoreVertical className="w-3 h-3" />
-            </button>
+            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                data-testid={`filetree-item-download-${node.name}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleDownloadNode(node);
+                }}
+                className="p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted hover:text-cme-text-base transition-colors"
+                title={`Download ${node.name}`}
+              >
+                <Download className="w-3 h-3" />
+              </button>
+              <button
+                onClick={(e) => handleContextMenu(e, node)}
+                className="p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted transition-opacity"
+                title="Options"
+              >
+                <MoreVertical className="w-3 h-3" />
+              </button>
+            </div>
           </div>
         );
       }
@@ -679,7 +710,7 @@ export const FileTree: React.FC = () => {
       return (
         <div
           key={node.path}
-          draggable={Boolean(node.id)}
+          draggable={true}
           onDragStart={(e) => handleDragStart(e, node)}
           onContextMenu={(e) => handleContextMenu(e, node)}
           style={{ paddingLeft }}
@@ -713,13 +744,26 @@ export const FileTree: React.FC = () => {
             <span className="truncate">{node.title || node.name}</span>
           </Link>
 
-          <button
-            onClick={(e) => handleContextMenu(e, node)}
-            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted transition-opacity"
-            title="Options"
-          >
-            <MoreVertical className="w-3 h-3" />
-          </button>
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              data-testid={`filetree-item-download-${node.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleDownloadNode(node);
+              }}
+              className="p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title={isBundle ? `Download ${node.name} as ZIP` : `Download ${node.name}`}
+            >
+              <Download className="w-3 h-3" />
+            </button>
+            <button
+              onClick={(e) => handleContextMenu(e, node)}
+              className="p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted transition-opacity"
+              title="Options"
+            >
+              <MoreVertical className="w-3 h-3" />
+            </button>
+          </div>
         </div>
       );
     }
@@ -776,16 +820,29 @@ export const FileTree: React.FC = () => {
             </div>
           </div>
 
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              handleContextMenu(e, node);
-            }}
-            className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted transition-opacity"
-            title="Folder Options"
-          >
-            <MoreVertical className="w-3 h-3" />
-          </button>
+          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              data-testid={`filetree-item-download-${node.name}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                void handleDownloadNode(node);
+              }}
+              className="p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title={`Download ${node.name} as ZIP`}
+            >
+              <Download className="w-3 h-3" />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleContextMenu(e, node);
+              }}
+              className="p-0.5 rounded hover:bg-cme-bg-subtle text-cme-text-muted transition-opacity"
+              title="Folder Options"
+            >
+              <MoreVertical className="w-3 h-3" />
+            </button>
+          </div>
         </div>
 
         {isExpanded && node.children && (
@@ -984,6 +1041,24 @@ export const FileTree: React.FC = () => {
           )}
 
           <div className="my-1 border-t border-cme-border-base" />
+          <button
+            data-testid="filetree-download-btn"
+            onClick={() => {
+              const node = contextMenu.node;
+              setContextMenu(null);
+              void handleDownloadNode(node);
+            }}
+            className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"
+          >
+            <Download className="w-3.5 h-3.5 text-blue-500" />
+            <span>
+              {contextMenu.node.is_bundle
+                ? 'Download as ZIP'
+                : contextMenu.node.is_directory
+                ? 'Download as ZIP'
+                : 'Download File'}
+            </span>
+          </button>
           <button
             data-testid="filetree-permissions-btn"
             onClick={() => {

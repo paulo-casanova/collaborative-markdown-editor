@@ -1013,6 +1013,98 @@ Result<void> Server::start() {
         res->end(file_res.value());
     });
 
+    // GET /api/v1/workspaces/bundles/zip?path=<relative_path>
+    app.get("/api/v1/workspaces/bundles/zip", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string token_query = url_decode(req->getQuery("token"));
+        if (auth_hdr.empty() && !token_query.empty()) {
+            auth_hdr = "Bearer " + token_query;
+        }
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string path_param = url_decode(req->getQuery("path"));
+        if (path_param.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Query parameter 'path' is required"}});
+            return;
+        }
+
+        auto zip_res = document_service_->export_bundle_zip(path_param, *auth_res.value());
+        if (!zip_res.has_value()) {
+            if (zip_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Bundle or file not found"}});
+            } else if (zip_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to export bundle zip"}});
+            }
+            return;
+        }
+
+        std::filesystem::path fp(path_param);
+        std::string fn = fp.filename().string();
+        if (fn.empty()) fn = "bundle";
+        if (!fn.ends_with(".zip")) fn += ".zip";
+
+        res->writeStatus("200 OK");
+        write_cors_headers(res, req->getHeader("origin"));
+        res->writeHeader("Content-Type", "application/zip");
+        res->writeHeader("Content-Disposition", "attachment; filename=\"" + fn + "\"");
+        res->end(zip_res.value());
+    });
+
+    // GET /api/v1/documents/:id/bundle.zip
+    app.get("/api/v1/documents/:id/bundle.zip", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string token_query = url_decode(req->getQuery("token"));
+        if (auth_hdr.empty() && !token_query.empty()) {
+            auth_hdr = "Bearer " + token_query;
+        }
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto zip_res = document_service_->export_document_bundle_zip(doc_id, *auth_res.value());
+        if (!zip_res.has_value()) {
+            if (zip_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (zip_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to export bundle zip"}});
+            }
+            return;
+        }
+
+        res->writeStatus("200 OK");
+        write_cors_headers(res, req->getHeader("origin"));
+        res->writeHeader("Content-Type", "application/zip");
+        res->writeHeader("Content-Disposition", "attachment; filename=\"bundle.zip\"");
+        res->end(zip_res.value());
+    });
+
     // GET /api/v1/workspaces/snippet-proxy?url=<encoded_url_or_endpoint>
     app.get("/api/v1/workspaces/snippet-proxy", [this](auto *res, auto *req) {
         std::string url_param = url_decode(req->getQuery("url"));
@@ -1864,6 +1956,78 @@ Result<void> Server::start() {
             send_json(res, "201 Created", nlohmann::json{
                 {"filename", filename},
                 {"path", upload_res.value()}
+            });
+        });
+    });
+
+    // POST /api/v1/documents/:id/assets/import
+    app.post("/api/v1/documents/:id/assets/import", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string source_path;
+            std::string target_filename;
+            try {
+                auto json = nlohmann::json::parse(*body);
+                if (json.contains("source_path") && json["source_path"].is_string()) {
+                    source_path = json["source_path"].get<std::string>();
+                }
+                if (json.contains("target_filename") && json["target_filename"].is_string()) {
+                    target_filename = json["target_filename"].get<std::string>();
+                }
+            } catch (...) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid JSON payload"}});
+                return;
+            }
+
+            if (source_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "source_path is required"}});
+                return;
+            }
+
+            auto import_res = document_service_->import_asset_from_workspace(doc_id, source_path, target_filename, *auth_res.value());
+            if (!import_res.has_value()) {
+                if (import_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document or source file not found"}});
+                } else if (import_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to import asset"}});
+                }
+                return;
+            }
+
+            std::string final_fn = target_filename;
+            if (final_fn.empty()) {
+                final_fn = std::filesystem::path(source_path).filename().string();
+            }
+
+            send_json(res, "201 Created", nlohmann::json{
+                {"filename", final_fn},
+                {"path", import_res.value()}
             });
         });
     });

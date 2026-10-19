@@ -1,5 +1,13 @@
-import { describe, it, expect } from 'vitest';
-import { isMarkdownPath, findWorkspacePath, resolveWorkspaceRelativePath, updateWorkspaceNodesCache } from '../../src/api/documents';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  isMarkdownPath,
+  findWorkspacePath,
+  resolveWorkspaceRelativePath,
+  updateWorkspaceNodesCache,
+  downloadWorkspaceFile,
+  downloadBundleZip,
+  importWorkspaceFileToBundleAsset,
+} from '../../src/api/documents';
 import { DocumentAsset, DirectoryDashboardItem, NodePermissions } from '../../src/types/document';
 import { buildTree } from '../../src/components/navigation/FileTree';
 
@@ -291,5 +299,199 @@ describe('Bundle Assets & Additive ACL types and logic', () => {
     // Sibling directory stem [[Bar]] from Foo.md
     expect(findWorkspacePath('Bar', 'Foo.md')).toBe('Xpto/Bar/Bar.md');
     expect(findWorkspacePath('Xpto/Bar', 'Foo.md')).toBe('Xpto/Bar/Bar.md');
+  });
+
+  describe('Tree file download and bundle asset import operations', () => {
+    let originalDocument: any;
+    let originalURL: any;
+    let originalFetch: any;
+
+    beforeEach(() => {
+      originalDocument = (global as any).document;
+      originalURL = (global as any).URL;
+      originalFetch = (global as any).fetch;
+    });
+
+    afterEach(() => {
+      (global as any).document = originalDocument;
+      (global as any).URL = originalURL;
+      (global as any).fetch = originalFetch;
+      vi.restoreAllMocks();
+    });
+
+    it('downloadWorkspaceFile triggers fetch and creates a temporary download link', async () => {
+      let createdLink: any = null;
+      let clicked = false;
+      let appended = false;
+      let removed = false;
+
+      (global as any).document = {
+        createElement: vi.fn((tag: string) => {
+          if (tag === 'a') {
+            createdLink = { href: '', download: '', click: () => { clicked = true; } };
+            return createdLink;
+          }
+          return {};
+        }),
+        body: {
+          appendChild: vi.fn(() => { appended = true; }),
+          removeChild: vi.fn(() => { removed = true; }),
+        },
+      };
+
+      (global as any).URL = {
+        createObjectURL: vi.fn(() => 'blob:http://localhost/mock-blob-uuid'),
+        revokeObjectURL: vi.fn(),
+      };
+
+      (global as any).fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        blob: async () => ({ size: 100 }),
+      });
+
+      await downloadWorkspaceFile('documents/specs/architecture.pdf', 'architecture.pdf');
+
+      expect((global as any).fetch).toHaveBeenCalledWith(
+        '/api/v1/workspaces/files?path=documents%2Fspecs%2Farchitecture.pdf',
+        expect.objectContaining({ credentials: 'include' })
+      );
+      expect(createdLink).not.toBeNull();
+      expect(createdLink.download).toBe('architecture.pdf');
+      expect(createdLink.href).toBe('blob:http://localhost/mock-blob-uuid');
+      expect(clicked).toBe(true);
+      expect(appended).toBe(true);
+      expect(removed).toBe(true);
+    });
+
+    it('downloadBundleZip queries /bundle.zip route when docId is provided', async () => {
+      let createdLink: any = null;
+      (global as any).document = {
+        createElement: vi.fn((tag: string) => {
+          if (tag === 'a') {
+            createdLink = { href: '', download: '', click: vi.fn() };
+            return createdLink;
+          }
+          return {};
+        }),
+        body: {
+          appendChild: vi.fn(),
+          removeChild: vi.fn(),
+        },
+      };
+
+      (global as any).URL = {
+        createObjectURL: vi.fn(() => 'blob:http://localhost/bundle-zip-uuid'),
+        revokeObjectURL: vi.fn(),
+      };
+
+      (global as any).fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        blob: async () => ({ size: 5000 }),
+      });
+
+      await downloadBundleZip('projects/alpha.bundle', 'doc-bundle-uuid-1', 'alpha.bundle.zip');
+
+      expect((global as any).fetch).toHaveBeenCalledWith(
+        '/api/v1/documents/doc-bundle-uuid-1/bundle.zip',
+        expect.objectContaining({ credentials: 'include' })
+      );
+      expect(createdLink.download).toBe('alpha.bundle.zip');
+    });
+
+    it('downloadBundleZip queries /workspaces/bundles/zip route when docId is omitted', async () => {
+      let createdLink: any = null;
+      (global as any).document = {
+        createElement: vi.fn((tag: string) => {
+          if (tag === 'a') {
+            createdLink = { href: '', download: '', click: vi.fn() };
+            return createdLink;
+          }
+          return {};
+        }),
+        body: {
+          appendChild: vi.fn(),
+          removeChild: vi.fn(),
+        },
+      };
+
+      (global as any).URL = {
+        createObjectURL: vi.fn(() => 'blob:http://localhost/dir-zip-uuid'),
+        revokeObjectURL: vi.fn(),
+      };
+
+      (global as any).fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        blob: async () => ({ size: 8000 }),
+      });
+
+      await downloadBundleZip('guides/user_manual', undefined, 'user_manual.zip');
+
+      expect((global as any).fetch).toHaveBeenCalledWith(
+        '/api/v1/workspaces/bundles/zip?path=guides%2Fuser_manual',
+        expect.objectContaining({ credentials: 'include' })
+      );
+      expect(createdLink.download).toBe('user_manual.zip');
+    });
+
+    it('importWorkspaceFileToBundleAsset sends POST request with source path and target filename', async () => {
+      (global as any).fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: {
+          get: (name: string) => (name.toLowerCase() === 'content-type' ? 'application/json' : null),
+        },
+        json: async () => ({ filename: 'photo.png', path: 'projects/spec.bundle/images/photo.png' }),
+      });
+
+      const res = await importWorkspaceFileToBundleAsset('doc-uuid-55', 'assets/photo.png', 'photo.png');
+      expect(res.filename).toBe('photo.png');
+      expect(res.path).toBe('projects/spec.bundle/images/photo.png');
+
+      expect((global as any).fetch).toHaveBeenCalledWith(
+        '/api/v1/documents/doc-uuid-55/assets/import',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            source_path: 'assets/photo.png',
+            target_filename: 'photo.png',
+          }),
+        })
+      );
+    });
+
+    it('handles dragging workspace tree items and validates drag payload', () => {
+      const node = {
+        id: 'doc-node-1',
+        path: 'guides/images/diagram.png',
+        name: 'diagram.png',
+        is_directory: false,
+        is_bundle: false,
+      };
+      const payload = JSON.stringify({
+        id: node.id,
+        path: node.path,
+        name: node.name,
+        is_directory: node.is_directory,
+        is_bundle: node.is_bundle,
+      });
+
+      const parsed = JSON.parse(payload);
+      expect(parsed.path).toBe('guides/images/diagram.png');
+      expect(parsed.name).toBe('diagram.png');
+      expect(parsed.is_directory).toBe(false);
+
+      // Filter: regular directories cannot be imported as single asset files
+      const canImportAsAsset = (item: { is_directory?: boolean; is_bundle?: boolean }) => {
+        if (item.is_directory && !item.is_bundle) return false;
+        return true;
+      };
+
+      expect(canImportAsAsset(node)).toBe(true);
+      expect(canImportAsAsset({ is_directory: true, is_bundle: false })).toBe(false);
+      expect(canImportAsAsset({ is_directory: true, is_bundle: true })).toBe(true);
+    });
   });
 });

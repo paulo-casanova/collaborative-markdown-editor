@@ -7,10 +7,132 @@
 #include <chrono>
 #include <iomanip>
 #include <map>
+#include <zlib.h>
 
 namespace cme::document {
 
 namespace {
+
+struct ZipFileEntry {
+    std::string path_in_zip;
+    std::string data;
+};
+
+std::string create_zip_archive(const std::vector<ZipFileEntry>& entries) {
+    std::string zip;
+    struct CentralDirHeader {
+        std::string path;
+        uint32_t crc{0};
+        uint32_t comp_size{0};
+        uint32_t uncomp_size{0};
+        uint32_t local_header_offset{0};
+        uint16_t method{0};
+    };
+    std::vector<CentralDirHeader> cd_headers;
+
+    auto write_u16 = [](std::string& s, uint16_t v) {
+        s.push_back(static_cast<char>(v & 0xFF));
+        s.push_back(static_cast<char>((v >> 8) & 0xFF));
+    };
+    auto write_u32 = [](std::string& s, uint32_t v) {
+        s.push_back(static_cast<char>(v & 0xFF));
+        s.push_back(static_cast<char>((v >> 8) & 0xFF));
+        s.push_back(static_cast<char>((v >> 16) & 0xFF));
+        s.push_back(static_cast<char>((v >> 24) & 0xFF));
+    };
+
+    for (const auto& entry : entries) {
+        uint32_t local_offset = static_cast<uint32_t>(zip.size());
+        uint32_t crc = static_cast<uint32_t>(
+            crc32(0L, reinterpret_cast<const Bytef*>(entry.data.data()), static_cast<uInt>(entry.data.size()))
+        );
+
+        std::string deflated;
+        bool use_deflate = false;
+        if (!entry.data.empty()) {
+            z_stream strm{};
+            if (deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY) == Z_OK) {
+                deflated.resize(entry.data.size() + 512);
+                strm.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(entry.data.data()));
+                strm.avail_in = static_cast<uInt>(entry.data.size());
+                strm.next_out = reinterpret_cast<Bytef*>(deflated.data());
+                strm.avail_out = static_cast<uInt>(deflated.size());
+                if (deflate(&strm, Z_FINISH) == Z_STREAM_END) {
+                    deflated.resize(strm.total_out);
+                    if (deflated.size() < entry.data.size()) {
+                        use_deflate = true;
+                    }
+                }
+                deflateEnd(&strm);
+            }
+        }
+
+        uint16_t method = use_deflate ? 8 : 0;
+        const std::string& payload = use_deflate ? deflated : entry.data;
+        uint32_t comp_size = static_cast<uint32_t>(payload.size());
+        uint32_t uncomp_size = static_cast<uint32_t>(entry.data.size());
+
+        // Local file header: 0x04034b50
+        write_u32(zip, 0x04034b50);
+        write_u16(zip, 20); // version needed: 2.0
+        write_u16(zip, 0x0800); // flags: UTF-8 filename
+        write_u16(zip, method);
+        write_u16(zip, 0); // mod time
+        write_u16(zip, 0); // mod date
+        write_u32(zip, crc);
+        write_u32(zip, comp_size);
+        write_u32(zip, uncomp_size);
+        write_u16(zip, static_cast<uint16_t>(entry.path_in_zip.size()));
+        write_u16(zip, 0); // extra field len
+        zip.append(entry.path_in_zip);
+        zip.append(payload);
+
+        cd_headers.push_back({
+            .path = entry.path_in_zip,
+            .crc = crc,
+            .comp_size = comp_size,
+            .uncomp_size = uncomp_size,
+            .local_header_offset = local_offset,
+            .method = method,
+        });
+    }
+
+    uint32_t cd_offset = static_cast<uint32_t>(zip.size());
+    for (const auto& cd : cd_headers) {
+        // Central directory header: 0x02014b50
+        write_u32(zip, 0x02014b50);
+        write_u16(zip, 20); // version made by
+        write_u16(zip, 20); // version needed
+        write_u16(zip, 0x0800); // UTF-8
+        write_u16(zip, cd.method);
+        write_u16(zip, 0);
+        write_u16(zip, 0);
+        write_u32(zip, cd.crc);
+        write_u32(zip, cd.comp_size);
+        write_u32(zip, cd.uncomp_size);
+        write_u16(zip, static_cast<uint16_t>(cd.path.size()));
+        write_u16(zip, 0); // extra len
+        write_u16(zip, 0); // comment len
+        write_u16(zip, 0); // disk num
+        write_u16(zip, 0); // internal attr
+        write_u32(zip, 0); // external attr
+        write_u32(zip, cd.local_header_offset);
+        zip.append(cd.path);
+    }
+    uint32_t cd_size = static_cast<uint32_t>(zip.size() - cd_offset);
+
+    // End of central directory record: 0x06054b50
+    write_u32(zip, 0x06054b50);
+    write_u16(zip, 0); // disk num
+    write_u16(zip, 0); // start disk
+    write_u16(zip, static_cast<uint16_t>(cd_headers.size()));
+    write_u16(zip, static_cast<uint16_t>(cd_headers.size()));
+    write_u32(zip, cd_size);
+    write_u32(zip, cd_offset);
+    write_u16(zip, 0); // comment len
+
+    return zip;
+}
 
 std::string normalize_rel_path(std::string_view p) {
     while (!p.empty() && (p.front() == '/' || p.front() == '\\' || std::isspace(static_cast<unsigned char>(p.front())))) {
@@ -2165,6 +2287,167 @@ Result<void> DocumentService::delete_document_asset(
     }
 
     return {};
+}
+
+Result<std::string> DocumentService::export_bundle_zip(
+    const std::string& relative_path,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    std::string clean_path = normalize_rel_path(relative_path);
+    if (has_path_traversal(clean_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    std::string doc_id;
+    auto conn_res = db_pool_->acquire();
+    if (conn_res.has_value()) {
+        try {
+            pqxx::read_transaction tx(conn_res->get());
+            auto rows = tx.exec_params(
+                "SELECT id FROM documents WHERE fs_path = $1;",
+                clean_path
+            );
+            if (!rows.empty()) {
+                doc_id = rows[0][0].as<std::string>();
+            }
+        } catch (...) {}
+    }
+
+    auto access_res = check_access(user, doc_id, clean_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    auto exists_res = storage_->exists(clean_path);
+    if (!exists_res.has_value() || !exists_res.value()) {
+        return std::unexpected(ErrorCode::NotFound);
+    }
+
+    std::vector<ZipFileEntry> entries;
+    auto info_res = storage_->get_node_info(clean_path);
+    bool is_dir = info_res.has_value() && info_res->is_directory;
+
+    if (!is_dir) {
+        auto file_res = storage_->read_file(clean_path);
+        if (!file_res.has_value()) {
+            return std::unexpected(file_res.error());
+        }
+        std::filesystem::path fp(clean_path);
+        entries.push_back({
+            .path_in_zip = fp.filename().string(),
+            .data = file_res.value()
+        });
+    } else {
+        auto list_res = storage_->list_directory(clean_path, true);
+        if (!list_res.has_value()) {
+            return std::unexpected(list_res.error());
+        }
+
+        for (const auto& node : list_res.value()) {
+            if (node.is_directory) continue;
+            auto file_res = storage_->read_file(node.relative_path);
+            if (!file_res.has_value()) continue;
+
+            std::string sub_path = node.relative_path;
+            if (!clean_path.empty() && sub_path.starts_with(clean_path + "/")) {
+                sub_path = sub_path.substr(clean_path.length() + 1);
+            }
+            entries.push_back({
+                .path_in_zip = sub_path,
+                .data = file_res.value()
+            });
+        }
+    }
+
+    return create_zip_archive(entries);
+}
+
+Result<std::string> DocumentService::export_document_bundle_zip(
+    const std::string& doc_id,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    std::string fs_path;
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+            doc_id
+        );
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        fs_path = rows[0][0].as<std::string>();
+    } catch (...) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    return export_bundle_zip(fs_path, user);
+}
+
+Result<std::string> DocumentService::import_asset_from_workspace(
+    const std::string& doc_id,
+    const std::string& source_path,
+    const std::string& target_filename,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    std::string clean_src = normalize_rel_path(source_path);
+    if (clean_src.empty() || has_path_traversal(clean_src)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    // 1. Check Read access to source file
+    std::string src_doc_id;
+    auto conn_res = db_pool_->acquire();
+    if (conn_res.has_value()) {
+        try {
+            pqxx::read_transaction tx(conn_res->get());
+            auto rows = tx.exec_params(
+                "SELECT id FROM documents WHERE fs_path = $1;",
+                clean_src
+            );
+            if (!rows.empty()) {
+                src_doc_id = rows[0][0].as<std::string>();
+            }
+        } catch (...) {}
+    }
+
+    auto src_access = check_access(user, src_doc_id, clean_src);
+    if (!src_access.has_value() || src_access.value() < db::AccessLevel::Read) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    // 2. Read source file content
+    auto data_res = storage_->read_file(clean_src);
+    if (!data_res.has_value()) {
+        return std::unexpected(data_res.error());
+    }
+
+    // 3. Resolve target filename
+    std::string fn = target_filename;
+    if (fn.empty()) {
+        std::filesystem::path fp(clean_src);
+        fn = fp.filename().string();
+    }
+
+    // 4. Upload into bundle via upload_asset (which enforces Edit permission on doc_id)
+    return upload_asset(doc_id, fn, data_res.value(), user);
 }
 
 Result<nlohmann::json> DocumentService::get_directory_dashboard(

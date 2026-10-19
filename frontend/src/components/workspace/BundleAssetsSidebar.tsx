@@ -18,6 +18,7 @@ import {
   uploadDocumentAsset,
   deleteDocumentAsset,
   getWorkspaceFileUrl,
+  importWorkspaceFileToBundleAsset,
 } from '../../api/documents';
 import { DocumentAsset } from '../../types/document';
 
@@ -64,6 +65,20 @@ export const BundleAssetsSidebar: React.FC<BundleAssetsSidebarProps> = ({
     },
   });
 
+  // Import from workspace mutation (for dragging files from tree)
+  const importWorkspaceMutation = useMutation({
+    mutationFn: async ({ sourcePath, filename }: { sourcePath: string; filename?: string }) => {
+      return importWorkspaceFileToBundleAsset(documentId, sourcePath, filename);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bundle-assets', documentId] });
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+    },
+    onError: (err: any) => {
+      alert(`Failed to import workspace file into bundle: ${err?.message || 'Unknown error'}`);
+    },
+  });
+
   // Delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (filename: string) => {
@@ -89,14 +104,37 @@ export const BundleAssetsSidebar: React.FC<BundleAssetsSidebarProps> = ({
     e.preventDefault();
     e.stopPropagation();
     setIsDragging(false);
-    if (e.dataTransfer.files) {
+
+    // 1. Files dropped directly from OS
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       handleFiles(e.dataTransfer.files);
+      return;
+    }
+
+    // 2. Node dragged from CME file tree
+    try {
+      const dataStr =
+        e.dataTransfer.getData('application/x-cme-node') ||
+        e.dataTransfer.getData('application/json');
+      if (dataStr) {
+        const node = JSON.parse(dataStr);
+        if (node?.path) {
+          if (node.is_directory && !node.is_bundle) {
+            alert('Cannot import an entire directory into bundle assets. Please drag individual files.');
+            return;
+          }
+          importWorkspaceMutation.mutate({ sourcePath: node.path, filename: node.name });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to parse dropped workspace node:', err);
     }
   };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    e.dataTransfer.dropEffect = 'copy';
     setIsDragging(true);
   };
 
@@ -186,7 +224,11 @@ export const BundleAssetsSidebar: React.FC<BundleAssetsSidebarProps> = ({
         >
           <Upload className="w-5 h-5 mx-auto mb-1 text-purple-500" />
           <p className="text-xs font-medium text-cme-text-base">
-            {uploadMutation.isPending ? 'Uploading asset...' : 'Drop files here or click to browse'}
+            {uploadMutation.isPending
+              ? 'Uploading asset...'
+              : importWorkspaceMutation.isPending
+              ? 'Importing from workspace...'
+              : 'Drop files here or click to browse'}
           </p>
           <p className="text-[10px] text-cme-text-muted mt-0.5">Images, PDFs, media & documents</p>
           <input
@@ -216,7 +258,15 @@ export const BundleAssetsSidebar: React.FC<BundleAssetsSidebarProps> = ({
       )}
 
       {/* Assets List */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2.5">
+      <div
+        className={`flex-1 overflow-y-auto p-3 space-y-2.5 transition-colors ${
+          isDragging ? 'ring-2 ring-purple-500/40 ring-inset bg-purple-500/5' : ''
+        }`}
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        data-testid="bundle-assets-list"
+      >
         {isLoading ? (
           <div className="text-center py-8 text-xs text-cme-text-muted">Loading bundle assets...</div>
         ) : filteredAssets.length === 0 ? (

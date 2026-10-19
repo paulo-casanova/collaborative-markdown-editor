@@ -786,6 +786,118 @@ int main() {
         std::cout << "  - Stem and folder note resolution and directory purge verified.\n";
     }
 
+    {
+        std::cout << "\n[TEST 18] Bundle ZIP Download and Workspace Asset Import\n";
+
+        {
+            pqxx::connection conn(db_url);
+            pqxx::work wtx(conn);
+            wtx.exec("DELETE FROM documents WHERE fs_path LIKE 'reports/%' OR fs_path LIKE 'shared_assets/%';");
+            wtx.commit();
+        }
+
+        // 1. Create a bundle document: reports/quarterly.bundle
+        auto create_bundle_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents",
+            auth_header,
+            nlohmann::json{
+                {"path", "reports/quarterly.bundle"},
+                {"title", "Quarterly Report"},
+                {"content", "# Q3 Financial Report\n\n![Chart](images/chart.png)\n"},
+                {"is_bundle", true}
+            }.dump()
+        );
+        assert(create_bundle_resp.status_code == 201);
+        auto bundle_json = nlohmann::json::parse(create_bundle_resp.body);
+        std::string bundle_doc_id = bundle_json["id"].get<std::string>();
+
+        // 2. Upload asset into bundle: chart.png
+        auto upload_asset_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents/" + bundle_doc_id + "/assets?filename=chart.png",
+            auth_header,
+            "FAKE_PNG_BINARY_DATA_FOR_CHART"
+        );
+        assert(upload_asset_resp.status_code == 201);
+
+        // 3. Create a standalone file in workspace: shared_assets/company_logo.svg
+        auto upload_logo_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/workspaces/files?path=shared_assets/company_logo.svg",
+            auth_header,
+            "<svg><circle r='10'/></svg>"
+        );
+        assert(upload_logo_resp.status_code == 200 || upload_logo_resp.status_code == 201);
+
+        // 4. Import shared_assets/company_logo.svg into the bundle assets list via /api/v1/documents/:id/assets/import
+        auto import_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents/" + bundle_doc_id + "/assets/import",
+            auth_header,
+            nlohmann::json{
+                {"source_path", "shared_assets/company_logo.svg"},
+                {"target_filename", "imported_logo.svg"}
+            }.dump()
+        );
+        assert(import_resp.status_code == 201);
+        auto import_json = nlohmann::json::parse(import_resp.body);
+        assert(import_json["filename"] == "imported_logo.svg");
+
+        // 5. Verify bundle assets list now contains both chart.png and imported_logo.svg
+        auto list_assets_resp = http_curl(
+            "GET",
+            base_url + "/api/v1/documents/" + bundle_doc_id + "/assets",
+            auth_header
+        );
+        assert(list_assets_resp.status_code == 200);
+        auto assets_json = nlohmann::json::parse(list_assets_resp.body);
+        bool found_chart = false;
+        bool found_logo = false;
+        for (const auto& a : assets_json["assets"]) {
+            std::string n = a["name"].get<std::string>();
+            if (n == "chart.png") found_chart = true;
+            if (n == "imported_logo.svg") found_logo = true;
+        }
+        assert(found_chart);
+        assert(found_logo);
+
+        // 6. Download bundle zip via /api/v1/workspaces/bundles/zip?path=reports/quarterly.bundle
+        auto zip_resp = http_curl(
+            "GET",
+            base_url + "/api/v1/workspaces/bundles/zip?path=reports/quarterly.bundle",
+            auth_header
+        );
+        assert(zip_resp.status_code == 200);
+        assert(zip_resp.headers.find("Content-Type: application/zip") != std::string::npos);
+        assert(zip_resp.headers.find("quarterly.bundle.zip") != std::string::npos);
+        // Verify PKZIP magic bytes (PK\x03\x04)
+        assert(zip_resp.body.size() > 4);
+        assert(zip_resp.body[0] == 'P' && zip_resp.body[1] == 'K' && zip_resp.body[2] == 0x03 && zip_resp.body[3] == 0x04);
+
+        // 7. Download bundle zip via /api/v1/documents/:id/bundle.zip
+        auto doc_zip_resp = http_curl(
+            "GET",
+            base_url + "/api/v1/documents/" + bundle_doc_id + "/bundle.zip",
+            auth_header
+        );
+        assert(doc_zip_resp.status_code == 200);
+        assert(doc_zip_resp.headers.find("Content-Type: application/zip") != std::string::npos);
+
+        // 8. Test real zip extraction using unzip command-line utility
+        std::string test_zip_path = "/tmp/cme_test_quarterly.zip";
+        std::ofstream zip_out(test_zip_path, std::ios::binary);
+        zip_out.write(zip_resp.body.data(), zip_resp.body.size());
+        zip_out.close();
+
+        int unzip_test_ret = std::system("unzip -t /tmp/cme_test_quarterly.zip > /dev/null 2>&1");
+        assert(unzip_test_ret == 0);
+
+        std::filesystem::remove(test_zip_path);
+
+        std::cout << "  - Bundle ZIP download and workspace asset import successfully verified.\n";
+    }
+
     // Stop server
     std::cout << "\n[TEST] Stopping server...\n";
     server->stop();
@@ -799,9 +911,9 @@ int main() {
     try {
         pqxx::connection conn(db_url);
         pqxx::work clean_tx(conn);
-        clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%' OR fs_path LIKE 'Highway%';");
-        clean_tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
-        clean_tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
+        clean_tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%' OR fs_path LIKE 'Highway%' OR fs_path LIKE 'reports/%' OR fs_path LIKE 'shared_assets/%';");
+        clean_tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%' OR directory_path LIKE 'reports%' OR directory_path LIKE 'shared_assets%';");
+        clean_tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%' OR directory_path LIKE 'reports%' OR directory_path LIKE 'shared_assets%';");
         clean_tx.exec("DELETE FROM users WHERE username IN ('doc_author', 'doc_reader');");
         clean_tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         clean_tx.commit();
