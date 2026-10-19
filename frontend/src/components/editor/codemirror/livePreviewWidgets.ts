@@ -1607,7 +1607,7 @@ function createTableCellLink(
   return a;
 }
 
-function renderCellContent(
+export function renderCellContent(
   container: HTMLElement,
   text: string,
   view: EditorView,

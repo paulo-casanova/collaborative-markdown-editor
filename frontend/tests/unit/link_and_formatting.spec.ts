@@ -713,6 +713,114 @@ Deep details.`;
       expect(td0Code).toBeDefined();
       expect(td0Code.props.children).toBe('print()');
     });
+
+    it('ReaderPage renderMarkdown supports underscore emphasis, bold, and backticks in table headers', () => {
+      const md = [
+        '| `inline_code` | _underscore emphasis_ | __underscore bold__ | ___underscore bold italic___ |',
+        '| :--- | :--- | :--- | :--- |',
+        '| `val1` | _cell em_ | __cell bold__ | ___cell bi___ |',
+      ].join('\n');
+
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(1);
+      const tableWrapper = elements[0];
+      const table = tableWrapper.props.children;
+      const [thead] = table.props.children;
+      const thList = thead.props.children.props.children as any[];
+
+      // TH 0: `inline_code`
+      const th0Content = thList[0].props.children as any[];
+      const th0Code = th0Content.find((p) => p && p.type === 'code');
+      expect(th0Code).toBeDefined();
+      expect(th0Code.props.children).toBe('inline_code');
+      expect(th0Code.props.className).toContain('font-mono');
+
+      // TH 1: _underscore_emphasis_
+      const th1Content = thList[1].props.children as any[];
+      const th1Em = th1Content.find((p) => p && p.type === 'em');
+      expect(th1Em).toBeDefined();
+      expect(th1Em.props.className).toContain('italic');
+
+      // TH 2: __underscore_bold__
+      const th2Content = thList[2].props.children as any[];
+      const th2Bold = th2Content.find((p) => p && p.type === 'strong');
+      expect(th2Bold).toBeDefined();
+      expect(th2Bold.props.className).toContain('font-black');
+
+      // TH 3: ___underscore_bold_italic___
+      const th3Content = thList[3].props.children as any[];
+      const th3Both = th3Content.find((p) => p && p.type === 'strong');
+      expect(th3Both).toBeDefined();
+      expect(th3Both.props.children.type).toBe('em');
+    });
+
+    it('TableBlockWidget renderCellContent formats table headers with backticks and underscores', async () => {
+      const { renderCellContent } = await import('../../src/components/editor/codemirror/livePreviewWidgets');
+
+      const makeMockNode = (tag?: string, textContent?: string) => ({
+        tagName: tag ? tag.toUpperCase() : '#TEXT',
+        className: '',
+        textContent: textContent || '',
+        children: [] as any[],
+        dataset: {} as Record<string, string>,
+        style: {} as Record<string, string>,
+        appendChild(child: any) {
+          this.children.push(child);
+          return child;
+        },
+      });
+
+      const originalDoc = (globalThis as any).document;
+      (globalThis as any).document = {
+        createElement: (tag: string) => makeMockNode(tag),
+        createTextNode: (text: string) => makeMockNode(undefined, text),
+      };
+
+      try {
+        const dummyView = {} as any;
+
+        // 1. Backtick code in header: `my_column`
+        const headerCode = makeMockNode();
+        renderCellContent(headerCode as any, '`my_column`', dummyView);
+        expect(headerCode.children.length).toBe(1);
+        expect(headerCode.children[0].tagName).toBe('CODE');
+        expect(headerCode.children[0].className).toContain('font-mono');
+        expect(headerCode.children[0].textContent).toBe('my_column');
+
+        // 2. Underscore emphasis in header: _italic header_
+        const headerItalic = makeMockNode();
+        renderCellContent(headerItalic as any, '_italic header_', dummyView);
+        expect(headerItalic.children.length).toBe(1);
+        expect(headerItalic.children[0].tagName).toBe('EM');
+        expect(headerItalic.children[0].className).toContain('italic');
+
+        // 3. Underscore bold in header: __bold header__
+        const headerBold = makeMockNode();
+        renderCellContent(headerBold as any, '__bold header__', dummyView);
+        expect(headerBold.children.length).toBe(1);
+        expect(headerBold.children[0].tagName).toBe('STRONG');
+        expect(headerBold.children[0].className).toContain('font-black');
+
+        // 4. Underscore bold-italic in header: ___both header___
+        const headerBoth = makeMockNode();
+        renderCellContent(headerBoth as any, '___both header___', dummyView);
+        expect(headerBoth.children.length).toBe(1);
+        expect(headerBoth.children[0].tagName).toBe('STRONG');
+        expect(headerBoth.children[0].className).toContain('font-black');
+        expect(headerBoth.children[0].children[0].tagName).toBe('EM');
+        expect(headerBoth.children[0].children[0].className).toContain('italic');
+
+        // 5. Mixed header: `fn()` with **bold** and _italic_
+        const headerMixed = makeMockNode();
+        renderCellContent(headerMixed as any, 'Col `fn()` with **bold** and _italic_', dummyView);
+        const tags = headerMixed.children.map((c) => c.tagName || '#TEXT');
+        expect(tags).toContain('CODE');
+        expect(tags).toContain('STRONG');
+        expect(tags).toContain('EM');
+      } finally {
+        (globalThis as any).document = originalDoc;
+      }
+    });
   });
 });
 
