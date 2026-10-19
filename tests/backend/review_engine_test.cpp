@@ -547,6 +547,136 @@ int main() {
     std::cout << "  [PASS] WebSocket Opcode 0x02 received COMMENT_DELETED notification!\n";
 
     // =========================================================================
+    // 8.5 Explicit Archival of Comments and Suggestions
+    // =========================================================================
+    std::cout << "\n[STEP 8.5] Testing Comment & Suggestion Archival...\n";
+    std::string archive_comment_id;
+    {
+        nlohmann::json body = {
+            {"content", "This comment is slated for explicit archival."}
+        };
+        auto resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents/" + doc_id + "/comments",
+            {"Content-Type: application/json", "Authorization: Bearer " + bob_token},
+            body.dump()
+        );
+        assert(resp.status_code == 201);
+        archive_comment_id = nlohmann::json::parse(resp.body)["id"].get<std::string>();
+
+        // Verify comment is listed
+        auto list_resp1 = http_curl(
+            "GET",
+            base_url + "/api/v1/documents/" + doc_id + "/comments",
+            {"Authorization: Bearer " + alice_token}
+        );
+        assert(list_resp1.status_code == 200);
+        auto list_json1 = nlohmann::json::parse(list_resp1.body);
+        bool found = false;
+        for (const auto& c : list_json1) {
+            if (c["id"] == archive_comment_id) found = true;
+        }
+        assert(found);
+
+        // Archive the comment
+        auto arch_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/comments/" + archive_comment_id + "/archive",
+            {"Authorization: Bearer " + alice_token}
+        );
+        assert(arch_resp.status_code == 200);
+        auto arch_json = nlohmann::json::parse(arch_resp.body);
+        assert(arch_json["status"] == "ARCHIVED");
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    events = read_events_file(events_file);
+    assert(events.back()["event"] == "COMMENT_ARCHIVED");
+    assert(events.back()["comment_id"] == archive_comment_id);
+    std::cout << "  [PASS] WebSocket Opcode 0x02 received COMMENT_ARCHIVED notification!\n";
+
+    // Verify archived comment is now omitted from default list_comments
+    {
+        auto list_resp2 = http_curl(
+            "GET",
+            base_url + "/api/v1/documents/" + doc_id + "/comments",
+            {"Authorization: Bearer " + alice_token}
+        );
+        assert(list_resp2.status_code == 200);
+        auto list_json2 = nlohmann::json::parse(list_resp2.body);
+        bool found = false;
+        for (const auto& c : list_json2) {
+            if (c["id"] == archive_comment_id) found = true;
+        }
+        assert(!found);
+        std::cout << "  [PASS] list_comments correctly excludes ARCHIVED comments.\n";
+    }
+
+    // Now test suggestion archival
+    std::string archive_sug_id;
+    {
+        nlohmann::json body = {
+            {"original_text", "foo"},
+            {"suggested_text", "bar"}
+        };
+        auto resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents/" + doc_id + "/suggestions",
+            {"Content-Type: application/json", "Authorization: Bearer " + bob_token},
+            body.dump()
+        );
+        assert(resp.status_code == 201);
+        archive_sug_id = nlohmann::json::parse(resp.body)["id"].get<std::string>();
+
+        // Verify suggestion is listed
+        auto list_sug_resp1 = http_curl(
+            "GET",
+            base_url + "/api/v1/documents/" + doc_id + "/suggestions",
+            {"Authorization: Bearer " + alice_token}
+        );
+        assert(list_sug_resp1.status_code == 200);
+        auto list_sug_json1 = nlohmann::json::parse(list_sug_resp1.body);
+        bool found = false;
+        for (const auto& s : list_sug_json1) {
+            if (s["id"] == archive_sug_id) found = true;
+        }
+        assert(found);
+
+        // Archive suggestion
+        auto arch_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/suggestions/" + archive_sug_id + "/archive",
+            {"Authorization: Bearer " + alice_token}
+        );
+        assert(arch_resp.status_code == 200);
+        auto arch_json = nlohmann::json::parse(arch_resp.body);
+        assert(arch_json["status"] == "ARCHIVED");
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    events = read_events_file(events_file);
+    assert(events.back()["event"] == "SUGGESTION_ARCHIVED");
+    assert(events.back()["suggestion_id"] == archive_sug_id);
+    std::cout << "  [PASS] WebSocket Opcode 0x02 received SUGGESTION_ARCHIVED notification!\n";
+
+    // Verify archived suggestion is omitted from default list_suggestions
+    {
+        auto list_sug_resp2 = http_curl(
+            "GET",
+            base_url + "/api/v1/documents/" + doc_id + "/suggestions",
+            {"Authorization: Bearer " + alice_token}
+        );
+        assert(list_sug_resp2.status_code == 200);
+        auto list_sug_json2 = nlohmann::json::parse(list_sug_resp2.body);
+        bool found = false;
+        for (const auto& s : list_sug_json2) {
+            if (s["id"] == archive_sug_id) found = true;
+        }
+        assert(!found);
+        std::cout << "  [PASS] list_suggestions correctly excludes ARCHIVED suggestions.\n";
+    }
+
+    // =========================================================================
     // 9. Teardown & Cleanup
     // =========================================================================
     std::cout << "\n[STEP 9] Terminating listener and server daemon...\n";

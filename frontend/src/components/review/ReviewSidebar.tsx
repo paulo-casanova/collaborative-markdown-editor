@@ -65,21 +65,29 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
   );
 
   // Compute counts
-  const openComments = useMemo(
-    () => comments.filter((c) => c.status === 'OPEN'),
+  const nonArchivedComments = useMemo(
+    () => comments.filter((c) => c.status !== 'ARCHIVED'),
     [comments]
   );
-  const pendingSuggestions = useMemo(
-    () => suggestions.filter((s) => s.status === 'PENDING'),
+  const openComments = useMemo(
+    () => nonArchivedComments.filter((c) => c.status === 'OPEN'),
+    [nonArchivedComments]
+  );
+  const nonArchivedSuggestions = useMemo(
+    () => suggestions.filter((s) => s.status !== 'ARCHIVED'),
     [suggestions]
+  );
+  const pendingSuggestions = useMemo(
+    () => nonArchivedSuggestions.filter((s) => s.status === 'PENDING'),
+    [nonArchivedSuggestions]
   );
   const openTasks = useMemo(
     () => tasks.filter((t) => !t.is_completed),
     [tasks]
   );
 
-  const activeComments = showResolved ? comments : openComments;
-  const activeSuggestions = showResolved ? suggestions : pendingSuggestions;
+  const activeComments = showResolved ? nonArchivedComments : openComments;
+  const activeSuggestions = showResolved ? nonArchivedSuggestions : pendingSuggestions;
   const activeTasks = showResolved ? tasks : openTasks;
 
   // Interleave and sort review items by position or date
@@ -301,7 +309,13 @@ export const ReviewSidebar: React.FC<ReviewSidebarProps> = ({
                 />
               );
             } else {
-              return <TaskCard key={item.data.id} task={item.data} />;
+              return (
+                <TaskCard
+                  key={item.data.id}
+                  task={item.data}
+                  onScrollToAnchor={onScrollToAnchor}
+                />
+              );
             }
           })
         )}

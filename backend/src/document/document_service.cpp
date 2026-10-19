@@ -1210,6 +1210,154 @@ Result<DocumentRecord> DocumentService::move_document(
     }
 }
 
+Result<DocumentRecord> DocumentService::convert_document(
+    const std::string& doc_id,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT fs_path, title, owner_user_id::text, number_headers FROM documents WHERE id = $1::uuid;",
+            doc_id
+        );
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        std::string old_fs_path = rows[0][0].as<std::string>();
+        std::string title = rows[0][1].as<std::string>();
+        std::string owner_id = rows[0][2].as<std::string>();
+        bool num_h = rows[0][3].as<bool>();
+
+        // Check permission (Edit access required)
+        auto access_res = check_access(user, doc_id, old_fs_path);
+        if (!access_res.has_value() || access_res.value() < db::AccessLevel::Edit) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+
+        bool currently_bundle = storage_->is_bundle(old_fs_path).value_or(false) || old_fs_path.ends_with(".bundle");
+        std::string new_fs_path;
+
+        if (!currently_bundle) {
+            // Convert Document -> Bundle
+            // e.g., "Notes/MyDoc.md" -> "Notes/MyDoc.bundle"
+            std::string base = old_fs_path;
+            if (base.ends_with(".md")) {
+                base = base.substr(0, base.size() - 3);
+            } else if (base.ends_with(".markdown")) {
+                base = base.substr(0, base.size() - 9);
+            }
+            new_fs_path = base + ".bundle";
+
+            if (storage_->exists(new_fs_path).value_or(false)) {
+                return std::unexpected(ErrorCode::AlreadyExists);
+            }
+            if (!storage_->exists(old_fs_path).value_or(false)) {
+                return std::unexpected(ErrorCode::NotFound);
+            }
+
+            auto dir_res = storage_->create_directory(new_fs_path);
+            if (!dir_res.has_value()) {
+                return std::unexpected(dir_res.error());
+            }
+
+            std::string target_index = new_fs_path + "/index.md";
+            auto move_res = storage_->move_node(old_fs_path, target_index);
+            if (!move_res.has_value()) {
+                return std::unexpected(move_res.error());
+            }
+        } else {
+            // Convert Bundle -> Document
+            // e.g., "Notes/MyDoc.bundle" -> "Notes/MyDoc.md"
+            std::string base = old_fs_path;
+            if (base.ends_with(".bundle")) {
+                base = base.substr(0, base.size() - 7);
+            }
+            new_fs_path = base + ".md";
+
+            if (storage_->exists(new_fs_path).value_or(false)) {
+                return std::unexpected(ErrorCode::AlreadyExists);
+            }
+
+            std::string old_index = old_fs_path + "/index.md";
+            if (!storage_->exists(old_index).value_or(false)) {
+                return std::unexpected(ErrorCode::NotFound);
+            }
+
+            // Move any sibling assets inside the bundle to parent directory
+            std::filesystem::path bundle_p(old_fs_path);
+            std::string parent_dir = bundle_p.parent_path().string();
+
+            auto child_res = storage_->list_directory(old_fs_path, true);
+            if (child_res.has_value()) {
+                for (const auto& child : child_res.value()) {
+                    if (child.is_directory) continue;
+                    if (child.relative_path == old_index) continue;
+
+                    // Calculate destination path relative to parent_dir
+                    std::filesystem::path child_p(child.relative_path);
+                    std::string sub = std::filesystem::relative(child_p, bundle_p).string();
+                    std::string dest_asset = (parent_dir.empty() ? "" : parent_dir + "/") + sub;
+
+                    if (!storage_->exists(dest_asset).value_or(false)) {
+                        storage_->move_node(child.relative_path, dest_asset);
+                    }
+                }
+            }
+
+            // Move index.md to new_fs_path
+            auto move_res = storage_->move_node(old_index, new_fs_path);
+            if (!move_res.has_value()) {
+                return std::unexpected(move_res.error());
+            }
+
+            // Clean up remaining empty bundle directory
+            auto trash_res = storage_->delete_to_trash(old_fs_path);
+            if (trash_res.has_value()) {
+                storage_->purge_from_trash(trash_res.value());
+            }
+        }
+
+        // Update database record
+        auto up_rows = tx.exec_params(
+            "UPDATE documents SET fs_path = $2, updated_at = NOW() WHERE id = $1::uuid "
+            "RETURNING TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "          TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+            doc_id,
+            new_fs_path
+        );
+        std::string created_at = up_rows[0][0].as<std::string>();
+        std::string updated_at = up_rows[0][1].as<std::string>();
+        tx.commit();
+
+        bool is_bundle_res = storage_->is_bundle(new_fs_path).value_or(false);
+
+        return DocumentRecord{
+            .id = doc_id,
+            .path = new_fs_path,
+            .title = title,
+            .content = "",
+            .is_bundle = is_bundle_res,
+            .owner_user_id = owner_id,
+            .number_headers = num_h,
+            .created_at = created_at,
+            .updated_at = updated_at
+        };
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] convert_document failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 Result<std::string> DocumentService::delete_document(
     const std::string& doc_id,
     const auth::UserIdentity& user

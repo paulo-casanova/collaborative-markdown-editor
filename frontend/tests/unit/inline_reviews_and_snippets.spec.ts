@@ -574,4 +574,108 @@ describe('Step 8.3: Inline Code-Diff Reviews & In-Document Discussions', () => {
     useReviewStore.getState().setShowInTextReviews(true);
     expect(useReviewStore.getState().showInTextReviews).toBe(true);
   });
+
+  it('removes comment from store on COMMENT_ARCHIVED event', () => {
+    useReviewStore.setState({
+      documentId: 'doc-100',
+      comments: [
+        {
+          id: 'c-20',
+          document_id: 'doc-100',
+          content: 'Comment to be archived',
+          status: 'OPEN',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    useReviewStore.getState().handleWebSocketReviewEvent({
+      event: 'COMMENT_ARCHIVED',
+      document_id: 'doc-100',
+      comment_id: 'c-20',
+    });
+
+    const comment = useReviewStore.getState().comments.find((c) => c.id === 'c-20');
+    expect(comment).toBeUndefined();
+  });
+
+  it('removes suggestion from store on SUGGESTION_ARCHIVED event', () => {
+    useReviewStore.setState({
+      documentId: 'doc-100',
+      suggestions: [
+        {
+          id: 's-20',
+          document_id: 'doc-100',
+          original_text: 'before',
+          suggested_text: 'after',
+          status: 'PENDING',
+          created_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    useReviewStore.getState().handleWebSocketReviewEvent({
+      event: 'SUGGESTION_ARCHIVED',
+      document_id: 'doc-100',
+      suggestion_id: 's-20',
+    });
+
+    const suggestion = useReviewStore.getState().suggestions.find((s) => s.id === 's-20');
+    expect(suggestion).toBeUndefined();
+  });
+
+  it('archiveComment and archiveSuggestion call review API and remove item from store', async () => {
+    useReviewStore.setState({
+      documentId: 'doc-100',
+      comments: [
+        {
+          id: 'c-archive',
+          document_id: 'doc-100',
+          content: 'Pending archive comment',
+          status: 'OPEN',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      suggestions: [
+        {
+          id: 's-archive',
+          document_id: 'doc-100',
+          original_text: 'old text',
+          suggested_text: 'new text',
+          status: 'PENDING',
+          created_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    // Mock reviews API
+    const reviewsApi = await import('../../src/api/reviews');
+    vi.spyOn(reviewsApi, 'archiveComment').mockResolvedValue({
+      id: 'c-archive',
+      document_id: 'doc-100',
+      content: 'Pending archive comment',
+      status: 'ARCHIVED',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    } as any);
+
+    vi.spyOn(reviewsApi, 'archiveSuggestion').mockResolvedValue({
+      id: 's-archive',
+      document_id: 'doc-100',
+      original_text: 'old text',
+      suggested_text: 'new text',
+      status: 'ARCHIVED',
+      created_at: new Date().toISOString(),
+    } as any);
+
+    const resComment = await useReviewStore.getState().archiveComment('c-archive');
+    expect(resComment?.status).toBe('ARCHIVED');
+    expect(useReviewStore.getState().comments.find((c) => c.id === 'c-archive')).toBeUndefined();
+
+    const resSug = await useReviewStore.getState().archiveSuggestion('s-archive');
+    expect(resSug?.status).toBe('ARCHIVED');
+    expect(useReviewStore.getState().suggestions.find((s) => s.id === 's-archive')).toBeUndefined();
+  });
 });

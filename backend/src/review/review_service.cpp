@@ -112,7 +112,7 @@ Result<std::vector<CommentRecord>> ReviewService::list_comments(
             "       u.username, u.display_name, u.avatar_color "
             "FROM comments c "
             "JOIN users u ON c.author_id = u.id "
-            "WHERE c.document_id = $1::uuid "
+            "WHERE c.document_id = $1::uuid AND c.status != 'ARCHIVED' "
             "ORDER BY c.created_at ASC;",
             document_id
         );
@@ -430,7 +430,7 @@ Result<CommentRecord> ReviewService::update_comment_status(
     const auth::UserIdentity& user,
     const std::string& status
 ) {
-    if (status != "OPEN" && status != "RESOLVED") {
+    if (status != "OPEN" && status != "RESOLVED" && status != "ARCHIVED") {
         return std::unexpected(ErrorCode::InvalidArgument);
     }
 
@@ -475,6 +475,55 @@ Result<CommentRecord> ReviewService::update_comment_status(
         return get_comment(comment_id, user);
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] ReviewService::update_comment_status failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<CommentRecord> ReviewService::archive_comment(
+    const std::string& comment_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    std::string doc_id;
+    std::string author_id;
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT document_id::text, author_id::text FROM comments WHERE id = $1::uuid;",
+            comment_id
+        );
+        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
+        doc_id = rows[0][0].as<std::string>();
+        author_id = rows[0][1].as<std::string>();
+    } catch (...) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto access_res = check_doc_access(doc_id, user);
+    if (!access_res.has_value()) return std::unexpected(access_res.error());
+    if (access_res.value() < db::AccessLevel::Edit && user.user_id != author_id && !user.is_system_admin) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "UPDATE comments "
+            "SET status = 'ARCHIVED', updated_at = NOW() "
+            "WHERE id = $1::uuid "
+            "RETURNING id::text;",
+            comment_id
+        );
+        tx.commit();
+
+        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
+
+        return get_comment(comment_id, user);
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::archive_comment failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
 }
@@ -549,7 +598,7 @@ Result<std::vector<SuggestionRecord>> ReviewService::list_suggestions(
                 "       u.username, u.display_name, u.avatar_color "
                 "FROM suggestions s "
                 "JOIN users u ON s.author_id = u.id "
-                "WHERE s.document_id = $1::uuid "
+                "WHERE s.document_id = $1::uuid AND s.status != 'ARCHIVED' "
                 "ORDER BY s.created_at ASC;",
                 document_id
             );
@@ -956,6 +1005,53 @@ Result<SuggestionRecord> ReviewService::reject_suggestion(
     }
 
     return rec;
+}
+
+Result<SuggestionRecord> ReviewService::archive_suggestion(
+    const std::string& suggestion_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    std::string doc_id;
+    std::string author_id;
+    try {
+        pqxx::work tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT s.id::text, s.document_id::text, s.author_id::text FROM suggestions s WHERE s.id = $1::uuid;",
+            suggestion_id
+        );
+        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
+        doc_id = rows[0][1].as<std::string>();
+        author_id = rows[0][2].as<std::string>();
+    } catch (...) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto access_res = check_doc_access(doc_id, user);
+    if (!access_res.has_value()) return std::unexpected(access_res.error());
+    if (access_res.value() < db::AccessLevel::Edit && user.user_id != author_id && !user.is_system_admin) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto update_rows = tx.exec_params(
+            "UPDATE suggestions "
+            "SET status = 'ARCHIVED', resolved_at = COALESCE(resolved_at, NOW()) "
+            "WHERE id = $1::uuid "
+            "RETURNING id::text;",
+            suggestion_id
+        );
+        tx.commit();
+        if (update_rows.empty()) return std::unexpected(ErrorCode::NotFound);
+        return get_suggestion(suggestion_id, user);
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::archive_suggestion failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
 }
 
 // =============================================================================

@@ -204,6 +204,7 @@ public:
     Result<CommentRecord> reply_comment(const std::string& comment_id, const auth::UserIdentity& user, const std::string& content);
     Result<CommentRecord> update_comment_content(const std::string& comment_id, const auth::UserIdentity& user, const std::string& content);
     Result<CommentRecord> update_comment_status(const std::string& comment_id, const auth::UserIdentity& user, const std::string& status);
+    Result<CommentRecord> archive_comment(const std::string& comment_id, const auth::UserIdentity& user);
     Result<void> delete_comment(const std::string& comment_id, const auth::UserIdentity& user);
 
     // =========================================================================
@@ -219,6 +220,7 @@ public:
         std::function<void(const std::string& doc_id, std::span<const uint8_t> delta)> broadcast_sync_cb = nullptr
     );
     Result<SuggestionRecord> reject_suggestion(const std::string& suggestion_id, const auth::UserIdentity& user);
+    Result<SuggestionRecord> archive_suggestion(const std::string& suggestion_id, const auth::UserIdentity& user);
 
     // =========================================================================
     // Tasks

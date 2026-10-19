@@ -38,7 +38,7 @@ interface EditorToolbarProps {
 }
 
 export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider, onToggleNumberHeaders }) => {
-  const { numberHeaders, toggleNumberHeaders } = useUIStore();
+  const { numberHeaders, toggleNumberHeaders, lineNumbers, toggleLineNumbers } = useUIStore();
   const {
     comments,
     suggestions,
@@ -198,6 +198,25 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider, 
         data-testid="toggle-header-numbering-btn"
       >
         <Hash className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => toggleLineNumbers()}
+        className={btnClass(lineNumbers)}
+        title="Toggle Line Numbers"
+        data-testid="toggle-line-numbers-btn"
+      >
+        <svg
+          className="w-3.5 h-3.5"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M4 6h2M4 12h2M4 18h2M10 6h10M10 12h10M10 18h10" />
+        </svg>
       </button>
 
       {divider}

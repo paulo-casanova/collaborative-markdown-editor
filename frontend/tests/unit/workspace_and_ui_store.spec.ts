@@ -145,4 +145,14 @@ describe('WorkspaceStore & UIStore behavior', () => {
     useReviewStore.getState().setSidebarWidth(950);
     expect(useReviewStore.getState().sidebarWidth).toBe(700);
   });
+
+  it('manages lineNumbers in UIStore and persists to localStorage', () => {
+    expect(useUIStore.getState().lineNumbers).toBe(false);
+
+    useUIStore.getState().setLineNumbers(true);
+    expect(useUIStore.getState().lineNumbers).toBe(true);
+
+    useUIStore.getState().toggleLineNumbers();
+    expect(useUIStore.getState().lineNumbers).toBe(false);
+  });
 });

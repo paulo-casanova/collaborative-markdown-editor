@@ -157,6 +157,14 @@ public:
     );
 
     /**
+     * @brief Converts a standalone document to a bundle, or a bundle to a standalone document.
+     */
+    Result<DocumentRecord> convert_document(
+        const std::string& doc_id,
+        const auth::UserIdentity& user
+    );
+
+    /**
      * @brief Soft-deletes a document to trash and removes database index.
      */
     Result<std::string> delete_document(

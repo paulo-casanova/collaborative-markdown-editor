@@ -140,4 +140,25 @@ export const cmeEditorTheme = EditorView.theme({
     opacity: '1 !important',
     visibility: 'visible !important',
   },
+
+  // Line Numbers and Gutters
+  '.cm-gutters': {
+    backgroundColor: 'var(--cme-bg-surface, #ffffff)',
+    color: 'var(--cme-text-muted, #94a3b8)',
+    borderRight: '1px solid var(--cme-border-base, rgba(0, 0, 0, 0.1))',
+    paddingLeft: '0.5rem',
+    paddingRight: '0.25rem',
+  },
+  '.cm-activeLineGutter': {
+    backgroundColor: 'transparent',
+    color: 'var(--cme-text-base, #111827)',
+    fontWeight: '600',
+  },
+  '.cm-lineNumbers .cm-gutterElement': {
+    fontSize: '0.8rem',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    padding: '0.125rem 0.5rem 0.125rem 0.25rem',
+    minWidth: '2.5rem',
+    textAlign: 'right',
+  },
 });

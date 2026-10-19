@@ -1889,6 +1889,49 @@ Result<void> Server::start() {
         });
     });
 
+    // POST /api/v1/documents/:id/convert
+    app.post("/api/v1/documents/:id/convert", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto conv_res = document_service_->convert_document(doc_id, *auth_res.value());
+        if (!conv_res.has_value()) {
+            if (conv_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (conv_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else if (conv_res.error() == ErrorCode::AlreadyExists) {
+                send_json(res, "409 Conflict", {{"error", "Target destination already exists"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to convert document"}});
+            }
+            return;
+        }
+
+        if (room_manager_) {
+            auto active_room = room_manager_->get_room(doc_id);
+            if (active_room) {
+                active_room->set_fs_path(conv_res.value().path);
+            }
+        }
+
+        send_json(res, "200 OK", conv_res.value().to_json(false));
+    });
+
     // POST /api/v1/documents/:id/assets
     app.post("/api/v1/documents/:id/assets", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
@@ -3429,6 +3472,32 @@ Result<void> Server::start() {
         send_json(res, "200 OK", {{"status", "deleted"}});
     });
 
+    // POST /api/v1/comments/:id/archive
+    app.post("/api/v1/comments/:id/archive", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string comment_id = url_decode(req->getParameter(0));
+        auto arch_res = review_service_->archive_comment(comment_id, *user);
+        if (!arch_res.has_value()) {
+            if (arch_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Comment not found"}});
+            } else if (arch_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access or author required"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to archive comment"}});
+            }
+            return;
+        }
+        broadcast_review_event(arch_res.value().document_id, {
+            {"event", "COMMENT_ARCHIVED"},
+            {"document_id", arch_res.value().document_id},
+            {"comment_id", comment_id},
+            {"data", arch_res.value().to_json()}
+        });
+        send_json(res, "200 OK", arch_res.value().to_json());
+    });
+
     // --- Inline Suggestions ---
 
     // GET /api/v1/documents/:id/suggestions
@@ -3563,6 +3632,32 @@ Result<void> Server::start() {
             {"suggestion_id", suggestion_id}
         });
         send_json(res, "200 OK", rej_res.value().to_json());
+    });
+
+    // POST /api/v1/suggestions/:id/archive
+    app.post("/api/v1/suggestions/:id/archive", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string suggestion_id = url_decode(req->getParameter(0));
+        auto arch_res = review_service_->archive_suggestion(suggestion_id, *user);
+        if (!arch_res.has_value()) {
+            if (arch_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Suggestion not found"}});
+            } else if (arch_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access or author required"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to archive suggestion"}});
+            }
+            return;
+        }
+        broadcast_review_event(arch_res.value().document_id, {
+            {"event", "SUGGESTION_ARCHIVED"},
+            {"document_id", arch_res.value().document_id},
+            {"suggestion_id", suggestion_id},
+            {"data", arch_res.value().to_json()}
+        });
+        send_json(res, "200 OK", arch_res.value().to_json());
     });
 
     // --- Action Item Tasks ---

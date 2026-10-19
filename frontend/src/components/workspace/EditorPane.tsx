@@ -12,8 +12,9 @@ import {
   MessageSquare,
   Edit2,
   Shield,
+  RefreshCw,
 } from 'lucide-react';
-import { fetchDocument, moveDocument, updateDocument } from '../../api/documents';
+import { fetchDocument, moveDocument, updateDocument, convertDocument } from '../../api/documents';
 import { DocumentRecord } from '../../types/document';
 import { fetchCurrentUser } from '../../api/auth';
 import { useUIStore } from '../../stores/uiStore';
@@ -172,6 +173,111 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     tasks,
   } = useReviewStore();
 
+  const handleScrollToAnchor = useCallback(
+    (anchor: any) => {
+      if (!anchor) return;
+      const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
+      if (!view || !view.state?.doc) return;
+
+      const doc = view.state.doc;
+      const docText = doc.toString();
+      const ydoc = provider?.ydoc;
+
+      let targetFrom = -1;
+      let targetTo = -1;
+
+      const reconciled = reconcileAnchor(
+        anchor,
+        ydoc || docText,
+        ydoc ? ydoc.getText('content') : undefined
+      );
+
+      if (reconciled?.range) {
+        targetFrom = Math.max(0, Math.min(reconciled.range.start, doc.length));
+        targetTo = Math.max(targetFrom, Math.min(reconciled.range.end, doc.length));
+      } else if (anchor.quote?.exact || anchor.exact) {
+        const exact = anchor.quote?.exact || anchor.exact;
+        const idx = docText.indexOf(exact);
+        if (idx !== -1) {
+          targetFrom = idx;
+          targetTo = idx + exact.length;
+        }
+      } else if (typeof anchor.offset === 'number') {
+        targetFrom = Math.max(0, Math.min(anchor.offset, doc.length));
+        targetTo =
+          typeof anchor.length === 'number'
+            ? Math.min(targetFrom + anchor.length, doc.length)
+            : targetFrom;
+      } else if (typeof anchor.line === 'number' && anchor.line >= 1 && anchor.line <= doc.lines) {
+        const lineInfo = doc.line(anchor.line);
+        targetFrom = lineInfo.from;
+        targetTo = lineInfo.to;
+      }
+
+      if (targetFrom >= 0) {
+        view.dispatch({
+          selection: { anchor: targetFrom, head: targetTo >= targetFrom ? targetTo : targetFrom },
+          effects: EditorView.scrollIntoView(targetFrom, { y: 'center', yMargin: 40 }),
+        });
+        view.focus();
+        requestAnimationFrame(() => {
+          if (view?.dom?.isConnected) {
+            view.dispatch({
+              effects: EditorView.scrollIntoView(targetFrom, { y: 'center', yMargin: 40 }),
+            });
+          }
+        });
+      }
+    },
+    [editorInstance, provider]
+  );
+
+  const handleApplyReplacement = useCallback(
+    (orig: string, rep: string, anchor?: any) => {
+      try {
+        const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
+        if (!view || !view.state?.doc) return;
+
+        const doc = view.state.doc;
+        const docText = doc.toString();
+        let from = -1;
+        let to = -1;
+
+        if (anchor) {
+          const reconciled = reconcileAnchor(
+            anchor,
+            provider?.ydoc || docText,
+            provider?.ydoc ? provider.ydoc.getText('content') : undefined
+          );
+          if (reconciled?.range) {
+            from = Math.max(0, Math.min(reconciled.range.start, doc.length));
+            to = Math.max(from, Math.min(reconciled.range.end, doc.length));
+          }
+        }
+
+        if (from === -1 && orig) {
+          const idx = docText.indexOf(orig);
+          if (idx !== -1) {
+            from = idx;
+            to = idx + orig.length;
+          }
+        }
+
+        if (from !== -1 && to !== -1 && from <= to) {
+          view.dispatch({
+            changes: { from, to, insert: rep },
+            selection: { anchor: from + rep.length },
+            effects: EditorView.scrollIntoView(from, { y: 'center' }),
+          });
+          view.focus();
+        }
+      } catch (e) {
+        console.warn('[EditorPane] handleApplyReplacement error:', e);
+      }
+    },
+    [editorInstance, provider]
+  );
+
   useEffect(() => {
     if (documentId && documentId !== 'by-path') {
       initDocument(documentId);
@@ -217,6 +323,21 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         is_bundle: updatedDoc.is_bundle,
       });
       setIsEditingTitle(false);
+    },
+  });
+
+  const convertMutation = useMutation({
+    mutationFn: (id: string) => convertDocument(id),
+    onSuccess: (updatedDoc) => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
+      queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
+      queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
+      updateTabMetadata(updatedDoc.id, {
+        path: updatedDoc.path,
+        title: updatedDoc.title,
+        is_bundle: updatedDoc.is_bundle,
+      });
     },
   });
 
@@ -511,6 +632,21 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               Bundle
             </Badge>
           )}
+          <button
+            type="button"
+            data-testid="convert-document-btn"
+            disabled={convertMutation.isPending}
+            onClick={() => {
+              if (document) {
+                convertMutation.mutate(document.id);
+              }
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-cme-text-muted hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-cme-border-base transition-colors"
+            title={document.is_bundle ? 'Convert bundle to document' : 'Convert document to bundle'}
+          >
+            <RefreshCw className={`w-3 h-3 text-purple-500 ${convertMutation.isPending ? 'animate-spin' : ''}`} />
+            <span>{document.is_bundle ? 'Convert to Doc' : 'Convert to Bundle'}</span>
+          </button>
           <span className="flex items-center gap-1 text-[11px]">
             <Clock className="w-3 h-3" />
             <span>{new Date(document.updated_at).toLocaleTimeString()}</span>
@@ -593,54 +729,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         {/* Review Sidebar */}
         {isSidebarOpen && (
           <ReviewSidebar
-            onApplyReplacement={(orig, rep, anchor) => {
-              try {
-                let ed = editorInstance;
-                if (!ed || ed.isDestroyed) {
-                  const domEl = typeof window !== 'undefined' ? window.document.querySelector('.collaborative-editor-root .ProseMirror') : null;
-                  ed = (domEl as any)?.__tiptapEditor;
-                }
-                if (ed && !ed.isDestroyed) {
-                  let replaced = false;
-                  // First try exact node search in ProseMirror doc tree
-                  if (orig) {
-                    ed.state.doc.descendants((node: any, pos: number) => {
-                      if (!replaced && node.isText && node.text && node.text.includes(orig)) {
-                        const from = pos + node.text.indexOf(orig);
-                        const to = from + orig.length;
-                        ed
-                          .chain()
-                          .focus()
-                          .deleteRange({ from, to })
-                          .insertContentAt(from, rep)
-                          .run();
-                        replaced = true;
-                        return false;
-                      }
-                    });
-                  }
-
-                  // Fallback: use reconcileAnchor if not found via direct text search
-                  if (!replaced && anchor) {
-                    const currentText = ed.getText();
-                    const reconciled = reconcileAnchor(anchor, currentText);
-                    if (reconciled.range) {
-                      const from = reconciled.range.start + 1;
-                      const to = reconciled.range.end + 1;
-                      ed
-                        .chain()
-                        .focus()
-                        .deleteRange({ from, to })
-                        .insertContentAt(from, rep)
-                        .run();
-                      replaced = true;
-                    }
-                  }
-                }
-              } catch (e) {
-                console.warn('[EditorPane] onApplyReplacement warning:', e);
-              }
-            }}
+            onScrollToAnchor={handleScrollToAnchor}
+            onApplyReplacement={handleApplyReplacement}
           />
         )}
 

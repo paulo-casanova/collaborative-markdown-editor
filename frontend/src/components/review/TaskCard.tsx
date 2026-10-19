@@ -1,24 +1,31 @@
 import React, { useState } from 'react';
-import { Calendar, Pencil } from 'lucide-react';
+import { Calendar, Pencil, LocateFixed } from 'lucide-react';
 import { TaskRecord } from '../../review/types';
 import { useReviewStore } from '../../stores/reviewStore';
 import { EditTaskModal } from './EditTaskModal';
 
 interface TaskCardProps {
   task: TaskRecord;
+  onScrollToAnchor?: (anchor: any) => void;
 }
 
-export const TaskCard: React.FC<TaskCardProps> = ({ task }) => {
-  const { toggleTask, activeItemId, setActiveItemId } = useReviewStore();
+export const TaskCard: React.FC<TaskCardProps> = ({ task, onScrollToAnchor }) => {
+  const { toggleTask, activeItemId, setActiveItemId, comments } = useReviewStore();
   const [showEditModal, setShowEditModal] = useState(false);
 
   const isActive = activeItemId === task.id;
+  const linkedComment = task.comment_id ? comments.find((c) => c.id === task.comment_id) : null;
 
   return (
     <>
       <div
         data-testid="task-card"
-        onClick={() => setActiveItemId(task.id)}
+        onClick={() => {
+          setActiveItemId(task.id);
+          if (onScrollToAnchor && linkedComment?.anchor) {
+            onScrollToAnchor(linkedComment.anchor);
+          }
+        }}
         className={`rounded-xl border transition-all text-sm p-3 bg-cme-bg-surface flex items-start gap-2.5 ${
           isActive
             ? 'border-cme-primary shadow-md ring-1 ring-cme-primary/20'
@@ -66,6 +73,22 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task }) => {
             )}
           </div>
         </div>
+
+        {linkedComment?.anchor && onScrollToAnchor && (
+          <button
+            type="button"
+            data-testid="jump-to-task-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveItemId(task.id);
+              onScrollToAnchor(linkedComment.anchor);
+            }}
+            className="p-1 text-cme-text-muted hover:text-cme-primary hover:bg-cme-bg-hover rounded transition-colors"
+            title="Jump to location in text"
+          >
+            <LocateFixed className="w-3.5 h-3.5" />
+          </button>
+        )}
 
         <button
           type="button"

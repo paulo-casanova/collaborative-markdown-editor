@@ -27,6 +27,7 @@ import {
   renameDirectory,
   deleteDirectory,
   moveDocument,
+  convertDocument,
   deleteDocument,
   uploadWorkspaceFile,
   getWorkspaceFileUrl,
@@ -337,6 +338,26 @@ export const FileTree: React.FC = () => {
     },
     onError: (err: any) => {
       alert(`Failed to move/rename document: ${err.message || 'Unknown error'}`);
+    },
+  });
+
+  const convertDocMutation = useMutation({
+    mutationFn: (id: string) => convertDocument(id),
+    onSuccess: (updatedDoc) => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
+      queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
+      queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
+      updateTabMetadata(updatedDoc.id, {
+        path: updatedDoc.path,
+        title: updatedDoc.title,
+        is_bundle: updatedDoc.is_bundle,
+      });
+      setContextMenu(null);
+    },
+    onError: (err: any) => {
+      alert(`Failed to convert document: ${err.message || 'Unknown error'}`);
     },
   });
 
@@ -1008,6 +1029,20 @@ export const FileTree: React.FC = () => {
                 <Edit2 className="w-3.5 h-3.5 text-sky-500" />
                 <span>Rename</span>
               </button>
+              {contextMenu.node.id && (
+                <button
+                  data-testid="filetree-convert-btn"
+                  onClick={() => {
+                    const node = contextMenu.node;
+                    setContextMenu(null);
+                    convertDocMutation.mutate(node.id!);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-purple-500" />
+                  <span>{contextMenu.node.is_bundle ? 'Convert to Document' : 'Convert to Bundle'}</span>
+                </button>
+              )}
               <button
                 data-testid="filetree-delete-btn"
                 onClick={() => {

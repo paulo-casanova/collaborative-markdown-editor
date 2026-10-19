@@ -240,6 +240,12 @@ export async function moveDocument(id: string, newPath: string, title?: string):
   });
 }
 
+export async function convertDocument(id: string): Promise<DocumentRecord> {
+  return apiRequest<DocumentRecord>(`/api/v1/documents/${id}/convert`, {
+    method: 'POST',
+  });
+}
+
 export async function deleteDocument(id: string): Promise<{ status: string; trash_id: string }> {
   return apiRequest<{ status: string; trash_id: string }>(`/api/v1/documents/${id}`, {
     method: 'DELETE',

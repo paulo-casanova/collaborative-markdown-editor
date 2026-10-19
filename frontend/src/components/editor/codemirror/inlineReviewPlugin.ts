@@ -637,10 +637,8 @@ function buildInlineReviewDecorations(
 
   const items: ReviewDecoItem[] = [];
 
-  // 1. Process Suggestions: Diff Blocks and Anchor Marks
-  const activeSuggestions = showResolved
-    ? suggestions
-    : suggestions.filter((s) => s.status === 'PENDING');
+  // 1. Process Suggestions: Diff Blocks and Anchor Marks (only pending suggestions appear inline)
+  const activeSuggestions = suggestions.filter((s) => s.status === 'PENDING');
 
   for (const suggestion of activeSuggestions) {
     const reconciled = reconcileAnchor(
@@ -684,9 +682,9 @@ function buildInlineReviewDecorations(
   }
 
   // 2. Process Threaded Comments: Discussion Threads and Anchor Marks
-  const activeComments = showResolved
-    ? comments
-    : comments.filter((c) => c.status === 'OPEN');
+  const activeComments = comments.filter(
+    (c) => c.status !== 'ARCHIVED' && (showResolved || c.status === 'OPEN')
+  );
 
   for (const comment of activeComments) {
     // Only anchor root comments (replies are displayed inside their thread)

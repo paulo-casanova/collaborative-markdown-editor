@@ -5,6 +5,8 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Archive,
+  LocateFixed,
 } from 'lucide-react';
 import { SuggestionRecord } from '../../review/types';
 import { useReviewStore } from '../../stores/reviewStore';
@@ -20,7 +22,7 @@ export const SuggestionCard: React.FC<SuggestionCardProps> = ({
   onScrollToAnchor,
   onApplyReplacement,
 }) => {
-  const { acceptSuggestion, rejectSuggestion, activeItemId, setActiveItemId } = useReviewStore();
+  const { acceptSuggestion, rejectSuggestion, archiveSuggestion, activeItemId, setActiveItemId } = useReviewStore();
   const [isProcessing, setIsProcessing] = useState(false);
 
   const isActive = activeItemId === suggestion.id;
@@ -45,6 +47,14 @@ export const SuggestionCard: React.FC<SuggestionCardProps> = ({
     if (isProcessing) return;
     setIsProcessing(true);
     await rejectSuggestion(suggestion.id);
+    setIsProcessing(false);
+  };
+
+  const handleArchive = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isProcessing) return;
+    setIsProcessing(true);
+    await archiveSuggestion(suggestion.id);
     setIsProcessing(false);
   };
 
@@ -85,7 +95,7 @@ export const SuggestionCard: React.FC<SuggestionCardProps> = ({
           </div>
         </div>
 
-        <div>
+        <div className="flex items-center gap-1">
           <span
             data-testid="suggestion-status-badge"
             className={`px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide uppercase flex items-center gap-1 ${
@@ -101,6 +111,30 @@ export const SuggestionCard: React.FC<SuggestionCardProps> = ({
             {isPending && <Clock className="w-3 h-3 text-amber-600" />}
             {suggestion.status}
           </span>
+          {onScrollToAnchor && suggestion.anchor && (
+            <button
+              type="button"
+              data-testid="jump-to-suggestion-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveItemId(suggestion.id);
+                onScrollToAnchor(suggestion.anchor);
+              }}
+              className="p-1 text-cme-text-muted hover:text-cme-primary hover:bg-cme-bg-hover rounded transition-colors"
+              title="Jump to location in text"
+            >
+              <LocateFixed className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            type="button"
+            data-testid="archive-suggestion-btn"
+            onClick={handleArchive}
+            className="p-1 text-cme-text-muted hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded transition-colors"
+            title="Archive suggestion"
+          >
+            <Archive className="w-3.5 h-3.5" />
+          </button>
         </div>
       </div>
 

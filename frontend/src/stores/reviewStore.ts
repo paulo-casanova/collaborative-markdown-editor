@@ -52,11 +52,13 @@ export interface ReviewState {
   postReply: (commentId: string, content: string) => Promise<CommentRecord | null>;
   editComment: (commentId: string, content: string) => Promise<CommentRecord | null>;
   toggleCommentStatus: (commentId: string) => Promise<CommentRecord | null>;
+  archiveComment: (commentId: string) => Promise<CommentRecord | null>;
   deleteComment: (commentId: string) => Promise<void>;
 
   postSuggestion: (suggestedText: string) => Promise<SuggestionRecord | null>;
   acceptSuggestion: (suggestionId: string, onLocalApply?: () => void) => Promise<SuggestionRecord | null>;
   rejectSuggestion: (suggestionId: string) => Promise<SuggestionRecord | null>;
+  archiveSuggestion: (suggestionId: string) => Promise<SuggestionRecord | null>;
 
   toggleTask: (taskId: string, isCompleted: boolean) => Promise<TaskRecord | null>;
   editTask: (taskId: string, payload: reviewApi.UpdateTaskPayload) => Promise<TaskRecord | null>;
@@ -192,6 +194,14 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         }));
         break;
       }
+      case 'COMMENT_ARCHIVED': {
+        const archivedId = payload.comment_id || comment?.id;
+        if (!archivedId) return;
+        set((state) => ({
+          comments: state.comments.filter((c) => c.id !== archivedId),
+        }));
+        break;
+      }
       case 'SUGGESTION_CREATED': {
         if (!suggestion) return;
         set((state) => {
@@ -223,6 +233,14 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
               ? { ...s, status: 'REJECTED', resolved_at: sugg?.resolved_at || new Date().toISOString() }
               : s
           ),
+        }));
+        break;
+      }
+      case 'SUGGESTION_ARCHIVED': {
+        const suggId = payload.suggestion_id || suggestion?.id;
+        if (!suggId) return;
+        set((state) => ({
+          suggestions: state.suggestions.filter((s) => s.id !== suggId),
         }));
         break;
       }
@@ -357,6 +375,19 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
     }
   },
 
+  archiveComment: async (commentId: string) => {
+    try {
+      const updated = await reviewApi.archiveComment(commentId);
+      set((state) => ({
+        comments: state.comments.filter((c) => c.id !== commentId),
+      }));
+      return updated;
+    } catch (err) {
+      console.error('[useReviewStore] Failed to archive comment:', err);
+      return null;
+    }
+  },
+
   postSuggestion: async (suggestedText: string) => {
     const { documentId, pendingSuggestionSelection } = get();
     if (!documentId || !pendingSuggestionSelection) return null;
@@ -409,6 +440,19 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
       return updated;
     } catch (err) {
       console.error('[useReviewStore] Failed to reject suggestion:', err);
+      return null;
+    }
+  },
+
+  archiveSuggestion: async (suggestionId: string) => {
+    try {
+      const updated = await reviewApi.archiveSuggestion(suggestionId);
+      set((state) => ({
+        suggestions: state.suggestions.filter((s) => s.id !== suggestionId),
+      }));
+      return updated;
+    } catch (err) {
+      console.error('[useReviewStore] Failed to archive suggestion:', err);
       return null;
     }
   },

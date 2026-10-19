@@ -898,6 +898,74 @@ int main() {
         std::cout << "  - Bundle ZIP download and workspace asset import successfully verified.\n";
     }
 
+    // 9. Document to Bundle and Bundle to Document Conversion
+    {
+        std::cout << "\n[TEST] Testing document <-> bundle conversion (/api/v1/documents/:id/convert)...\n";
+        // Create regular document
+        auto create_doc_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents",
+            auth_header,
+            nlohmann::json{
+                {"path", "reports/convert_sample.md"},
+                {"title", "Convert Sample"},
+                {"content", "# Sample Markdown\nOriginal file text.\n"},
+                {"is_bundle", false}
+            }.dump()
+        );
+        assert(create_doc_resp.status_code == 201);
+        auto doc_json = nlohmann::json::parse(create_doc_resp.body);
+        std::string conv_doc_id = doc_json["id"].get<std::string>();
+        assert(doc_json["is_bundle"] == false);
+        assert(doc_json["path"] == "reports/convert_sample.md");
+
+        // Convert to Bundle
+        auto conv_to_bundle_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents/" + conv_doc_id + "/convert",
+            auth_header
+        );
+        assert(conv_to_bundle_resp.status_code == 200);
+        auto conv_to_bundle_json = nlohmann::json::parse(conv_to_bundle_resp.body);
+        assert(conv_to_bundle_json["is_bundle"] == true);
+        assert(conv_to_bundle_json["path"] == "reports/convert_sample.bundle");
+
+        // Verify storage on disk
+        assert(!std::filesystem::exists(server_storage / "content" / "reports/convert_sample.md"));
+        assert(std::filesystem::exists(server_storage / "content" / "reports/convert_sample.bundle/index.md"));
+
+        // Upload an asset into the bundle
+        auto upload_asset_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents/" + conv_doc_id + "/assets?filename=embedded_image.png",
+            auth_header,
+            "TEST_ASSET_CONTENT"
+        );
+        assert(upload_asset_resp.status_code == 201);
+        assert(std::filesystem::exists(server_storage / "content" / "reports/convert_sample.bundle/images/embedded_image.png"));
+
+        // Convert back to regular Document
+        auto conv_to_doc_resp = http_curl(
+            "POST",
+            base_url + "/api/v1/documents/" + conv_doc_id + "/convert",
+            auth_header
+        );
+        assert(conv_to_doc_resp.status_code == 200);
+        auto conv_to_doc_json = nlohmann::json::parse(conv_to_doc_resp.body);
+        assert(conv_to_doc_json["is_bundle"] == false);
+        assert(conv_to_doc_json["path"] == "reports/convert_sample.md");
+
+        // Verify storage on disk:
+        // Document should be back at reports/convert_sample.md
+        // embedded_image.png should be moved to sibling images directory reports/images/embedded_image.png
+        // Bundle folder reports/convert_sample.bundle should no longer exist
+        assert(std::filesystem::exists(server_storage / "content" / "reports/convert_sample.md"));
+        assert(std::filesystem::exists(server_storage / "content" / "reports/images/embedded_image.png"));
+        assert(!std::filesystem::exists(server_storage / "content" / "reports/convert_sample.bundle"));
+
+        std::cout << "  - Document <-> Bundle bidirectional conversion successfully verified.\n";
+    }
+
     // Stop server
     std::cout << "\n[TEST] Stopping server...\n";
     server->stop();

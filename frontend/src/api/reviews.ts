@@ -62,6 +62,12 @@ export async function deleteComment(commentId: string): Promise<void> {
   });
 }
 
+export async function archiveComment(commentId: string): Promise<CommentRecord> {
+  return await apiRequest<CommentRecord>(`/api/v1/comments/${commentId}/archive`, {
+    method: 'POST',
+  });
+}
+
 // =============================================================================
 // Suggestions API
 // =============================================================================
@@ -103,6 +109,12 @@ export async function acceptSuggestion(suggestionId: string): Promise<Suggestion
 
 export async function rejectSuggestion(suggestionId: string): Promise<SuggestionRecord> {
   return await apiRequest<SuggestionRecord>(`/api/v1/suggestions/${suggestionId}/reject`, {
+    method: 'POST',
+  });
+}
+
+export async function archiveSuggestion(suggestionId: string): Promise<SuggestionRecord> {
+  return await apiRequest<SuggestionRecord>(`/api/v1/suggestions/${suggestionId}/archive`, {
     method: 'POST',
   });
 }

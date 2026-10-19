@@ -9,6 +9,8 @@ import {
   Plus,
   CheckSquare,
   Pencil,
+  Archive,
+  LocateFixed,
 } from 'lucide-react';
 import { CommentRecord } from '../../review/types';
 import { useReviewStore } from '../../stores/reviewStore';
@@ -32,7 +34,7 @@ export const CommentCard: React.FC<CommentCardProps> = ({
   collaborators = DEFAULT_COLLABORATORS,
   onScrollToAnchor,
 }) => {
-  const { postReply, editComment, toggleCommentStatus, deleteComment, activeItemId, setActiveItemId, tasks } =
+  const { postReply, editComment, toggleCommentStatus, archiveComment, deleteComment, activeItemId, setActiveItemId, tasks } =
     useReviewStore();
   const [replyText, setReplyText] = useState('');
   const [showReplyForm, setShowReplyForm] = useState(false);
@@ -185,6 +187,21 @@ export const CommentCard: React.FC<CommentCardProps> = ({
           >
             {comment.status}
           </span>
+          {onScrollToAnchor && comment.anchor && (
+            <button
+              type="button"
+              data-testid="jump-to-comment-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                setActiveItemId(comment.id);
+                onScrollToAnchor(comment.anchor);
+              }}
+              className="p-1 text-cme-text-muted hover:text-cme-primary hover:bg-cme-bg-hover rounded transition-colors"
+              title="Jump to location in text"
+            >
+              <LocateFixed className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button
             type="button"
             data-testid="edit-comment-btn"
@@ -213,6 +230,18 @@ export const CommentCard: React.FC<CommentCardProps> = ({
             ) : (
               <CheckCircle2 className="w-3.5 h-3.5 text-green-600" />
             )}
+          </button>
+          <button
+            type="button"
+            data-testid="archive-comment-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              archiveComment(comment.id);
+            }}
+            className="p-1 text-cme-text-muted hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded"
+            title="Archive comment"
+          >
+            <Archive className="w-3.5 h-3.5" />
           </button>
           <button
             type="button"

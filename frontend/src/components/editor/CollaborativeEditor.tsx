@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { EditorView, ViewPlugin, keymap } from '@codemirror/view';
-import { Annotation, EditorState, Extension, Text } from '@codemirror/state';
+import { EditorView, ViewPlugin, keymap, lineNumbers } from '@codemirror/view';
+import { Annotation, Compartment, EditorState, Extension, Text } from '@codemirror/state';
 import { markdown, insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
 import {
   defaultKeymap,
@@ -230,10 +230,11 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   onToggleNumberHeaders,
 }) => {
   const { resolvedTheme } = useThemeStore();
-  const { numberHeaders } = useUIStore();
+  const { numberHeaders, lineNumbers: showLineNumbers } = useUIStore();
   const isDark = resolvedTheme === 'dark';
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const adapterRef = useRef<CodeMirrorEditorAdapter | null>(null);
+  const lineNumbersCompartmentRef = useRef<Compartment>(new Compartment());
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const onCursorLineChangeRef = useRef(onCursorLineChange);
@@ -299,6 +300,15 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     view.dispatch({ effects: forceLivePreviewRebuild.of(true) });
   }, [numberHeaders, editable]);
 
+  // Reconfigure line numbers dynamically without re-mounting editor
+  useEffect(() => {
+    const view = adapterRef.current?.getView?.();
+    if (!view) return;
+    view.dispatch({
+      effects: lineNumbersCompartmentRef.current.reconfigure(showLineNumbers ? lineNumbers() : []),
+    });
+  }, [showLineNumbers]);
+
   // Mount CodeMirror 6 EditorView
   useEffect(() => {
     if (!editorContainerRef.current) return;
@@ -350,6 +360,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     ]);
 
     const extensions: Extension[] = [
+      lineNumbersCompartmentRef.current.of(showLineNumbers ? lineNumbers() : []),
       markdown(),
       createLivePreviewPlugin(isDark, documentPath),
       createInlineReviewPlugin(provider, isDark),

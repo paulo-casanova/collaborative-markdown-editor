@@ -76,7 +76,7 @@ export interface CommentRecord {
   parent_id: string | null;
   author: AuthorInfo;
   content: string;
-  status: 'OPEN' | 'RESOLVED';
+  status: 'OPEN' | 'RESOLVED' | 'ARCHIVED';
   anchor: DualAnchor | any;
   created_at: string;
   updated_at: string;
@@ -87,7 +87,7 @@ export interface SuggestionRecord {
   id: string;
   document_id: string;
   author: AuthorInfo;
-  status: 'PENDING' | 'ACCEPTED' | 'REJECTED';
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'ARCHIVED';
   original_text: string;
   suggested_text: string;
   anchor: DualAnchor | any;

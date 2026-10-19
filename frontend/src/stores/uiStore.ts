@@ -29,6 +29,9 @@ interface UIState {
   numberHeaders: boolean;
   setNumberHeaders: (enabled: boolean) => void;
   toggleNumberHeaders: () => void;
+  lineNumbers: boolean;
+  setLineNumbers: (enabled: boolean) => void;
+  toggleLineNumbers: () => void;
 }
 
 const getInitialSidebarWidth = (): number => {
@@ -49,6 +52,20 @@ const getInitialNumberHeaders = (): boolean => {
   return false;
 };
 
+const getInitialLineNumbers = (): boolean => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saved = window.localStorage.getItem('cme_line_numbers');
+      if (saved !== null) {
+        return saved === 'true';
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return false;
+};
+
 export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: true,
   sidebarWidth: getInitialSidebarWidth(),
@@ -63,6 +80,7 @@ export const useUIStore = create<UIState>((set) => ({
   tokensModalOpen: false,
   searchModalOpen: false,
   numberHeaders: getInitialNumberHeaders(),
+  lineNumbers: getInitialLineNumbers(),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSidebarWidth: (width) => {
@@ -90,4 +108,26 @@ export const useUIStore = create<UIState>((set) => ({
   },
   toggleNumberHeaders: () =>
     set((state) => ({ numberHeaders: !state.numberHeaders })),
+  setLineNumbers: (enabled) => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('cme_line_numbers', String(enabled));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    set({ lineNumbers: enabled });
+  },
+  toggleLineNumbers: () =>
+    set((state) => {
+      const next = !state.lineNumbers;
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem('cme_line_numbers', String(next));
+        }
+      } catch {
+        // ignore storage errors
+      }
+      return { lineNumbers: next };
+    }),
 }));
