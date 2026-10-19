@@ -1619,7 +1619,7 @@ export function renderCellContent(
   }
 
   const tokenRegex =
-    /(`[^`]+`|(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!\!)\[\[([^\]]+)\]\]|(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g;
+    /((?<!`)(?:`+).*?(?:`+)(?!`)|(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!\!)\[\[([^\]]+)\]\]|(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*(?!\s)(?:[^\*\n]|\*[^\*\n]+?\*)+?\*\*(?!\*)|(?<![a-zA-Z0-9_])__(?!\s)(?:[^_\n]|_[^_\n]+?_)+?__(?![a-zA-Z0-9_])|(?<!\*)\*(?!\s)(?:[^\*\n]|\*\*[^\*\n]+?\*\*)+?(?<!\s)\*(?!\*)|(?<![a-zA-Z0-9_])_(?!\s)(?:[^_\n]|__[^\n]+?__|\*\*[^\n]+?\*\*)+?(?<!\s)_(?![a-zA-Z0-9_]))/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -1641,12 +1641,13 @@ export function renderCellContent(
       }
       container.appendChild(mathSpan);
     }
-    // 2. Inline Code: `...`
-    else if (token.startsWith('`') && token.endsWith('`') && token.length > 1) {
+    // 2. Inline Code: `...` or ``...``
+    else if (/^(?<!`)(`+)(.*?)\1(?!`)$/.test(token)) {
+      const codeMatch = token.match(/^(?<!`)(`+)(.*?)\1(?!`)$/);
       const code = document.createElement('code');
       code.className =
         'px-1.5 py-0.5 rounded bg-cme-bg-subtle text-[11px] font-mono text-pink-600 dark:text-pink-400 border border-cme-border-base/40';
-      code.textContent = token.slice(1, -1);
+      code.textContent = codeMatch ? codeMatch[2] : token.slice(1, -1);
       container.appendChild(code);
     }
     // 3. Custom Pills: [pill:...], [status:...], [priority:...]

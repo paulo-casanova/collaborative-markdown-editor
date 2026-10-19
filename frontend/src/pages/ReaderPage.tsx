@@ -1364,7 +1364,7 @@ function renderInlineFormatted(
   // 10. Bold: **...** or __...__
   // 11. Italic: *...* or _..._
   const parts = text.split(
-    /(`[^`]+`|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*[^*\n]+\*\*|(?<![a-zA-Z0-9_])__(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])__(?![a-zA-Z0-9_])|\*[^*\n]+\*|(?<![a-zA-Z0-9_])_(?:[^\s_\n]|[^\s_\n][^_\n]*?[^\s_\n])_(?![a-zA-Z0-9_]))/g
+    /((?<!`)(?:`+).*?(?:`+)(?!`)|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*(?!\s)(?:[^\*\n]|\*[^\*\n]+?\*)+?\*\*(?!\*)|(?<![a-zA-Z0-9_])__(?!\s)(?:[^_\n]|_[^_\n]+?_)+?__(?![a-zA-Z0-9_])|(?<!\*)\*(?!\s)(?:[^\*\n]|\*\*[^\*\n]+?\*\*)+?(?<!\s)\*(?!\*)|(?<![a-zA-Z0-9_])_(?!\s)(?:[^_\n]|__[^\n]+?__|\*\*[^\n]+?\*\*)+?(?<!\s)_(?![a-zA-Z0-9_]))/g
   );
 
   let currentOffset = 0;
@@ -1399,14 +1399,15 @@ function renderInlineFormatted(
       return false;
     };
 
-    // 1. Inline Code `...` - check first so `$math$` inside code is never parsed as math
-    if (part.startsWith('`') && part.endsWith('`') && part.length > 1) {
+    // 1. Inline Code `...` or ``...`` - check first so pills/math inside code are never parsed
+    const codeMatch = part.match(/^(?<!`)(`+)(.*?)\1(?!`)$/);
+    if (codeMatch) {
       return (
         <code
           key={idx}
           className="px-1.5 py-0.5 rounded bg-cme-bg-subtle font-mono text-[0.88em] text-pink-600 dark:text-pink-400 border border-cme-border-base"
         >
-          {part.slice(1, -1)}
+          {codeMatch[2]}
         </code>
       );
     }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { Text } from '@codemirror/state';
+import { Text, EditorState } from '@codemirror/state';
+import { buildLivePreviewDecorations } from '../../src/components/editor/codemirror/livePreviewPlugin';
 import {
   stripHeadingNumberPrefix,
   slugifyHeading,
@@ -817,6 +818,121 @@ Deep details.`;
         expect(tags).toContain('CODE');
         expect(tags).toContain('STRONG');
         expect(tags).toContain('EM');
+      } finally {
+        (globalThis as any).document = originalDoc;
+      }
+    });
+  });
+
+  describe('Pills in code and nested formatting', () => {
+    it('parseMarkdownToHtml preserves pills inside inline code and fenced code blocks without pill conversion', () => {
+      const inlineCodeMd = 'Inline `[pill:red|Danger]` and `[status:done]`.';
+      const inlineHtml = parseMarkdownToHtml(inlineCodeMd);
+      expect(inlineHtml).toContain('<code>[pill:red|Danger]</code>');
+      expect(inlineHtml).toContain('<code>[status:done]</code>');
+      expect(inlineHtml).not.toContain('cme-pill');
+
+      const fencedMd = '```json\n{"pill": "[pill:red|Danger]"}\n```';
+      const fencedHtml = parseMarkdownToHtml(fencedMd);
+      expect(fencedHtml).toContain('[pill:red|Danger]');
+      expect(fencedHtml).not.toContain('cme-pill');
+    });
+
+    it('parseMarkdownToHtml converts nested formatting properly', () => {
+      expect(parseMarkdownToHtml('_foo **bar**_')).toBe('<p><em>foo <strong>bar</strong></em></p>');
+      expect(parseMarkdownToHtml('**foo _bar_**')).toBe('<p><strong>foo <em>bar</em></strong></p>');
+      expect(parseMarkdownToHtml('*foo **bar***')).toBe('<p><em>foo <strong>bar</strong></em></p>');
+      expect(parseMarkdownToHtml('**foo *bar***')).toBe('<p><strong>foo <em>bar</em></strong></p>');
+      expect(parseMarkdownToHtml('*foo __bar__*')).toBe('<p><em>foo <strong>bar</strong></em></p>');
+      expect(parseMarkdownToHtml('__foo *bar*__')).toBe('<p><strong>foo <em>bar</em></strong></p>');
+      expect(parseMarkdownToHtml('~~foo **bar**~~')).toBe('<p><s>foo <strong>bar</strong></s></p>');
+      expect(parseMarkdownToHtml('*foo ~~bar~~*')).toBe('<p><em>foo <s>bar</s></em></p>');
+      expect(parseMarkdownToHtml('**foo ~~bar~~**')).toBe('<p><strong>foo <s>bar</s></strong></p>');
+    });
+
+    it('buildLivePreviewDecorations does not create PillWidget for pills inside inline code', () => {
+      const doc = '`[pill:red|Danger]` and [pill:green|Active]';
+      const state = EditorState.create({ doc });
+      const decos = buildLivePreviewDecorations(state);
+      const widgets: any[] = [];
+      const marks: string[] = [];
+      decos.between(0, doc.length, (from, to, value) => {
+        if ((value as any).spec?.widget) {
+          widgets.push((value as any).spec.widget);
+        }
+        if ((value as any).spec?.class) {
+          marks.push((value as any).spec.class);
+        }
+      });
+      // Exactly one PillWidget for the outer [pill:green|Active], none for the code span
+      const pillWidgets = widgets.filter((w) => w.constructor?.name === 'PillWidget');
+      expect(pillWidgets.length).toBe(1);
+      expect(pillWidgets[0].rawText).toBe('[pill:green|Active]');
+    });
+
+    it('buildLivePreviewDecorations handles nested _foo **bar**_ in live preview', () => {
+      const doc = '_foo **bar**_\nUnfocused line';
+      // Cursor is on line 2 ('Unfocused line') so line 1 is fully rendered in live preview mode
+      const state = EditorState.create({ doc, selection: { anchor: doc.length } });
+      const decos = buildLivePreviewDecorations(state);
+      const marks: { from: number; to: number; cls: string }[] = [];
+      decos.between(0, doc.length, (from, to, value) => {
+        if ((value as any).spec?.class) {
+          marks.push({ from, to, cls: (value as any).spec.class });
+        }
+      });
+      const italicMark = marks.find((m) => m.cls.includes('cme-live-italic'));
+      const boldMark = marks.find((m) => m.cls.includes('cme-live-bold'));
+      expect(italicMark).toBeDefined();
+      expect(boldMark).toBeDefined();
+      // Italic covers 1 to 12 ('foo **bar**')
+      expect(italicMark?.from).toBe(1);
+      expect(italicMark?.to).toBe(12);
+      // Bold covers 7 to 10 ('bar')
+      expect(boldMark?.from).toBe(7);
+      expect(boldMark?.to).toBe(10);
+    });
+
+    it('renderCellContent preserves pills inside code and nests formatting inside table cells', async () => {
+      const { renderCellContent } = await import('../../src/components/editor/codemirror/livePreviewWidgets');
+
+      const makeMockNode = (tag?: string, textContent?: string) => ({
+        tagName: tag ? tag.toUpperCase() : '#TEXT',
+        className: '',
+        textContent: textContent || '',
+        children: [] as any[],
+        dataset: {} as Record<string, string>,
+        style: {} as Record<string, string>,
+        appendChild(child: any) {
+          this.children.push(child);
+          return child;
+        },
+      });
+
+      const originalDoc = (globalThis as any).document;
+      (globalThis as any).document = {
+        createElement: (tag: string) => makeMockNode(tag),
+        createTextNode: (text: string) => makeMockNode(undefined, text),
+      };
+
+      try {
+        const dummyView = {} as any;
+
+        // 1. Pill inside code cell: `[pill:red|Danger]`
+        const cellWithCodePill = makeMockNode();
+        renderCellContent(cellWithCodePill as any, '`[pill:red|Danger]`', dummyView);
+        expect(cellWithCodePill.children.length).toBe(1);
+        expect(cellWithCodePill.children[0].tagName).toBe('CODE');
+        expect(cellWithCodePill.children[0].textContent).toBe('[pill:red|Danger]');
+
+        // 2. Nested formatting in cell: _foo **bar**_
+        const cellWithNested = makeMockNode();
+        renderCellContent(cellWithNested as any, '_foo **bar**_', dummyView);
+        expect(cellWithNested.children.length).toBe(1);
+        expect(cellWithNested.children[0].tagName).toBe('EM');
+        const emChildren = cellWithNested.children[0].children;
+        const boldInside = emChildren.find((c: any) => c.tagName === 'STRONG');
+        expect(boldInside).toBeDefined();
       } finally {
         (globalThis as any).document = originalDoc;
       }

@@ -22,6 +22,14 @@ function escapeHtml(str: string): string {
 function inlineFormat(text: string): string {
   let res = escapeHtml(text);
 
+  // 1. Mask inline code spans: `...` or ``...`` so pills, math, links, formatting inside code are ignored
+  const codeSpans: string[] = [];
+  res = res.replace(/(?<!`)(`+)([\s\S]*?)\1(?!`)/g, (_match, _ticks, code) => {
+    const idx = codeSpans.length;
+    codeSpans.push(code);
+    return `\x00CME_CODE_${idx}\x00`;
+  });
+
   // Math: $inline$
   res = res.replace(/\$([^$\n]+)\$/g, '<span class="inline-math" data-latex="$1"></span>');
 
@@ -51,19 +59,26 @@ function inlineFormat(text: string): string {
   // Standard Markdown Links: [label](target)
   res = res.replace(/(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
-  // Bold & Italic
-  res = res.replace(/\*\*\*([^*]+)\*\*\*/g, '<strong><em>$1</em></strong>');
-  res = res.replace(/(?<![a-zA-Z0-9_])___([^_]+)___(?![a-zA-Z0-9_])/g, '<strong><em>$1</em></strong>');
-  res = res.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  res = res.replace(/(?<![a-zA-Z0-9_])__([^_]+)__(?![a-zA-Z0-9_])/g, '<strong>$1</strong>');
-  res = res.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  res = res.replace(/(?<![a-zA-Z0-9_])_([^\s_]|(?:[^\s_][^_]*[^\s_]))_(?![a-zA-Z0-9_])/g, '<em>$1</em>');
+  // Bold Italic: ***text*** and ___text___
+  res = res.replace(/\*\*\*([^\*\n]+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  res = res.replace(/(?<![a-zA-Z0-9_])___([^\s_\n](?:[^_\n]*?[^\s_\n])?)___(?![a-zA-Z0-9_])/g, '<strong><em>$1</em></strong>');
 
-  // Strikethrough
-  res = res.replace(/~~([^~]+)~~/g, '<s>$1</s>');
+  // Bold: **text** and __text__
+  res = res.replace(/(?<!\*)\*\*(?!\s)((?:[^\*\n]|\*[^\*\n]+?\*)+?)(?<!\s)\*\*(?!\*\*)/g, '<strong>$1</strong>');
+  res = res.replace(/(?<![a-zA-Z0-9_])__(?!\s)((?:[^_\n]|_[^_\n]+?_)+?)__(?![a-zA-Z0-9_])/g, '<strong>$1</strong>');
 
-  // Inline Code
-  res = res.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Italic: *text* and _text_
+  res = res.replace(/(?<!\*)\*(?!\s)((?:[^\*\n]|\*\*[^\*\n]+?\*\*)+?)(?<!\s)\*(?!\*\*\*)/g, '<em>$1</em>');
+  res = res.replace(/(?<![a-zA-Z0-9_])_(?!\s)((?:[^_\n]|__[^\n]+?__|\*\*[^\n]+?\*\*)+?)(?<!\s)_(?![a-zA-Z0-9_])/g, '<em>$1</em>');
+
+  // Strikethrough: ~~text~~
+  res = res.replace(/~~([^~\n]+)~~/g, '<s>$1</s>');
+
+  // Restore Inline Code
+  res = res.replace(/\x00CME_CODE_(\d+)\x00/g, (_m, idxStr) => {
+    const raw = codeSpans[Number(idxStr)] ?? '';
+    return `<code>${raw}</code>`;
+  });
 
   return res;
 }

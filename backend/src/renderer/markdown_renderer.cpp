@@ -845,36 +845,101 @@ std::string render_pills_in_html(std::string_view html) {
     static const std::regex pill_rx(R"(\[(pill|status|priority):(?:([a-zA-Z0-9#_-]+)(?:\\?\|))?([^\]\n]+)\])");
     std::string text(html);
     std::string result;
-    std::string::const_iterator search_start(text.cbegin());
-    std::smatch match;
+    result.reserve(text.size());
 
-    while (std::regex_search(search_start, text.cend(), match, pill_rx)) {
-        result.append(search_start, match[0].first);
-        std::string prefix = match[1].str();
-        std::string color = match[2].matched ? match[2].str() : "slate";
-        std::string label = match[3].str();
+    size_t i = 0;
+    size_t segment_start = 0;
+    int code_depth = 0;
 
-        if (prefix == "status") {
-            std::string norm = label;
-            for (auto& c : norm) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            if (norm == "done" || norm == "completed") { color = "green"; label = "Done"; }
-            else if (norm == "in-progress" || norm == "in progress") { color = "amber"; label = "In Progress"; }
-            else if (norm == "blocked") { color = "rose"; label = "Blocked"; }
-            else { color = "blue"; }
-        } else if (prefix == "priority") {
-            std::string norm = label;
-            for (auto& c : norm) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-            if (norm == "p0" || norm == "high" || norm == "urgent" || norm == "critical") { color = "rose"; }
-            else if (norm == "p1" || norm == "medium") { color = "amber"; }
-            else { color = "blue"; }
+    auto tag_starts_with_ci = [](std::string_view tag, std::string_view prefix) {
+        if (tag.size() < prefix.size()) return false;
+        for (size_t k = 0; k < prefix.size(); ++k) {
+            if (std::tolower(static_cast<unsigned char>(tag[k])) != std::tolower(static_cast<unsigned char>(prefix[k]))) {
+                return false;
+            }
         }
+        return true;
+    };
 
-        std::string pill_html = "<span class=\"cme-pill cme-pill-" + escape_html(color) + "\" data-color=\"" + escape_html(color) + "\">" + escape_html(label) + "</span>";
-        result.append(pill_html);
-        search_start = match[0].second;
+    auto process_segment = [&](size_t start, size_t end) {
+        if (start >= end) return;
+        std::string segment = text.substr(start, end - start);
+        std::string::const_iterator search_start(segment.cbegin());
+        std::smatch match;
+        while (std::regex_search(search_start, segment.cend(), match, pill_rx)) {
+            result.append(search_start, match[0].first);
+            std::string prefix = match[1].str();
+            std::string color = match[2].matched ? match[2].str() : "slate";
+            std::string label = match[3].str();
+
+            if (prefix == "status") {
+                std::string norm = label;
+                for (auto& c : norm) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (norm == "done" || norm == "completed") { color = "green"; label = "Done"; }
+                else if (norm == "in-progress" || norm == "in progress") { color = "amber"; label = "In Progress"; }
+                else if (norm == "blocked") { color = "rose"; label = "Blocked"; }
+                else { color = "blue"; }
+            } else if (prefix == "priority") {
+                std::string norm = label;
+                for (auto& c : norm) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                for (auto& c : label) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                if (norm == "p0" || norm == "high" || norm == "urgent" || norm == "critical") { color = "rose"; }
+                else if (norm == "p1" || norm == "medium") { color = "amber"; }
+                else { color = "blue"; }
+            }
+
+            std::string pill_html = "<span class=\"cme-pill cme-pill-" + escape_html(color) + "\" data-color=\"" + escape_html(color) + "\">" + escape_html(label) + "</span>";
+            result.append(pill_html);
+            search_start = match[0].second;
+        }
+        result.append(search_start, segment.cend());
+    };
+
+    while (i < text.size()) {
+        if (text[i] == '<') {
+            size_t tag_close = text.find('>', i);
+            if (tag_close != std::string::npos) {
+                std::string_view tag(text.data() + i, tag_close - i + 1);
+                bool is_open_code = false;
+                bool is_close_code = false;
+
+                if (tag_starts_with_ci(tag, "<code") && (tag.size() == 6 || tag[5] == ' ' || tag[5] == '>' || tag[5] == '/')) {
+                    is_open_code = true;
+                } else if (tag_starts_with_ci(tag, "<pre") && (tag.size() == 5 || tag[4] == ' ' || tag[4] == '>' || tag[4] == '/')) {
+                    is_open_code = true;
+                } else if (tag_starts_with_ci(tag, "</code>") || tag_starts_with_ci(tag, "</pre>")) {
+                    is_close_code = true;
+                }
+
+                if (is_open_code) {
+                    if (code_depth == 0) {
+                        process_segment(segment_start, i);
+                    }
+                    code_depth++;
+                    result.append(text, i, tag_close - i + 1);
+                    i = tag_close + 1;
+                    segment_start = i;
+                    continue;
+                } else if (is_close_code) {
+                    if (code_depth > 0) {
+                        code_depth--;
+                        result.append(text, segment_start, tag_close - segment_start + 1);
+                        i = tag_close + 1;
+                        segment_start = i;
+                        continue;
+                    }
+                }
+            }
+        }
+        i++;
     }
-    result.append(search_start, text.cend());
+
+    if (code_depth == 0) {
+        process_segment(segment_start, text.size());
+    } else {
+        result.append(text, segment_start, text.size() - segment_start);
+    }
+
     return result;
 }
 
@@ -1040,9 +1105,49 @@ inline std::string normalize_markdown_links_with_spaces(std::string_view input) 
         }
         transformed.append(search_start, line_with_embeds.cend());
 
-        // 3. Escape pipe in pill syntax [pill:color|label], [status:...|...], [priority:...|...] so table parsing does not split columns
+        // 3. Escape pipe in pill syntax [pill:color|label], [status:...|...], [priority:...|...] so table parsing does not split columns,
+        // but DO NOT escape inside backtick code spans where backslashes are literal in md4c.
         static const std::regex pill_pipe_re(R"(\[(pill|status|priority):([a-zA-Z0-9#_-]+)\|([^\]\n]+)\])");
-        std::string final_line = std::regex_replace(transformed, pill_pipe_re, "[$1:$2\\|$3]");
+        std::string final_line;
+        final_line.reserve(transformed.size());
+
+        if (transformed.find('|') != std::string::npos) {
+            std::vector<std::pair<size_t, size_t>> bt_spans;
+            size_t bt_start = std::string::npos;
+            for (size_t k = 0; k < transformed.size(); ++k) {
+                if (transformed[k] == '`') {
+                    if (bt_start == std::string::npos) {
+                        bt_start = k;
+                    } else {
+                        bt_spans.push_back({bt_start, k});
+                        bt_start = std::string::npos;
+                    }
+                }
+            }
+
+            auto is_inside_bt = [&](size_t pos) {
+                for (const auto& span : bt_spans) {
+                    if (pos >= span.first && pos <= span.second) return true;
+                }
+                return false;
+            };
+
+            auto p_start = transformed.cbegin();
+            std::smatch p_match;
+            while (std::regex_search(p_start, transformed.cend(), p_match, pill_pipe_re)) {
+                size_t match_pos = static_cast<size_t>(std::distance(transformed.cbegin(), p_match[0].first));
+                final_line.append(p_start, p_match[0].first);
+                if (is_inside_bt(match_pos)) {
+                    final_line.append(p_match[0].str());
+                } else {
+                    final_line.append("[" + p_match[1].str() + ":" + p_match[2].str() + "\\|" + p_match[3].str() + "]");
+                }
+                p_start = p_match[0].second;
+            }
+            final_line.append(p_start, transformed.cend());
+        } else {
+            final_line = transformed;
+        }
 
         output.append(final_line);
         output.push_back('\n');

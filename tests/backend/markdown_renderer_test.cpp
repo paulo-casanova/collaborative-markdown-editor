@@ -293,7 +293,33 @@ int main() {
         assert(html.find("<span class=\"cme-pill cme-pill-slate\" data-color=\"slate\">Draft</span>") != std::string::npos);
         assert(html.find("<span class=\"cme-pill cme-pill-green\" data-color=\"green\">Done</span>") != std::string::npos);
         assert(html.find("<span class=\"cme-pill cme-pill-rose\" data-color=\"rose\">P0</span>") != std::string::npos);
-        std::cout << "     [PASS] Custom pills and badges rendered into semantic spans.\n";
+
+        // Verify pills inside inline code and fenced code blocks are NOT transformed into HTML pill spans
+        std::string code_md =
+            "Regular pill: [pill:green|Active].\n\n"
+            "Inline code: `[pill:red|Danger]` and `[status:done]`.\n\n"
+            "```json\n"
+            "{\n"
+            "  \"pill_syntax\": \"[pill:amber|Pending]\",\n"
+            "  \"status\": \"[status:done]\"\n"
+            "}\n"
+            "```\n";
+        std::string code_html = cme::renderer::MarkdownRenderer::render_to_html(code_md, opts);
+        assert(code_html.find("<span class=\"cme-pill cme-pill-green\" data-color=\"green\">Active</span>") != std::string::npos);
+        assert(code_html.find("<code>[pill:red|Danger]</code>") != std::string::npos);
+        assert(code_html.find("<code>[status:done]</code>") != std::string::npos);
+        assert(code_html.find("[pill:amber|Pending]") != std::string::npos);
+        assert(code_html.find("[status:done]") != std::string::npos);
+        assert(code_html.find("<span class=\"cme-pill cme-pill-red\"") == std::string::npos);
+
+        // Verify nested formatting: _foo **bar**_ and *foo **bar***
+        std::string nested_md =
+            "Nested italic and bold: _foo **bar**_ and *foo **bar*** and **foo *bar***.\n";
+        std::string nested_html = cme::renderer::MarkdownRenderer::render_to_html(nested_md, opts);
+        assert(nested_html.find("<em>foo <strong>bar</strong></em>") != std::string::npos);
+        assert(nested_html.find("<strong>foo <em>bar</em></strong>") != std::string::npos);
+
+        std::cout << "     [PASS] Custom pills and badges rendered into semantic spans, code blocks preserved, and nested formatting verified.\n";
     }
 
     // =========================================================================

@@ -218,7 +218,7 @@ export function buildLivePreviewDecorations(
   for (let i = 1; i <= lineCount; i++) {
     const line = doc.line(i);
     if (isInsideCodeOrFence(line.from, line.to)) continue;
-    const inlineBacktickRegex = /(?<!`)`([^`\n]+)`(?!`)/g;
+    const inlineBacktickRegex = /(?<!`)(`+)(.*?)\1(?!`)/g;
     let cMatch: RegExpExecArray | null;
     while ((cMatch = inlineBacktickRegex.exec(line.text)) !== null) {
       const cFrom = line.from + cMatch.index;
@@ -522,26 +522,27 @@ export function buildLivePreviewDecorations(
       }
     }
 
-    // 4d. Inline code: `code` (processed BEFORE links, bold/italic, and inline math)
-    const codeRegex = /(?<!`)`([^`\n]+)`(?!`)/g;
+    // 4d. Inline code: `code` or ``code`` (processed BEFORE links, bold/italic, and inline math)
+    const codeRegex = /(?<!`)(`+)(.*?)\1(?!`)/g;
     let cMatch: RegExpExecArray | null;
     while ((cMatch = codeRegex.exec(lineText)) !== null) {
       const cFrom = lineFrom + cMatch.index;
       const cTo = cFrom + cMatch[0].length;
+      const tickLen = cMatch[1].length;
 
       if (isOverlappingReplaced(cFrom, cTo)) continue;
 
       const cursorInCode = cursorTo >= cFrom && cursorFrom <= cTo;
       if (!cursorInCode) {
-        addReplace(cFrom, cFrom + 1, Decoration.replace({}));
+        addReplace(cFrom, cFrom + tickLen, Decoration.replace({}));
         items.push({
-          from: cFrom + 1,
-          to: cTo - 1,
+          from: cFrom + tickLen,
+          to: cTo - tickLen,
           deco: Decoration.mark({ class: 'cme-live-code' }),
         });
-        addReplace(cTo - 1, cTo, Decoration.replace({}));
+        addReplace(cTo - tickLen, cTo, Decoration.replace({}));
       }
-      // Reserve the entire inline code span so inner syntax is never formatted as math/links/bold
+      // Reserve the entire inline code span so inner syntax is never formatted as math/links/bold/pills
       replacedRanges.push({ from: cFrom, to: cTo });
     }
 
@@ -648,7 +649,7 @@ export function buildLivePreviewDecorations(
     while ((pMatch = pillRegex.exec(lineText)) !== null) {
       const pFrom = lineFrom + pMatch.index;
       const pTo = pFrom + pMatch[0].length;
-      if (isOverlappingReplaced(pFrom, pTo)) continue;
+      if (isOverlappingReplaced(pFrom, pTo) || isInsideCodeOrFence(pFrom, pTo)) continue;
 
       const parsed = parsePillSyntax(pMatch[0]);
       if (!parsed) continue;
@@ -705,7 +706,14 @@ export function buildLivePreviewDecorations(
       const biFrom = lineFrom + biMatch.index;
       const biTo = biFrom + biMatch[0].length;
 
-      if (isOverlappingReplaced(biFrom, biTo)) continue;
+      if (
+        isOverlappingReplaced(biFrom, biFrom + 3) ||
+        isOverlappingReplaced(biTo - 3, biTo) ||
+        isInsideCodeOrFence(biFrom, biFrom + 3) ||
+        isInsideCodeOrFence(biTo - 3, biTo)
+      ) {
+        continue;
+      }
 
       const cursorInBI = cursorTo >= biFrom && cursorFrom <= biTo;
       if (!cursorInBI) {
@@ -731,13 +739,20 @@ export function buildLivePreviewDecorations(
     }
 
     // 4i. Inline formatting: Bold **text** and __text__
-    const boldRegex = /\*\*([^\*\n]+)\*\*/g;
+    const boldRegex = /(?<!\*)\*\*(?!\s)((?:[^\*\n]|\*[^\*\n]+?\*)+?)(?<!\s)\*\*(?!\*\*)/g;
     let bMatch: RegExpExecArray | null;
     while ((bMatch = boldRegex.exec(lineText)) !== null) {
       const bFrom = lineFrom + bMatch.index;
       const bTo = bFrom + bMatch[0].length;
 
-      if (isOverlappingReplaced(bFrom, bTo)) continue;
+      if (
+        isOverlappingReplaced(bFrom, bFrom + 2) ||
+        isOverlappingReplaced(bTo - 2, bTo) ||
+        isInsideCodeOrFence(bFrom, bFrom + 2) ||
+        isInsideCodeOrFence(bTo - 2, bTo)
+      ) {
+        continue;
+      }
 
       const cursorInBold = cursorTo >= bFrom && cursorFrom <= bTo;
       if (!cursorInBold) {
@@ -762,12 +777,19 @@ export function buildLivePreviewDecorations(
       }
     }
 
-    const boldUnderscoreRegex = /(?<![a-zA-Z0-9_])__([^\s_\n](?:[^_\n]*?[^\s_\n])?)__(?![a-zA-Z0-9_])/g;
+    const boldUnderscoreRegex = /(?<![a-zA-Z0-9_])__(?!\s)((?:[^_\n]|_[^_\n]+?_)+?)__(?![a-zA-Z0-9_])/g;
     while ((bMatch = boldUnderscoreRegex.exec(lineText)) !== null) {
       const bFrom = lineFrom + bMatch.index;
       const bTo = bFrom + bMatch[0].length;
 
-      if (isOverlappingReplaced(bFrom, bTo)) continue;
+      if (
+        isOverlappingReplaced(bFrom, bFrom + 2) ||
+        isOverlappingReplaced(bTo - 2, bTo) ||
+        isInsideCodeOrFence(bFrom, bFrom + 2) ||
+        isInsideCodeOrFence(bTo - 2, bTo)
+      ) {
+        continue;
+      }
 
       const cursorInBold = cursorTo >= bFrom && cursorFrom <= bTo;
       if (!cursorInBold) {
@@ -793,13 +815,20 @@ export function buildLivePreviewDecorations(
     }
 
     // 4j. Inline formatting: Italic *text* and _text_ (when not bold)
-    const italicRegex = /(?<!\*)\*([^\*\n]+)\*(?!\*)/g;
+    const italicRegex = /(?<!\*)\*(?!\s)((?:[^\*\n]|\*\*[^\*\n]+?\*\*)+?)(?<!\s)\*(?!\*\*\*)/g;
     let iMatch: RegExpExecArray | null;
     while ((iMatch = italicRegex.exec(lineText)) !== null) {
       const iFrom = lineFrom + iMatch.index;
       const iTo = iFrom + iMatch[0].length;
 
-      if (isOverlappingReplaced(iFrom, iTo)) continue;
+      if (
+        isOverlappingReplaced(iFrom, iFrom + 1) ||
+        isOverlappingReplaced(iTo - 1, iTo) ||
+        isInsideCodeOrFence(iFrom, iFrom + 1) ||
+        isInsideCodeOrFence(iTo - 1, iTo)
+      ) {
+        continue;
+      }
 
       const cursorInItalic = cursorTo >= iFrom && cursorFrom <= iTo;
       if (!cursorInItalic) {
@@ -824,12 +853,19 @@ export function buildLivePreviewDecorations(
       }
     }
 
-    const italicUnderscoreRegex = /(?<![a-zA-Z0-9_])_([^\s_\n](?:[^_\n]*?[^\s_\n])?)_(?![a-zA-Z0-9_])/g;
+    const italicUnderscoreRegex = /(?<![a-zA-Z0-9_])_(?!\s)((?:[^_\n]|__[^\n]+?__|\*\*[^\n]+?\*\*)+?)(?<!\s)_(?![a-zA-Z0-9_])/g;
     while ((iMatch = italicUnderscoreRegex.exec(lineText)) !== null) {
       const iFrom = lineFrom + iMatch.index;
       const iTo = iFrom + iMatch[0].length;
 
-      if (isOverlappingReplaced(iFrom, iTo)) continue;
+      if (
+        isOverlappingReplaced(iFrom, iFrom + 1) ||
+        isOverlappingReplaced(iTo - 1, iTo) ||
+        isInsideCodeOrFence(iFrom, iFrom + 1) ||
+        isInsideCodeOrFence(iTo - 1, iTo)
+      ) {
+        continue;
+      }
 
       const cursorInItalic = cursorTo >= iFrom && cursorFrom <= iTo;
       if (!cursorInItalic) {
@@ -861,7 +897,14 @@ export function buildLivePreviewDecorations(
       const sFrom = lineFrom + sMatch.index;
       const sTo = sFrom + sMatch[0].length;
 
-      if (isOverlappingReplaced(sFrom, sTo)) continue;
+      if (
+        isOverlappingReplaced(sFrom, sFrom + 2) ||
+        isOverlappingReplaced(sTo - 2, sTo) ||
+        isInsideCodeOrFence(sFrom, sFrom + 2) ||
+        isInsideCodeOrFence(sTo - 2, sTo)
+      ) {
+        continue;
+      }
 
       const cursorInStrike = cursorTo >= sFrom && cursorFrom <= sTo;
       if (!cursorInStrike) {
