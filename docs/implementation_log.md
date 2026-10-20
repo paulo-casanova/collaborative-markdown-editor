@@ -1652,3 +1652,41 @@ This document tracks the incremental implementation of the Collaborative Markdow
   $ docker compose build cme-server
   ✔ Image cme-cme-server Built (48.9s)
   ```
+
+---
+
+### Dependency Architecture Update: Build-Time Download & User-Configurable Overrides for All Third-Party Libraries
+* **Status:** Complete (Commit: `master`)
+* **Context & Motivation:**
+  * Vendored source code and binaries previously stored directly in `backend/third_party/` (`md4c`, `usockets`, `nlohmann`, `yrs`) increased repository size and required manual updates.
+  * Migrated all third-party dependencies to build-time resolution with clear priority order:
+    1. User-specified overrides (e.g., `-D<DEP>_ROOT=...`, `-D<DEP>_SOURCE_DIR=...`, `-D<DEP>_LIB=...`, `-D<DEP>_INCLUDE_DIR=...`)
+    2. System-installed libraries (`find_package` / `find_library` / `find_path`)
+    3. Automatic build-time download via CMake `FetchContent` (cleanly isolated, shallow git clones or official release archives)
+* **Resolved Dependencies:**
+  * `nlohmann_json` (v3.11.3): Git release tag or user-specified `-DNLOHMANN_JSON_ROOT=...` / `-DNLOHMANN_JSON_INCLUDE_DIR=...`.
+  * `md4c` (release-0.5.2): Git release tag or user-specified `-DMD4C_ROOT=...` / `-DMD4C_LIB=...` + `-DMD4C_INCLUDE_DIR=...` / system `find_package(md4c)`.
+  * `uSockets`: Git commit `86097c490263ab662d62e8e7b541390bdec7d149` (built statically with `LIBUS_USE_OPENSSL`) or user-specified `-DUSOCKETS_ROOT=...` / precompiled `-DUSOCKETS_LIB=...` + `-DUSOCKETS_INCLUDE_DIR=...`.
+  * `uWebSockets`: Git commit `38cf9d811598aa3ce5134eba7d29e21f2db259ae` (header-only, linked to `${CMAKE_BINARY_DIR}/include/uWebSockets`) or user-specified `-DUWEBSOCKETS_ROOT=...` / `-DUWEBSOCKETS_INCLUDE_DIR=...`.
+  * `yrs` (`yffi` v0.28.0): Official prebuilt release archive (`yffi-v0.28.0-${YRS_ARCH}.${YRS_ARCH_EXT}`) or user-specified `-DYRS_ROOT=...` / `-DYRS_LIB=...` + `-DYRS_INCLUDE_DIR=...` / system library. Copied to `${CMAKE_BINARY_DIR}/lib` with automated `CMAKE_BUILD_RPATH` registration for transparent runtime discovery.
+* **Deliverables:**
+  * Created `cmake/Dependencies.cmake` containing unified dependency resolution rules, cache variable hooks, and compile warning suppressions for external code.
+  * Root `CMakeLists.txt`: Includes `cmake/Dependencies.cmake` and configures global `CMAKE_BUILD_RPATH` / `CMAKE_INSTALL_RPATH`.
+  * `backend/CMakeLists.txt`: Removed inline vendored library builds; links targets provided by `Dependencies.cmake`.
+  * `tests/CMakeLists.txt`: Removed redundant per-target `BUILD_RPATH` overrides to inherit the global `CMAKE_BUILD_RPATH`.
+  * `tests/ws_edit_simulator.py`: Updated `find_libyrs()` to detect `YRS_LIB` environment variable, `${CMAKE_BINARY_DIR}/lib/libyrs.so`, `_deps/yrs_prebuilt-src/**`, and standard system directories.
+  * `Dockerfile`: Updated Stage 2 to copy `cmake/`, install `xz-utils`, and copy `libyrs.so` from `/app/build/lib/` in Stage 3.
+  * Removed `backend/third_party/` directory entirely.
+* **Verification:**
+  ```bash
+  $ cmake -B build -S . && cmake --build build -j$(nproc)
+  [100%] Built target cme-server / cme-migrate / cme-admin / tests
+
+  $ ctest --test-dir build --output-on-failure
+  100% tests passed, 0 tests failed out of 16 (19.71 sec)
+
+  $ npm run test:unit --prefix frontend
+  Test Files  9 passed (9)
+       Tests  142 passed (142)
+  ```
+

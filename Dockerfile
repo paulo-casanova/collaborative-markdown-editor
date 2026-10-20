@@ -30,11 +30,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcrypt-dev \
     zlib1g-dev \
     ca-certificates \
+    xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY CMakeLists.txt ./
+COPY cmake/ ./cmake/
 COPY backend/ ./backend/
 
 RUN cmake -B build \
@@ -63,7 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=backend-builder /app/build/bin/cme-server /usr/local/bin/cme-server
 COPY --from=backend-builder /app/build/bin/cme-migrate /usr/local/bin/cme-migrate
 COPY --from=backend-builder /app/build/bin/cme-admin /usr/local/bin/cme-admin
-COPY --from=backend-builder /app/backend/third_party/yrs/lib/libyrs.so /usr/local/lib/libyrs.so
+COPY --from=backend-builder /app/build/lib/libyrs.so /usr/local/lib/libyrs.so
 RUN ldconfig
 
 # Install embedded UI static assets

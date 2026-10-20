@@ -20,12 +20,26 @@ from pathlib import Path
 import websockets
 
 def find_libyrs():
+    if "YRS_LIB" in os.environ and Path(os.environ["YRS_LIB"]).exists():
+        return str(Path(os.environ["YRS_LIB"]).resolve())
+
     script_dir = Path(__file__).resolve().parent
     candidates = [
+        script_dir / "../build/lib/libyrs.so",
+        script_dir / "../build/_deps/yrs_prebuilt-src/libyrs.so",
+        Path.home() / ".local/usr/lib/libyrs.so",
+        Path("/usr/local/lib/libyrs.so"),
+        Path("/usr/lib/libyrs.so"),
+        Path("/usr/lib/x86_64-linux-gnu/libyrs.so"),
         script_dir / "../backend/third_party/yrs/lib/libyrs.so",
         script_dir / "../build/backend/third_party/yrs/lib/libyrs.so",
         Path("/home/pasc/cme/backend/third_party/yrs/lib/libyrs.so")
     ]
+    # Check for glob match under _deps/yrs_prebuilt-src
+    deps_dir = script_dir / "../build/_deps"
+    if deps_dir.exists():
+        candidates.extend(list(deps_dir.glob("**/libyrs.so")))
+
     for c in candidates:
         if c.exists():
             return str(c.resolve())

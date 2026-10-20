@@ -23,35 +23,29 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose build type" FORCE)
 endif()
 
-# External Dependencies (System libraries)
+# External & Third-Party Dependencies
 list(PREPEND CMAKE_PREFIX_PATH "$ENV{HOME}/.local/usr")
 find_package(OpenSSL REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(PostgreSQL REQUIRED)
 find_package(PkgConfig REQUIRED)
 
-# Fetched Dependencies (yaml-cpp, libpqxx)
-include(FetchContent)
+include(cmake/Dependencies.cmake)
 
-set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
-set(YAML_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-    yaml-cpp
-    GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG 0.8.0
-    SYSTEM
+# Global runtime shared library lookup paths (RPATH)
+get_filename_component(YRS_LIB_DIR "${YRS_LIB}" DIRECTORY)
+set(CMAKE_BUILD_RPATH
+    "${CMAKE_BINARY_DIR}/lib"
+    "${YRS_LIB_DIR}"
+    "$ENV{HOME}/.local/usr/lib"
+    "$ENV{HOME}/.local/usr/lib/x86_64-linux-gnu"
 )
-
-set(SKIP_BUILD_TEST ON CACHE BOOL "" FORCE)
-FetchContent_Declare(
-    libpqxx
-    GIT_REPOSITORY https://github.com/jtv/libpqxx.git
-    GIT_TAG 7.10.7
-    SYSTEM
+set(CMAKE_INSTALL_RPATH
+    "${CMAKE_INSTALL_PREFIX}/lib"
+    "/usr/local/lib"
+    "$ENV{HOME}/.local/usr/lib"
+    "$ENV{HOME}/.local/usr/lib/x86_64-linux-gnu"
 )
-
-FetchContent_MakeAvailable(yaml-cpp libpqxx)
 
 # Compiler warning flags for CME targets
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

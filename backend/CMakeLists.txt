@@ -3,41 +3,7 @@
 # ==============================================================================
 
 find_library(CRYPT_LIB crypt REQUIRED)
-find_library(YRS_LIB yrs PATHS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/yrs/lib" "$ENV{HOME}/.local/usr/lib" /usr/local/lib /usr/lib REQUIRED)
 
-# uSockets Network Library (vendored C/C++ library)
-add_library(uSockets STATIC
-    third_party/usockets/src/bsd.c
-    third_party/usockets/src/context.c
-    third_party/usockets/src/loop.c
-    third_party/usockets/src/socket.c
-    third_party/usockets/src/udp.c
-    third_party/usockets/src/eventing/epoll_kqueue.c
-    third_party/usockets/src/crypto/openssl.c
-    third_party/usockets/src/crypto/sni_tree.cpp
-)
-target_include_directories(uSockets
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/usockets/src>
-)
-target_compile_definitions(uSockets PUBLIC LIBUS_USE_OPENSSL)
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(uSockets PRIVATE -w)
-endif()
-target_link_libraries(uSockets PUBLIC OpenSSL::SSL OpenSSL::Crypto)
-
-# md4c Markdown Parser (vendored C library)
-add_library(md4c STATIC
-    third_party/md4c/md4c.c
-    third_party/md4c/entity.c
-)
-target_include_directories(md4c
-    PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/md4c>
-)
-if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(md4c PRIVATE -w)
-endif()
 
 add_library(cme_core
     src/version.cpp
@@ -67,9 +33,8 @@ add_library(cme_core
 target_include_directories(cme_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/yrs/include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/usockets/include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/nlohmann/include>
+        $<BUILD_INTERFACE:${YRS_INCLUDE_DIR}>
+        $<BUILD_INTERFACE:${UWEBSOCKETS_INCLUDE_DIR}>
         $<INSTALL_INTERFACE:include>
 )
 
@@ -95,6 +60,7 @@ target_link_libraries(cme_core
         ${CRYPT_LIB}
         ${YRS_LIB}
         md4c
+        nlohmann_json::nlohmann_json
 )
 
 # CME Server Executable
@@ -135,7 +101,5 @@ target_compile_features(cme-admin PRIVATE cxx_std_23)
 
 set_target_properties(cme-server cme-migrate cme-admin PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-    BUILD_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
-    INSTALL_RPATH "/home/pasc/.local/usr/lib:/home/pasc/.local/usr/lib/x86_64-linux-gnu"
 )
 
