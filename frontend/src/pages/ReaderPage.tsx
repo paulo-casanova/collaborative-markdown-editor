@@ -22,7 +22,7 @@ import * as Y from 'yjs';
 import { fetchCurrentUser } from '../api/auth';
 import { fetchNodePermissions } from '../api/permissions';
 import { useReviewStore } from '../stores/reviewStore';
-import { createDualAnchor } from '../review/textAnchoring';
+import { createDualAnchor, reconcileAnchor } from '../review/textAnchoring';
 import { NewCommentModal } from '../components/review/NewCommentModal';
 import { NewSuggestionModal } from '../components/review/NewSuggestionModal';
 import {
@@ -505,6 +505,259 @@ export const ReaderPage: React.FC = () => {
     return extractHeadingsFromMarkdown(document.content, numberHeaders);
   }, [document?.content, numberHeaders]);
 
+  const renderCommentCard = useCallback(
+    (comment: CommentRecord) => {
+      const isResolved = comment.status === 'RESOLVED';
+      const replies = comment.replies || [];
+      const author = comment.author || {
+        id: '',
+        username: 'Collaborator',
+        display_name: 'Collaborator',
+        avatar_color: '#3b82f6',
+      };
+      const authorName = author.display_name || author.username || 'Collaborator';
+      const authorColor = author.avatar_color || '#3b82f6';
+      const initials = authorName.slice(0, 2).toUpperCase();
+      const quoteText =
+        comment.anchor?.quote?.exact ||
+        (typeof comment.anchor?.quote === 'string' ? comment.anchor.quote : null);
+
+      return (
+        <div
+          key={comment.id}
+          className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 my-2.5 not-prose ${
+            isResolved ? 'border-l-zinc-400' : 'border-l-blue-500'
+          }`}
+          data-testid="comment-item"
+          data-comment-id={comment.id}
+        >
+          {/* Thread Header */}
+          <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span
+                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0"
+                style={{ backgroundColor: authorColor }}
+              >
+                {initials}
+              </span>
+              <span className="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">{authorName}</span>
+              <span className="text-cme-text-muted text-[10px] whitespace-nowrap">
+                • {new Date(comment.created_at).toLocaleDateString()}
+              </span>
+              <span
+                className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
+                  isResolved
+                    ? 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
+                    : 'bg-cme-primary/10 text-cme-primary border border-cme-primary/20'
+                }`}
+              >
+                {isResolved ? 'Resolved' : 'Open'}
+              </span>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (editingCommentId === comment.id) {
+                    setEditingCommentId(null);
+                  } else {
+                    setEditingCommentId(comment.id);
+                    setEditingCommentText(comment.content);
+                  }
+                }}
+                className="p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors cursor-pointer"
+                data-testid="edit-comment-btn"
+                title="Edit comment"
+              >
+                <Pencil className="w-3 h-3" />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleToggleCommentStatus(comment.id, comment.status)}
+                className="px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer"
+                data-testid="resolve-comment-btn"
+                title="Toggle resolved status"
+              >
+                {isResolved ? 'Reopen' : '✓ Resolve'}
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteComment(comment.id)}
+                className="p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors cursor-pointer"
+                data-testid="delete-comment-btn"
+                title="Delete comment"
+              >
+                <Trash2 className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+
+          {/* Anchored Quote if present */}
+          {quoteText && (
+            <div className="mx-3 mt-2 text-xs italic text-cme-text-muted border-l-2 border-cme-primary pl-2 py-0.5 bg-cme-primary/5 rounded-r">
+              "{quoteText}"
+            </div>
+          )}
+
+          {/* Root Comment Content / Edit Form */}
+          {editingCommentId === comment.id ? (
+            <div className="p-2 space-y-1.5 bg-cme-bg-subtle/30 border-b border-cme-border-base">
+              <textarea
+                value={editingCommentText}
+                onChange={(e) => setEditingCommentText(e.target.value)}
+                className="w-full p-1.5 text-xs bg-cme-bg-surface border border-cme-border-base rounded text-cme-text-base focus:outline-hidden focus:border-cme-primary resize-y min-h-[48px]"
+                autoFocus
+              />
+              <div className="flex items-center justify-end gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setEditingCommentId(null)}
+                  className="px-2 py-0.5 text-[11px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleEditComment(comment.id)}
+                  className="px-2.5 py-0.5 text-[11px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="px-3 py-1.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(comment.content || '') }}
+            />
+          )}
+
+          {/* Nested Replies */}
+          {replies.length > 0 && (
+            <div className="border-t border-cme-border-base/40 divide-y divide-cme-border-base/30 bg-cme-bg-subtle/30">
+              {replies.map((reply: CommentRecord) => {
+                const rAuthor = reply.author || {
+                  id: '',
+                  username: 'Collaborator',
+                  display_name: 'Collaborator',
+                  avatar_color: '#6366f1',
+                };
+                const rName = rAuthor.display_name || rAuthor.username || 'Collaborator';
+                const rColor = rAuthor.avatar_color || '#6366f1';
+                const rInitials = rName.slice(0, 2).toUpperCase();
+                return (
+                  <div key={reply.id} className="px-3 py-1.5 flex items-start gap-2 text-xs">
+                    <span
+                      className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0 mt-0.5"
+                      style={{ backgroundColor: rColor }}
+                    >
+                      {rInitials}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-1.5 mb-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium text-cme-text-base text-[11px]">{rName}</span>
+                          <span className="text-cme-text-muted text-[10px]">
+                            {new Date(reply.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (editingCommentId === reply.id) {
+                              setEditingCommentId(null);
+                            } else {
+                              setEditingCommentId(reply.id);
+                              setEditingCommentText(reply.content);
+                            }
+                          }}
+                          className="p-0.5 text-cme-text-muted hover:text-cme-text-base rounded cursor-pointer"
+                          title="Edit reply"
+                        >
+                          <Pencil className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                      {editingCommentId === reply.id ? (
+                        <div className="pt-1 space-y-1.5">
+                          <textarea
+                            value={editingCommentText}
+                            onChange={(e) => setEditingCommentText(e.target.value)}
+                            className="w-full p-1.5 text-xs bg-cme-bg-surface border border-cme-border-base rounded text-cme-text-base focus:outline-hidden focus:border-cme-primary resize-y min-h-[40px]"
+                            autoFocus
+                          />
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setEditingCommentId(null)}
+                              className="px-2 py-0.5 text-[10px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEditComment(reply.id)}
+                              className="px-2 py-0.5 text-[10px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          className="text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
+                          dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(reply.content || '') }}
+                        />
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Inline Reply Form */}
+          <div className="px-2.5 py-1 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-1.5">
+            <input
+              type="text"
+              placeholder="Write a reply..."
+              value={replyInputs[comment.id] || ''}
+              onChange={(e) =>
+                setReplyInputs((prev) => ({ ...prev, [comment.id]: e.target.value }))
+              }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleReplyComment(comment.id);
+                }
+              }}
+              className="reply-input flex-1 px-2 py-0.5 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary"
+              data-testid="inline-reply-input"
+            />
+            <button
+              type="button"
+              onClick={() => handleReplyComment(comment.id)}
+              disabled={isSubmittingReply[comment.id]}
+              className="reply-submit-btn px-2.5 py-0.5 rounded-md bg-cme-primary hover:bg-cme-primary/90 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50"
+              data-testid="inline-reply-submit-btn"
+            >
+              {isSubmittingReply[comment.id] ? '...' : 'Reply'}
+            </button>
+          </div>
+        </div>
+      );
+    },
+    [
+      editingCommentId,
+      editingCommentText,
+      replyInputs,
+      isSubmittingReply,
+      handleDeleteComment,
+      handleEditComment,
+      handleReplyComment,
+      handleToggleCommentStatus,
+    ]
+  );
+
   // Render markdown content into rich blocks with IDs on headings
   const renderedContent = useMemo(() => {
     if (!document?.content) return null;
@@ -519,9 +772,21 @@ export const ReaderPage: React.FC = () => {
       document.id || document.path || '',
       document.content || '',
       document.path || '',
-      numberHeaders
+      numberHeaders,
+      showReviews ? comments : [],
+      renderCommentCard
     );
-  }, [document?.id, document?.path, document?.content, copiedCodeId, numberHeaders, linkValVer]);
+  }, [
+    document?.id,
+    document?.path,
+    document?.content,
+    copiedCodeId,
+    numberHeaders,
+    linkValVer,
+    showReviews,
+    comments,
+    renderCommentCard,
+  ]);
 
   if (isLoading) {
     return (
@@ -721,259 +986,16 @@ export const ReaderPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Review Comments & Discussions */}
-              <div className="space-y-4">
+              {/* Review Comments Summary */}
+              <div className="space-y-2">
                 <h4 className="text-xs font-semibold uppercase tracking-wider text-cme-text-muted">
                   Inline Discussions ({comments.length})
                 </h4>
-                {comments.length === 0 ? (
-                  <p className="text-xs text-cme-text-muted italic bg-cme-bg-subtle/50 p-3 rounded-xl border border-dashed border-cme-border-base">
-                    No open comments on this document.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {comments.map((comment) => {
-                      const isResolved = comment.status === 'RESOLVED';
-                      const replies = comment.replies || [];
-                      const author = comment.author || {
-                        id: '',
-                        username: 'Collaborator',
-                        display_name: 'Collaborator',
-                        avatar_color: '#3b82f6',
-                      };
-                      const authorName = author.display_name || author.username || 'Collaborator';
-                      const authorColor = author.avatar_color || '#3b82f6';
-                      const initials = authorName.slice(0, 2).toUpperCase();
-                      const quoteText =
-                        comment.anchor?.quote?.exact ||
-                        (typeof comment.anchor?.quote === 'string' ? comment.anchor.quote : null);
-
-                      return (
-                        <div
-                          key={comment.id}
-                          className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 ${
-                            isResolved ? 'border-l-zinc-400' : 'border-l-blue-500'
-                          }`}
-                          data-testid="comment-item"
-                          data-comment-id={comment.id}
-                        >
-                          {/* Thread Header */}
-                          <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span
-                                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0"
-                                style={{ backgroundColor: authorColor }}
-                              >
-                                {initials}
-                              </span>
-                              <span className="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">{authorName}</span>
-                              <span className="text-cme-text-muted text-[10px] whitespace-nowrap">
-                                • {new Date(comment.created_at).toLocaleDateString()}
-                              </span>
-                              <span
-                                className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
-                                  isResolved
-                                    ? 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
-                                    : 'bg-cme-primary/10 text-cme-primary border border-cme-primary/20'
-                                }`}
-                              >
-                                {isResolved ? 'Resolved' : 'Open'}
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-1 flex-shrink-0">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  if (editingCommentId === comment.id) {
-                                    setEditingCommentId(null);
-                                  } else {
-                                    setEditingCommentId(comment.id);
-                                    setEditingCommentText(comment.content);
-                                  }
-                                }}
-                                className="p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors cursor-pointer"
-                                data-testid="edit-comment-btn"
-                                title="Edit comment"
-                              >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleToggleCommentStatus(comment.id, comment.status)}
-                                className="px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer"
-                                data-testid="resolve-comment-btn"
-                                title="Toggle resolved status"
-                              >
-                                {isResolved ? 'Reopen' : '✓ Resolve'}
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteComment(comment.id)}
-                                className="p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors cursor-pointer"
-                                data-testid="delete-comment-btn"
-                                title="Delete comment"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Anchored Quote if present */}
-                          {quoteText && (
-                            <div className="mx-3 mt-2 text-xs italic text-cme-text-muted border-l-2 border-cme-primary pl-2 py-0.5 bg-cme-primary/5 rounded-r">
-                              "{quoteText}"
-                            </div>
-                          )}
-
-                          {/* Root Comment Content / Edit Form */}
-                          {editingCommentId === comment.id ? (
-                            <div className="p-2 space-y-1.5 bg-cme-bg-subtle/30 border-b border-cme-border-base">
-                              <textarea
-                                value={editingCommentText}
-                                onChange={(e) => setEditingCommentText(e.target.value)}
-                                className="w-full p-1.5 text-xs bg-cme-bg-surface border border-cme-border-base rounded text-cme-text-base focus:outline-hidden focus:border-cme-primary resize-y min-h-[48px]"
-                                autoFocus
-                              />
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingCommentId(null)}
-                                  className="px-2 py-0.5 text-[11px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer"
-                                >
-                                  Cancel
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleEditComment(comment.id)}
-                                  className="px-2.5 py-0.5 text-[11px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer"
-                                >
-                                  Save
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <div
-                              className="px-3 py-1.5 text-xs text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
-                              dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(comment.content || '') }}
-                            />
-                          )}
-
-                          {/* Nested Replies */}
-                          {replies.length > 0 && (
-                            <div className="border-t border-cme-border-base/40 divide-y divide-cme-border-base/30 bg-cme-bg-subtle/30">
-                              {replies.map((reply: CommentRecord) => {
-                                const rAuthor = reply.author || {
-                                  id: '',
-                                  username: 'Collaborator',
-                                  display_name: 'Collaborator',
-                                  avatar_color: '#6366f1',
-                                };
-                                const rName = rAuthor.display_name || rAuthor.username || 'Collaborator';
-                                const rColor = rAuthor.avatar_color || '#6366f1';
-                                const rInitials = rName.slice(0, 2).toUpperCase();
-                                return (
-                                  <div key={reply.id} className="px-3 py-1.5 flex items-start gap-2 text-xs">
-                                    <span
-                                      className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0 mt-0.5"
-                                      style={{ backgroundColor: rColor }}
-                                    >
-                                      {rInitials}
-                                    </span>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="flex items-center justify-between gap-1.5 mb-0.5">
-                                        <div className="flex items-center gap-1.5">
-                                          <span className="font-medium text-cme-text-base text-[11px]">{rName}</span>
-                                          <span className="text-cme-text-muted text-[10px]">
-                                            {new Date(reply.created_at).toLocaleDateString()}
-                                          </span>
-                                        </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            if (editingCommentId === reply.id) {
-                                              setEditingCommentId(null);
-                                            } else {
-                                              setEditingCommentId(reply.id);
-                                              setEditingCommentText(reply.content);
-                                            }
-                                          }}
-                                          className="p-0.5 text-cme-text-muted hover:text-cme-text-base rounded cursor-pointer"
-                                          title="Edit reply"
-                                        >
-                                          <Pencil className="w-2.5 h-2.5" />
-                                        </button>
-                                      </div>
-                                      {editingCommentId === reply.id ? (
-                                        <div className="pt-1 space-y-1.5">
-                                          <textarea
-                                            value={editingCommentText}
-                                            onChange={(e) => setEditingCommentText(e.target.value)}
-                                            className="w-full p-1.5 text-xs bg-cme-bg-surface border border-cme-border-base rounded text-cme-text-base focus:outline-hidden focus:border-cme-primary resize-y min-h-[40px]"
-                                            autoFocus
-                                          />
-                                          <div className="flex items-center justify-end gap-1.5">
-                                            <button
-                                              type="button"
-                                              onClick={() => setEditingCommentId(null)}
-                                              className="px-2 py-0.5 text-[10px] rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted cursor-pointer"
-                                            >
-                                              Cancel
-                                            </button>
-                                            <button
-                                              type="button"
-                                              onClick={() => handleEditComment(reply.id)}
-                                              className="px-2 py-0.5 text-[10px] rounded bg-cme-primary hover:bg-cme-primary/90 text-white font-medium cursor-pointer"
-                                            >
-                                              Save
-                                            </button>
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <div
-                                          className="text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed"
-                                          dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(reply.content || '') }}
-                                        />
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-
-                          {/* Inline Reply Form */}
-                          <div className="px-2.5 py-1 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-1.5">
-                            <input
-                              type="text"
-                              placeholder="Write a reply..."
-                              value={replyInputs[comment.id] || ''}
-                              onChange={(e) =>
-                                setReplyInputs((prev) => ({ ...prev, [comment.id]: e.target.value }))
-                              }
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                  e.preventDefault();
-                                  handleReplyComment(comment.id);
-                                }
-                              }}
-                              className="reply-input flex-1 px-2 py-0.5 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary"
-                              data-testid="inline-reply-input"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => handleReplyComment(comment.id)}
-                              disabled={isSubmittingReply[comment.id]}
-                              className="reply-submit-btn px-2.5 py-0.5 rounded-md bg-cme-primary hover:bg-cme-primary/90 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50"
-                              data-testid="inline-reply-submit-btn"
-                            >
-                              {isSubmittingReply[comment.id] ? '...' : 'Reply'}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
+                <p className="text-xs text-cme-text-muted italic bg-cme-bg-subtle/50 p-3 rounded-xl border border-dashed border-cme-border-base">
+                  {comments.length === 0
+                    ? 'No open comments on this document.'
+                    : `${comments.length} comment thread${comments.length === 1 ? '' : 's'} displayed inline with the text above.`}
+                </p>
               </div>
 
               {/* Review Suggestions with Unified Diff Blocks & Accept/Reject */}
@@ -1171,15 +1193,55 @@ export const ReaderPage: React.FC = () => {
 // Markdown block renderer helper with heading slug anchors, KaTeX math, and Mermaid support
 export function renderMarkdown(
   content: string,
-  onCopyCode: (code: string, id: string) => void,
-  copiedCodeId: string | null,
+  onCopyCode: (code: string, id: string) => void = () => {},
+  copiedCodeId: string | null = null,
   currentDocTarget: string = '',
   currentDocMarkdown: string = '',
   currentDocPath: string = '',
-  numberHeaders: boolean = false
+  numberHeaders: boolean = false,
+  comments: CommentRecord[] = [],
+  renderCommentCard?: (comment: CommentRecord) => React.ReactNode
 ): React.ReactNode[] {
   const lines = content.split('\n');
-  const elements: React.ReactNode[] = [];
+  const lineStarts: number[] = new Array(lines.length);
+  let curOffset = 0;
+  for (let idx = 0; idx < lines.length; idx++) {
+    lineStarts[idx] = curOffset;
+    curOffset += lines[idx].length + 1;
+  }
+
+  const rootComments = comments
+    .filter((c) => !c.parent_id && c.status !== 'ARCHIVED')
+    .map((c) => {
+      let targetPos = -1;
+      const reconciled = reconcileAnchor(c.anchor, content);
+      if (reconciled?.range) {
+        targetPos = reconciled.range.end;
+      } else if (c.anchor?.quote?.exact) {
+        const q = c.anchor.quote.exact;
+        const idx = content.indexOf(q);
+        if (idx !== -1) {
+          targetPos = idx + q.length;
+        }
+      } else if (typeof c.anchor?.offset === 'number') {
+        targetPos = c.anchor.offset + (c.anchor?.quote?.exact?.length || 0);
+      }
+      const quote =
+        c.anchor?.quote?.exact || (typeof c.anchor?.quote === 'string' ? c.anchor.quote : '');
+      return { comment: c, targetPos, quote };
+    });
+
+  const commentQuotes = rootComments
+    .map((rc) => rc.quote)
+    .filter((q): q is string => Boolean(q && q.trim().length >= 2));
+
+  const blockList: { element: React.ReactNode; start: number; end: number }[] = [];
+  const addBlock = (el: React.ReactNode, startL: number, endL: number) => {
+    const s = lineStarts[startL] ?? 0;
+    const e = (lineStarts[endL] ?? s) + (lines[endL]?.length ?? 0);
+    blockList.push({ element: el, start: s, end: e });
+  };
+
   let i = 0;
   const slugCounts: Record<string, number> = {};
   const counters: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
@@ -1197,6 +1259,7 @@ export function renderMarkdown(
 
       // For backticks, info string cannot contain backticks
       if (!(fenceChar === '`' && rawInfo.includes('`'))) {
+        const startBlockLine = i;
         const codeLines: string[] = [];
         i++;
         while (i < lines.length) {
@@ -1211,13 +1274,16 @@ export function renderMarkdown(
           codeLines.push(lines[i]);
           i++;
         }
+        const endBlockLine = i;
         i++; // skip closing fence
         const code = codeLines.join('\n');
-        const codeBlockId = `code-block-${i}`;
+        const codeBlockId = `code-block-${startBlockLine}`;
 
         if (rawInfo === 'mermaid') {
-          elements.push(
-            <MermaidBlock key={`mermaid-${i}`} source={code} />
+          addBlock(
+            <MermaidBlock key={`mermaid-${startBlockLine}`} source={code} />,
+            startBlockLine,
+            endBlockLine
           );
         } else {
           const langLower = (rawInfo || '').toLowerCase().trim();
@@ -1242,9 +1308,9 @@ export function renderMarkdown(
           const linesInBlock = code.split('\n');
           const lineCount = code.length === 0 ? 1 : linesInBlock.length;
 
-          elements.push(
+          addBlock(
             <div
-              key={`code-${i}`}
+              key={`code-${startBlockLine}`}
               className="my-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden group shadow-sm"
             >
               <div className="flex items-center justify-between px-3.5 py-1.5 bg-cme-bg-subtle text-xs font-mono text-cme-text-muted border-b border-cme-border-base">
@@ -1283,7 +1349,9 @@ export function renderMarkdown(
                   />
                 </pre>
               </div>
-            </div>
+            </div>,
+            startBlockLine,
+            endBlockLine
           );
         }
         continue;
@@ -1292,6 +1360,7 @@ export function renderMarkdown(
 
     // Display Math Block $$...$$
     if (line.trim().startsWith('$$')) {
+      const startBlockLine = i;
       const mathLines: string[] = [];
       if (line.trim() === '$$') {
         i++;
@@ -1304,6 +1373,7 @@ export function renderMarkdown(
         mathLines.push(line.replace(/^\$\$/, '').replace(/\$\$$/, ''));
         i++;
       }
+      const endBlockLine = i - 1;
       const formula = mathLines.join('\n');
       let renderedHtml = formula;
       try {
@@ -1311,12 +1381,14 @@ export function renderMarkdown(
       } catch {
         // fallback
       }
-      elements.push(
+      addBlock(
         <div
-          key={`math-${i}`}
+          key={`math-${startBlockLine}`}
           className="my-4 p-4 rounded-xl bg-cme-bg-subtle border border-cme-border-base text-center overflow-x-auto"
           dangerouslySetInnerHTML={{ __html: renderedHtml }}
-        />
+        />,
+        startBlockLine,
+        endBlockLine
       );
       continue;
     }
@@ -1353,7 +1425,8 @@ export function renderMarkdown(
         currentDocTarget,
         currentDocMarkdown,
         currentDocPath,
-        false
+        false,
+        commentQuotes
       );
 
       const numberBadge = numberHeaders ? (
@@ -1365,8 +1438,9 @@ export function renderMarkdown(
         </span>
       ) : null;
 
+      let headingElement: React.ReactNode;
       if (level === 1) {
-        elements.push(
+        headingElement = (
           <h1
             key={`h-${i}`}
             id={id}
@@ -1377,7 +1451,7 @@ export function renderMarkdown(
           </h1>
         );
       } else if (level === 2) {
-        elements.push(
+        headingElement = (
           <h2
             key={`h-${i}`}
             id={id}
@@ -1388,7 +1462,7 @@ export function renderMarkdown(
           </h2>
         );
       } else if (level === 3) {
-        elements.push(
+        headingElement = (
           <h3
             key={`h-${i}`}
             id={id}
@@ -1399,7 +1473,7 @@ export function renderMarkdown(
           </h3>
         );
       } else {
-        elements.push(
+        headingElement = (
           <h4
             key={`h-${i}`}
             id={id}
@@ -1410,12 +1484,15 @@ export function renderMarkdown(
           </h4>
         );
       }
+
+      addBlock(headingElement, i, i);
       i++;
       continue;
     }
 
     // Blockquote >
     if (line.startsWith('>')) {
+      const startBlockLine = i;
       const quoteLines: string[] = [];
       while (i < lines.length) {
         if (lines[i].startsWith('>')) {
@@ -1428,6 +1505,7 @@ export function renderMarkdown(
           break;
         }
       }
+      const endBlockLine = i - 1;
 
       const paragraphs: string[] = [];
       let currentPara: string[] = [];
@@ -1445,9 +1523,9 @@ export function renderMarkdown(
         paragraphs.push(currentPara.join(' '));
       }
 
-      elements.push(
+      addBlock(
         <blockquote
-          key={`quote-${i}`}
+          key={`quote-${startBlockLine}`}
           className="my-3 pl-4 border-l-4 border-cme-primary italic text-cme-text-muted bg-cme-primary/5 py-2 rounded-r-lg space-y-2"
         >
           {paragraphs.length > 0 ? (
@@ -1458,14 +1536,17 @@ export function renderMarkdown(
                   currentDocTarget,
                   currentDocMarkdown,
                   currentDocPath,
-                  true
+                  true,
+                  commentQuotes
                 )}
               </p>
             ))
           ) : (
             <p className="my-1.5 first:mt-0 last:mb-0 leading-relaxed">&nbsp;</p>
           )}
-        </blockquote>
+        </blockquote>,
+        startBlockLine,
+        endBlockLine
       );
       continue;
     }
@@ -1476,6 +1557,7 @@ export function renderMarkdown(
       const nextTrimmed = lines[i + 1].trim();
       const isDelimiter = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(nextTrimmed);
       if (isDelimiter) {
+        const startBlockLine = i;
         const tableLines: string[] = [curTrimmed, nextTrimmed];
         let curIdx = i + 2;
         while (curIdx < lines.length) {
@@ -1491,9 +1573,9 @@ export function renderMarkdown(
         const alignments = parseTableAlignments(tableLines[1]);
         const dataRows = tableLines.slice(2).map((row) => splitTableRow(row));
 
-        elements.push(
+        addBlock(
           <div
-            key={`table-${i}`}
+            key={`table-${startBlockLine}`}
             className="cme-table-block-node my-4 overflow-x-auto rounded-xl border border-cme-border-base bg-cme-bg-surface shadow-sm"
           >
             <table className="w-full text-left text-sm border-collapse">
@@ -1505,7 +1587,7 @@ export function renderMarkdown(
                       className="px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0"
                       style={{ textAlign: alignments[colIdx] || 'left' }}
                     >
-                      {renderInlineFormatted(header, currentDocTarget, currentDocMarkdown, currentDocPath, false)}
+                      {renderInlineFormatted(header, currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
                     </th>
                   ))}
                 </tr>
@@ -1526,14 +1608,16 @@ export function renderMarkdown(
                         className="px-4 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0"
                         style={{ textAlign: alignments[colIdx] || 'left' }}
                       >
-                        {renderInlineFormatted(rowCells[colIdx] || '', currentDocTarget, currentDocMarkdown, currentDocPath, false)}
+                        {renderInlineFormatted(rowCells[colIdx] || '', currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
                       </td>
                     ))}
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+          </div>,
+          startBlockLine,
+          curIdx - 1
         );
 
         i = curIdx;
@@ -1543,12 +1627,14 @@ export function renderMarkdown(
 
     // Horizontal Rule / Divider (---, ***, ___, - - -, * * *, etc.)
     if (/^(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line.trim())) {
-      elements.push(
+      addBlock(
         <hr
           key={`hr-${i}`}
           className="my-6 border-0 border-t border-cme-border-base"
           data-testid="markdown-hr"
-        />
+        />,
+        i,
+        i
       );
       i++;
       continue;
@@ -1559,7 +1645,7 @@ export function renderMarkdown(
       const match = line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
       if (match) {
         const checked = match[1].toLowerCase() === 'x';
-        elements.push(
+        addBlock(
           <div key={`task-${i}`} className="flex items-center gap-2 my-1 text-sm">
             <input
               type="checkbox"
@@ -1568,9 +1654,11 @@ export function renderMarkdown(
               className="rounded text-cme-primary border-cme-border-base focus:ring-0"
             />
             <span className={checked ? 'line-through text-cme-text-muted' : ''}>
-              {renderInlineFormatted(match[2], currentDocTarget, currentDocMarkdown, currentDocPath, false)}
+              {renderInlineFormatted(match[2], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
             </span>
-          </div>
+          </div>,
+          i,
+          i
         );
         i++;
         continue;
@@ -1580,10 +1668,12 @@ export function renderMarkdown(
     // Ordered List (\d+\.)
     const olMatch = line.match(/^(\d+)\.\s+(.+)$/);
     if (olMatch) {
-      elements.push(
+      addBlock(
         <li key={`ol-${i}`} className="ml-5 list-decimal text-sm my-0.5" value={parseInt(olMatch[1], 10)}>
-          {renderInlineFormatted(olMatch[2], currentDocTarget, currentDocMarkdown, currentDocPath, false)}
-        </li>
+          {renderInlineFormatted(olMatch[2], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+        </li>,
+        i,
+        i
       );
       i++;
       continue;
@@ -1593,10 +1683,12 @@ export function renderMarkdown(
     if (line.match(/^[-*]\s+(.+)$/)) {
       const match = line.match(/^[-*]\s+(.+)$/);
       if (match) {
-        elements.push(
+        addBlock(
           <li key={`li-${i}`} className="ml-4 list-disc text-sm my-0.5">
-            {renderInlineFormatted(match[1], currentDocTarget, currentDocMarkdown, currentDocPath, false)}
-          </li>
+            {renderInlineFormatted(match[1], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+          </li>,
+          i,
+          i
         );
         i++;
         continue;
@@ -1610,15 +1702,73 @@ export function renderMarkdown(
     }
 
     // Normal Paragraph
-    elements.push(
+    addBlock(
       <p key={`p-${i}`} className="my-2 text-sm leading-relaxed">
-        {renderInlineFormatted(line, currentDocTarget, currentDocMarkdown, currentDocPath, false)}
-      </p>
+        {renderInlineFormatted(line, currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+      </p>,
+      i,
+      i
     );
     i++;
   }
 
-  return elements;
+  if (comments.length === 0 || !renderCommentCard) {
+    return blockList.map((b) => b.element);
+  }
+
+  if (blockList.length === 0) {
+    if (rootComments.length === 0) return [];
+    return [
+      <div
+        key="inline-comments-empty-doc"
+        className="cme-inline-comments-container my-3 space-y-2 select-text"
+        data-testid="inline-comments-container"
+      >
+        {rootComments.map((rc) => renderCommentCard(rc.comment))}
+      </div>,
+    ];
+  }
+
+  const commentsByBlock: Record<number, CommentRecord[]> = {};
+
+  for (const rc of rootComments) {
+    let assignedBlock = blockList.length - 1;
+    if (rc.targetPos >= 0) {
+      if (rc.targetPos <= blockList[0].end) {
+        assignedBlock = 0;
+      } else {
+        for (let b = 0; b < blockList.length - 1; b++) {
+          if (rc.targetPos >= blockList[b].start && rc.targetPos < blockList[b + 1].start) {
+            assignedBlock = b;
+            break;
+          }
+        }
+      }
+    }
+    if (!commentsByBlock[assignedBlock]) {
+      commentsByBlock[assignedBlock] = [];
+    }
+    commentsByBlock[assignedBlock].push(rc.comment);
+  }
+
+  const finalElements: React.ReactNode[] = [];
+  for (let b = 0; b < blockList.length; b++) {
+    finalElements.push(blockList[b].element);
+    const blockComments = commentsByBlock[b];
+    if (blockComments && blockComments.length > 0) {
+      finalElements.push(
+        <div
+          key={`inline-comments-${b}`}
+          className="cme-inline-comments-container my-3 space-y-2 select-text"
+          data-testid="inline-comments-container"
+        >
+          {blockComments.map((c) => renderCommentCard(c))}
+        </div>
+      );
+    }
+  }
+
+  return finalElements;
 }
 
 // Inline formatting helper: Bold, Italic, Strikethrough, Inline Code, Inline Math ($...$), Display Math ($$...$$), WikiLinks ([[target]]), Standard Markdown Links ([label](target)), and Embedded Images (![alt](src))
@@ -1627,7 +1777,8 @@ function renderInlineFormatted(
   currentDocTarget: string = '',
   currentDocMarkdown: string = '',
   currentDocPath: string = '',
-  inQuote: boolean = false
+  inQuote: boolean = false,
+  commentQuotes: string[] = []
 ): React.ReactNode {
   if (!text) return null;
 
@@ -2110,6 +2261,31 @@ function renderInlineFormatted(
           )}
         </em>
       );
+    }
+
+    if (commentQuotes && commentQuotes.length > 0) {
+      for (const q of commentQuotes) {
+        if (q && q.length >= 2 && part.includes(q)) {
+          const subparts = part.split(q);
+          return (
+            <React.Fragment key={idx}>
+              {subparts.map((sp, sidx) => (
+                <React.Fragment key={sidx}>
+                  {sp}
+                  {sidx < subparts.length - 1 && (
+                    <mark
+                      className="cme-review-comment-anchor bg-yellow-400/25 border-b-2 border-yellow-500 rounded-xs text-inherit"
+                      data-testid="reader-comment-anchor"
+                    >
+                      {q}
+                    </mark>
+                  )}
+                </React.Fragment>
+              ))}
+            </React.Fragment>
+          );
+        }
+      }
     }
 
     return part;

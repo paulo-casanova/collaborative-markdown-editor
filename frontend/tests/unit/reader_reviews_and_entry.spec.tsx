@@ -220,3 +220,186 @@ describe('Issue #13: Reader Mode Review Permissions & Floating Anchors', () => {
     expect(useReviewStore.getState().pendingSuggestionSelection).toBeNull();
   });
 });
+
+describe('Issue #14: Inline Comments in Reader Mode', () => {
+  // Import renderMarkdown from ReaderPage
+  const sampleMarkdown = `# Document Title
+
+This is the first paragraph with important text.
+
+This is the second paragraph with another discussion.`;
+
+  it('renders markdown blocks without comments when reviews are disabled / empty', async () => {
+    const { renderMarkdown } = await import('../../src/pages/ReaderPage');
+    const elements = renderMarkdown(sampleMarkdown, () => {}, null, '', '', '', false, []);
+    expect(elements.length).toBeGreaterThan(0);
+    // No inline comments container rendered
+    const hasCommentContainer = elements.some(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(hasCommentContainer).toBe(false);
+  });
+
+  it('renders comment cards inline directly below the anchored block when comments exist', async () => {
+    const { renderMarkdown } = await import('../../src/pages/ReaderPage');
+
+    const firstParaQuote = 'important text';
+    const firstParaStart = sampleMarkdown.indexOf(firstParaQuote);
+    const mockComment: any = {
+      id: 'comment-123',
+      document_id: 'doc-1',
+      content: 'This is an inline review comment',
+      status: 'OPEN',
+      created_at: new Date().toISOString(),
+      author: {
+        id: 'u-1',
+        username: 'alice',
+        display_name: 'Alice',
+        avatar_color: '#3b82f6',
+      },
+      anchor: {
+        quote: {
+          exact: firstParaQuote,
+          prefix: sampleMarkdown.slice(firstParaStart - 10, firstParaStart),
+          suffix: sampleMarkdown.slice(firstParaStart + firstParaQuote.length, firstParaStart + firstParaQuote.length + 10),
+        },
+        offset: firstParaStart,
+      },
+    };
+
+    const renderCard = (c: any) => {
+      return (
+        <div key={c.id} data-testid="mock-inline-comment-card" data-comment-id={c.id}>
+          {c.content}
+        </div>
+      );
+    };
+
+    const elements = renderMarkdown(
+      sampleMarkdown,
+      () => {},
+      null,
+      '',
+      '',
+      '',
+      false,
+      [mockComment],
+      renderCard
+    );
+
+    // Verify inline-comments-container is present
+    const commentContainers = elements.filter(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(commentContainers.length).toBe(1);
+
+    // The comment card should be rendered inside
+    const renderedCard = commentContainers[0]?.props?.children?.[0];
+    expect(renderedCard?.props?.['data-testid']).toBe('mock-inline-comment-card');
+    expect(renderedCard?.props?.['data-comment-id']).toBe('comment-123');
+
+    // The container should be placed right after the first paragraph (index 2: H1, P1, CommentsContainer, P2)
+    const containerIdx = elements.findIndex(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(containerIdx).toBe(2);
+  });
+
+  it('renders multiple comments under their respective anchored blocks', async () => {
+    const { renderMarkdown } = await import('../../src/pages/ReaderPage');
+
+    const quote1 = 'Document Title';
+    const quote2 = 'second paragraph';
+
+    const comment1: any = {
+      id: 'comment-h1',
+      document_id: 'doc-1',
+      content: 'Title comment',
+      status: 'OPEN',
+      created_at: new Date().toISOString(),
+      anchor: {
+        quote: { exact: quote1 },
+        offset: sampleMarkdown.indexOf(quote1),
+      },
+    };
+
+    const comment2: any = {
+      id: 'comment-p2',
+      document_id: 'doc-1',
+      content: 'Paragraph 2 comment',
+      status: 'OPEN',
+      created_at: new Date().toISOString(),
+      anchor: {
+        quote: { exact: quote2 },
+        offset: sampleMarkdown.indexOf(quote2),
+      },
+    };
+
+    const renderCard = (c: any) => (
+      <div key={c.id} data-testid="mock-card" data-comment-id={c.id}>
+        {c.content}
+      </div>
+    );
+
+    const elements = renderMarkdown(
+      sampleMarkdown,
+      () => {},
+      null,
+      '',
+      '',
+      '',
+      false,
+      [comment1, comment2],
+      renderCard
+    );
+
+    const commentContainers = elements.filter(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(commentContainers.length).toBe(2);
+
+    // First comment container appears after heading (index 1)
+    expect(elements[1]?.props?.['data-testid']).toBe('inline-comments-container');
+    expect(elements[1]?.props?.children?.[0]?.props?.['data-comment-id']).toBe('comment-h1');
+
+    // Second comment container appears after second paragraph (last element)
+    const lastElement = elements[elements.length - 1] as any;
+    expect(lastElement?.props?.['data-testid']).toBe('inline-comments-container');
+    expect(lastElement?.props?.children?.[0]?.props?.['data-comment-id']).toBe('comment-p2');
+  });
+
+  it('attaches unanchored comments to the end of the document', async () => {
+    const { renderMarkdown } = await import('../../src/pages/ReaderPage');
+
+    const unanchoredComment: any = {
+      id: 'comment-unanchored',
+      document_id: 'doc-1',
+      content: 'General document comment',
+      status: 'OPEN',
+      created_at: new Date().toISOString(),
+      anchor: null,
+    };
+
+    const renderCard = (c: any) => (
+      <div key={c.id} data-testid="mock-card" data-comment-id={c.id}>
+        {c.content}
+      </div>
+    );
+
+    const elements = renderMarkdown(
+      sampleMarkdown,
+      () => {},
+      null,
+      '',
+      '',
+      '',
+      false,
+      [unanchoredComment],
+      renderCard
+    );
+
+    const lastElement = elements[elements.length - 1] as any;
+    expect(lastElement?.props?.['data-testid']).toBe('inline-comments-container');
+    expect(lastElement?.props?.children?.[0]?.props?.['data-comment-id']).toBe('comment-unanchored');
+  });
+});
