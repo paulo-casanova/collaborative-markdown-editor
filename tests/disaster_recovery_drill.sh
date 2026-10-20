@@ -292,6 +292,9 @@ if command -v pg_restore >/dev/null 2>&1; then
 else
     docker exec -i cme-postgres pg_restore --clean --if-exists -U cme -d "${DB_NAME}" < "$DB_DUMP_PATH" || true
 fi
+if command -v psql >/dev/null 2>&1; then
+    psql "$DB_URL" -c "TRUNCATE TABLE instance_lease;" >/dev/null 2>&1 || true
+fi
 echo "[DRILL] Database state restored successfully."
 
 # ------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -282,10 +282,10 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   );
 
   useEffect(() => {
-    if (documentId && documentId !== 'by-path') {
+    if (isPrimary && documentId && documentId !== 'by-path') {
       initDocument(documentId);
     }
-  }, [documentId, initDocument]);
+  }, [isPrimary, documentId, initDocument]);
 
   const { data: user } = useQuery({
     queryKey: ['auth-me'],
@@ -413,12 +413,28 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     }
   };
 
+  const isPrimaryRef = useRef(isPrimary);
+  useEffect(() => {
+    isPrimaryRef.current = isPrimary;
+    if (isPrimary && provider) {
+      if (provider.status === 'connected') {
+        setSyncStatus('live');
+      } else if (provider.status === 'connecting') {
+        setSyncStatus('syncing');
+      } else if (provider.status === 'session-expired') {
+        setSyncStatus('expired');
+      } else {
+        setSyncStatus('offline');
+      }
+    }
+  }, [isPrimary, provider, setSyncStatus]);
+
   // Manage Collaborative WebSocket Provider
   useEffect(() => {
     if (!provider) return;
 
     const unsubStatus = provider.onStatus((status: CollabConnectionStatus) => {
-      if (isPrimary) {
+      if (isPrimaryRef.current) {
         if (status === 'connected') {
           setSyncStatus('live');
         } else if (status === 'connecting') {
@@ -443,11 +459,11 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
       unsubStatus();
       unsubReview();
       provider.destroy();
-      if (isPrimary) {
+      if (isPrimaryRef.current) {
         setSyncStatus('saved');
       }
     };
-  }, [provider, documentId, isPrimary, setSyncStatus, queryClient, handleWebSocketReviewEvent]);
+  }, [provider, documentId, setSyncStatus, queryClient, handleWebSocketReviewEvent]);
 
   if (isLoading) {
     return (

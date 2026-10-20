@@ -33,6 +33,10 @@ void apply_env_overrides(AppConfig& cfg) {
     if (const char* v = std::getenv("CME_STORAGE_S3_ACCESS_KEY")) cfg.storage.s3_access_key = v;
     if (const char* v = std::getenv("CME_STORAGE_S3_SECRET_KEY")) cfg.storage.s3_secret_key = v;
     if (const char* v = std::getenv("CME_DATABASE_URL")) cfg.database.url = v;
+    if (const char* v = std::getenv("CME_DATABASE_LEASE_ENABLED")) cfg.database.lease_enabled = (std::string(v) == "true" || std::string(v) == "1");
+    if (const char* v = std::getenv("CME_DATABASE_LEASE_NAME")) cfg.database.lease_name = v;
+    if (const char* v = std::getenv("CME_DATABASE_LEASE_TTL_SECONDS")) cfg.database.lease_ttl_seconds = std::stoi(v);
+    if (const char* v = std::getenv("CME_DATABASE_LEASE_RENEW_INTERVAL_SECONDS")) cfg.database.lease_renew_interval_seconds = std::stoi(v);
     if (const char* v = std::getenv("CME_AUTHN_PROVIDER")) cfg.authn.provider = v;
     if (const char* v = std::getenv("CME_AUTHN_DELEGATED_HEADER")) cfg.authn.delegated_header = v;
     if (const char* v = std::getenv("CME_AUTHN_PROXY_SECRET_HEADER")) cfg.authn.proxy_secret_header = v;
@@ -142,6 +146,10 @@ void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
         if (db["url"]) cfg.database.url = db["url"].as<std::string>();
         if (db["pool_size"]) cfg.database.pool_size = db["pool_size"].as<size_t>();
         if (db["connect_timeout_seconds"]) cfg.database.connect_timeout_seconds = db["connect_timeout_seconds"].as<int>();
+        if (db["lease_enabled"]) cfg.database.lease_enabled = db["lease_enabled"].as<bool>();
+        if (db["lease_name"]) cfg.database.lease_name = db["lease_name"].as<std::string>();
+        if (db["lease_ttl_seconds"]) cfg.database.lease_ttl_seconds = db["lease_ttl_seconds"].as<int>();
+        if (db["lease_renew_interval_seconds"]) cfg.database.lease_renew_interval_seconds = db["lease_renew_interval_seconds"].as<int>();
     }
 
     if (root["authn"]) {

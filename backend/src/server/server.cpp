@@ -114,6 +114,14 @@ nlohmann::json Server::get_health_status() {
     }
     health["database"] = db_status;
 
+    if (lease_manager_) {
+        health["instance_lease"] = {
+            {"held", lease_manager_->is_held()},
+            {"holder_id", lease_manager_->holder_id()},
+            {"lease_name", lease_manager_->lease_name()}
+        };
+    }
+
     // Storage health & capacity check
     nlohmann::json storage_status;
     if (storage_) {
@@ -269,6 +277,25 @@ Result<void> Server::start() {
     } catch (const std::exception& e) {
         std::cerr << "[WARN] Could not connect to database on startup: " << e.what()
                   << " (server will start in degraded mode)\n";
+    }
+
+    // 2.1 Enforce Single-Instance Lease (Issue #8)
+    if (config_.database.lease_enabled && db_pool_) {
+        lease_manager_ = std::make_shared<db::InstanceLeaseManager>(
+            db_pool_,
+            config_.database.lease_name,
+            config_.database.lease_ttl_seconds,
+            config_.database.lease_renew_interval_seconds
+        );
+        auto lease_res = lease_manager_->acquire();
+        if (!lease_res.has_value() || !lease_res.value()) {
+            std::cerr << "[FATAL] Failed to acquire instance lease: another CME instance is currently running.\n";
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+        lease_manager_->start_heartbeat([this]() {
+            std::cerr << "[FATAL] Lost instance lease! Shutting down server to prevent split-brain.\n";
+            this->stop();
+        });
     }
 
     // 3. Initialize AuthN & AuthZ Subsystems
@@ -4307,6 +4334,9 @@ Result<void> Server::start() {
 
 void Server::stop() {
     if (is_running_.exchange(false)) {
+        if (lease_manager_) {
+            lease_manager_->stop();
+        }
         if (persistence_worker_) {
             persistence_worker_->stop();
         }

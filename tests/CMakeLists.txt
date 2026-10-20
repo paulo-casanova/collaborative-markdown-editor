@@ -162,5 +162,16 @@ set_tests_properties(snippet_fetcher_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Multi-Instance Lease Protection test (Issue #8)
+add_executable(instance_lease_test
+    backend/instance_lease_test.cpp
+)
+target_link_libraries(instance_lease_test PRIVATE cme_core)
+target_compile_features(instance_lease_test PRIVATE cxx_std_23)
+add_test(NAME instance_lease_test COMMAND instance_lease_test)
+set_tests_properties(instance_lease_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 

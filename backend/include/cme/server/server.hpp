@@ -8,6 +8,7 @@
 #include "cme/config/config.hpp"
 #include "cme/db/connection_pool.hpp"
 #include "cme/db/permission_engine.hpp"
+#include "cme/db/instance_lease.hpp"
 #include "cme/storage/storage_backend.hpp"
 #include "cme/auth/user_identity.hpp"
 #include "cme/auth/admin_provider.hpp"
@@ -107,6 +108,7 @@ public:
     [[nodiscard]] std::shared_ptr<auth::SessionManager> session_manager() const noexcept { return session_manager_; }
     [[nodiscard]] std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider() const noexcept { return delegated_provider_; }
     [[nodiscard]] std::shared_ptr<auth::ChallengeAuthProvider> challenge_provider() const noexcept { return challenge_provider_; }
+    [[nodiscard]] std::shared_ptr<db::InstanceLeaseManager> lease_manager() const noexcept { return lease_manager_; }
     [[nodiscard]] std::shared_ptr<document::DocumentService> document_service() const noexcept { return document_service_; }
     [[nodiscard]] std::shared_ptr<admin::UserService> user_service() const noexcept { return user_service_; }
     [[nodiscard]] std::shared_ptr<admin::TeamService> team_service() const noexcept { return team_service_; }
@@ -224,6 +226,7 @@ private:
     std::shared_ptr<collab::PersistenceWorker> persistence_worker_;
     std::shared_ptr<review::ReviewService> review_service_;
     std::shared_ptr<snippet::SnippetFetcher> snippet_fetcher_;
+    std::shared_ptr<db::InstanceLeaseManager> lease_manager_;
 
     std::chrono::system_clock::time_point start_time_;
     std::atomic<bool> is_running_{false};

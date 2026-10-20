@@ -164,9 +164,9 @@ run_pg_dump() {
     [[ -z "$db_name" ]] && db_name="cme_test"
 
     if command -v pg_dump >/dev/null 2>&1; then
-        pg_dump "$DB_URL" -Fc -f "$DB_DUMP_FILE"
+        pg_dump "$DB_URL" -Fc --exclude-table-data=instance_lease -f "$DB_DUMP_FILE"
     elif docker ps --format '{{.Names}}' | grep -q "^cme-postgres$"; then
-        docker exec -i cme-postgres pg_dump -U "$db_user" -d "$db_name" -Fc > "$DB_DUMP_FILE"
+        docker exec -i cme-postgres pg_dump -U "$db_user" -d "$db_name" -Fc --exclude-table-data=instance_lease > "$DB_DUMP_FILE"
     else
         echo "[ERROR] Unable to run pg_dump: neither host pg_dump nor docker cme-postgres found!" >&2
         return 1

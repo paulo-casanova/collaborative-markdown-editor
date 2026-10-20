@@ -11,6 +11,7 @@ add_library(cme_core
     src/db/connection_pool.cpp
     src/db/migration_runner.cpp
     src/db/permission_engine.cpp
+    src/db/instance_lease.cpp
     src/storage/posix_storage_backend.cpp
     src/storage/storage_backend.cpp
     src/auth/crypto_utils.cpp

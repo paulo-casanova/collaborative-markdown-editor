@@ -45,6 +45,10 @@ struct DatabaseConfig {
     std::string url{"postgresql://cme:secret@localhost:5432/cme_test"};
     size_t pool_size{8};
     int connect_timeout_seconds{5};
+    bool lease_enabled{true};
+    std::string lease_name{"cme_server"};
+    int lease_ttl_seconds{10};
+    int lease_renew_interval_seconds{3};
 };
 
 struct AuthNConfig {

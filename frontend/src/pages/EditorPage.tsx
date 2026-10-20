@@ -193,9 +193,20 @@ export const EditorPage: React.FC = () => {
             No document selected. Open a file from the workspace explorer.
           </div>
         ) : !isSplitActive ? (
-          // Single-Pane View
-          <div className="h-full overflow-hidden">
-            {renderPane(primaryDocId, undefined, undefined, true)}
+          // Single-Pane View: keep all open tabs mounted so their WebSockets stay synchronized
+          <div className="h-full overflow-hidden relative">
+            {validTabs.map((tab) => {
+              const isPrimary = tab.id === primaryDocId;
+              return (
+                <div
+                  key={tab.id}
+                  className={isPrimary ? 'h-full overflow-hidden' : 'hidden'}
+                  aria-hidden={!isPrimary}
+                >
+                  {renderPane(tab.id, undefined, undefined, isPrimary)}
+                </div>
+              );
+            })}
           </div>
         ) : splitMode === 'vertical' ? (
           // Dual-Pane Vertical Split (Side-by-Side)
@@ -227,6 +238,17 @@ export const EditorPage: React.FC = () => {
             >
               {renderPane(secondaryDocId!, 'Right Pane', closeSplit, false)}
             </div>
+
+            {/* Background tabs keeping WebSockets synchronized */}
+            <div className="hidden" aria-hidden="true">
+              {validTabs
+                .filter((t) => t.id !== primaryDocId && t.id !== secondaryDocId)
+                .map((tab) => (
+                  <div key={tab.id}>
+                    {renderPane(tab.id, undefined, undefined, false)}
+                  </div>
+                ))}
+            </div>
           </div>
         ) : (
           // Dual-Pane Horizontal Split (Top-and-Bottom)
@@ -257,6 +279,17 @@ export const EditorPage: React.FC = () => {
               data-testid="secondary-pane-wrapper"
             >
               {renderPane(secondaryDocId!, 'Bottom Pane', closeSplit, false)}
+            </div>
+
+            {/* Background tabs keeping WebSockets synchronized */}
+            <div className="hidden" aria-hidden="true">
+              {validTabs
+                .filter((t) => t.id !== primaryDocId && t.id !== secondaryDocId)
+                .map((tab) => (
+                  <div key={tab.id}>
+                    {renderPane(tab.id, undefined, undefined, false)}
+                  </div>
+                ))}
             </div>
           </div>
         )}
