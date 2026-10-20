@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -22,11 +22,15 @@ import { EditTaskModal } from '../components/review/EditTaskModal';
 
 export const TaskDashboardPage: React.FC = () => {
   const queryClient = useQueryClient();
-  const { viewMode } = useUIStore();
+  const { viewMode, setBreadcrumbs } = useUIStore();
   const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
   const [filterTab, setFilterTab] = useState<'all' | 'assigned' | 'open' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
+
+  useEffect(() => {
+    setBreadcrumbs([{ label: 'Task Dashboard', path: '/', isCurrent: true }]);
+  }, [setBreadcrumbs]);
 
   // Fetch current user info
   const { data: currentUser } = useQuery({

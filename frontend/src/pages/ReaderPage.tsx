@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -14,9 +14,17 @@ import {
   Link2,
   Trash2,
   Pencil,
+  GitPullRequest,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
+import * as Y from 'yjs';
+import { fetchCurrentUser } from '../api/auth';
+import { fetchNodePermissions } from '../api/permissions';
+import { useReviewStore } from '../stores/reviewStore';
+import { createDualAnchor } from '../review/textAnchoring';
+import { NewCommentModal } from '../components/review/NewCommentModal';
+import { NewSuggestionModal } from '../components/review/NewSuggestionModal';
 import {
   fetchDocument,
   fetchDocumentByPath,
@@ -136,6 +144,204 @@ export const ReaderPage: React.FC = () => {
   });
 
   const queryClient = useQueryClient();
+  const {
+    setPendingCommentSelection,
+    setPendingSuggestionSelection,
+    pendingCommentSelection,
+    pendingSuggestionSelection,
+    initDocument,
+  } = useReviewStore();
+
+  const { data: currentUser } = useQuery({
+    queryKey: ['auth-me'],
+    queryFn: fetchCurrentUser,
+    retry: false,
+  });
+
+  const { data: nodePerms } = useQuery({
+    queryKey: ['node-permissions', 'DOCUMENT', docId],
+    queryFn: () => fetchNodePermissions({ target_type: 'DOCUMENT', target_id: docId }),
+    enabled: Boolean(docId),
+    retry: false,
+  });
+
+  const canComment = useMemo(() => {
+    if (!currentUser) return false;
+    if (currentUser.is_system_admin || currentUser.is_admin) return true;
+    if (document?.owner_user_id && document.owner_user_id === currentUser.id) return true;
+    if (nodePerms) {
+      if (nodePerms.can_manage) return true;
+      const eff = (nodePerms.effective_permission || '').toLowerCase();
+      return eff === 'comment' || eff === 'edit' || eff === 'admin';
+    }
+    return true;
+  }, [currentUser, document?.owner_user_id, nodePerms]);
+
+  useEffect(() => {
+    if (docId) {
+      initDocument(docId);
+    }
+  }, [docId, initDocument]);
+
+  const prevPendingComment = useRef(pendingCommentSelection);
+  const prevPendingSuggestion = useRef(pendingSuggestionSelection);
+
+  useEffect(() => {
+    if (prevPendingComment.current && !pendingCommentSelection) {
+      queryClient.invalidateQueries({ queryKey: ['reader-comments', docId] });
+      setShowReviews(true);
+    }
+    prevPendingComment.current = pendingCommentSelection;
+  }, [pendingCommentSelection, docId, queryClient]);
+
+  useEffect(() => {
+    if (prevPendingSuggestion.current && !pendingSuggestionSelection) {
+      queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+      setShowReviews(true);
+    }
+    prevPendingSuggestion.current = pendingSuggestionSelection;
+  }, [pendingSuggestionSelection, docId, queryClient]);
+
+  const articleRef = useRef<HTMLElement>(null);
+  const floatingMenuRef = useRef<HTMLDivElement>(null);
+  const [floatingMenuPos, setFloatingMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [readerSelectedText, setReaderSelectedText] = useState('');
+
+  const updateSelection = useCallback(() => {
+    if (!canComment) {
+      setFloatingMenuPos(null);
+      setReaderSelectedText('');
+      return;
+    }
+
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+      setFloatingMenuPos(null);
+      setReaderSelectedText('');
+      return;
+    }
+
+    const text = sel.toString().trim();
+    if (!text) {
+      setFloatingMenuPos(null);
+      setReaderSelectedText('');
+      return;
+    }
+
+    if (!articleRef.current) return;
+    const range = sel.getRangeAt(0);
+    if (!articleRef.current.contains(range.commonAncestorContainer)) {
+      setFloatingMenuPos(null);
+      setReaderSelectedText('');
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    if (rect.width > 0 || rect.height > 0) {
+      setFloatingMenuPos({
+        top: Math.max(10, rect.top - 46),
+        left: Math.max(10, rect.left + rect.width / 2),
+      });
+      setReaderSelectedText(sel.toString());
+    }
+  }, [canComment]);
+
+  useEffect(() => {
+    const handleMouseUp = () => {
+      setTimeout(updateSelection, 10);
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (
+        e.key === 'Shift' ||
+        e.key === 'ArrowLeft' ||
+        e.key === 'ArrowRight' ||
+        e.key === 'ArrowUp' ||
+        e.key === 'ArrowDown'
+      ) {
+        setTimeout(updateSelection, 10);
+      }
+    };
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (
+        floatingMenuRef.current &&
+        floatingMenuRef.current.contains(e.target as Node)
+      ) {
+        return;
+      }
+    };
+
+    window.document.addEventListener('mouseup', handleMouseUp);
+    window.document.addEventListener('keyup', handleKeyUp);
+    window.document.addEventListener('mousedown', handleMouseDown);
+    return () => {
+      window.document.removeEventListener('mouseup', handleMouseUp);
+      window.document.removeEventListener('keyup', handleKeyUp);
+      window.document.removeEventListener('mousedown', handleMouseDown);
+    };
+  }, [updateSelection]);
+
+  const handleOpenComment = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!document?.content || !readerSelectedText) return;
+
+    const fullText = document.content;
+    const trimmed = readerSelectedText.trim();
+    let start = fullText.indexOf(trimmed);
+    if (start === -1) {
+      start = fullText.indexOf(readerSelectedText);
+    }
+    if (start === -1) {
+      start = 0;
+    }
+    const end = Math.min(fullText.length, start + (trimmed.length || readerSelectedText.length));
+
+    const ydoc = new Y.Doc();
+    const ytext = ydoc.getText('content');
+    ytext.insert(0, fullText);
+    const anchor = createDualAnchor(ytext, start, end, fullText);
+
+    setPendingCommentSelection({
+      start,
+      end,
+      text: trimmed || readerSelectedText,
+      anchor,
+    });
+    setFloatingMenuPos(null);
+  };
+
+  const handleOpenSuggestion = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!document?.content || !readerSelectedText) return;
+
+    const fullText = document.content;
+    const trimmed = readerSelectedText.trim();
+    let start = fullText.indexOf(trimmed);
+    if (start === -1) {
+      start = fullText.indexOf(readerSelectedText);
+    }
+    if (start === -1) {
+      start = 0;
+    }
+    const end = Math.min(fullText.length, start + (trimmed.length || readerSelectedText.length));
+
+    const ydoc = new Y.Doc();
+    const ytext = ydoc.getText('content');
+    ytext.insert(0, fullText);
+    const anchor = createDualAnchor(ytext, start, end, fullText);
+
+    setPendingSuggestionSelection({
+      start,
+      end,
+      text: trimmed || readerSelectedText,
+      anchor,
+    });
+    setFloatingMenuPos(null);
+  };
+
   const [replyInputs, setReplyInputs] = useState<Record<string, string>>({});
   const [isSubmittingReply, setIsSubmittingReply] = useState<Record<string, boolean>>({});
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
@@ -487,6 +693,7 @@ export const ReaderPage: React.FC = () => {
         {/* Document Article Body */}
         <main className={`flex-1 min-w-0 ${widthClass} transition-all`}>
           <article
+            ref={articleRef}
             className={`prose dark:prose-invert max-w-none text-cme-text-base ${fontClass} leading-relaxed`}
             data-testid="reader-article"
           >
@@ -915,6 +1122,48 @@ export const ReaderPage: React.FC = () => {
           </div>
         </aside>
       </div>
+
+      {/* Floating Suggest / Comment Review Popup */}
+      {canComment && floatingMenuPos && (
+        <div
+          ref={floatingMenuRef}
+          style={{
+            top: `${floatingMenuPos.top}px`,
+            left: `${floatingMenuPos.left}px`,
+            transform: 'translateX(-50%)',
+          }}
+          className="fixed z-40 flex items-center gap-1 p-1 rounded-xl bg-cme-bg-surface border border-cme-border-base shadow-xl animate-in fade-in zoom-in-95 duration-100 select-none backdrop-blur-xs"
+          data-testid="reader-floating-review-menu"
+        >
+          <button
+            type="button"
+            data-testid="suggest-edit-btn"
+            onClick={handleOpenSuggestion}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded-lg transition-colors cursor-pointer"
+            title="Suggest an edit to selected text"
+          >
+            <GitPullRequest className="w-3.5 h-3.5" />
+            Suggest Edit
+          </button>
+
+          <div className="w-[1px] h-3.5 bg-cme-border-base mx-0.5" />
+
+          <button
+            type="button"
+            data-testid="add-comment-btn"
+            onClick={handleOpenComment}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-cme-primary hover:bg-cme-primary/10 rounded-lg transition-colors cursor-pointer"
+            title="Add a comment on selected text"
+          >
+            <MessageSquare className="w-3.5 h-3.5" />
+            Comment
+          </button>
+        </div>
+      )}
+
+      {/* Review Modals */}
+      <NewSuggestionModal />
+      <NewCommentModal />
     </div>
   );
 };

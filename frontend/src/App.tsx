@@ -2,7 +2,6 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
-import { HomePage } from './pages/HomePage';
 import { EditorPage } from './pages/EditorPage';
 import { ReaderPage } from './pages/ReaderPage';
 import { TrashPage } from './pages/TrashPage';
@@ -27,7 +26,7 @@ export const App: React.FC = () => {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<AppShell />}>
-            <Route index element={<HomePage />} />
+            <Route index element={<TaskDashboardPage />} />
             <Route path="documents/by-path" element={<EditorPage />} />
             <Route path="documents/:id" element={<EditorPage />} />
             <Route path="doc/:id" element={<EditorPage />} />

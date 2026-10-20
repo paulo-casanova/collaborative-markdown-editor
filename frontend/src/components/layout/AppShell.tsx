@@ -22,9 +22,13 @@ export const AppShell: React.FC = () => {
 
   // Keep global viewMode ('edit' vs 'read') synchronized with route changes
   useEffect(() => {
-    if (location.pathname.startsWith('/docs/')) {
+    if (location.pathname.startsWith('/docs/') || location.pathname.startsWith('/docs')) {
       setViewMode('read');
-    } else if (location.pathname.startsWith('/documents/')) {
+    } else if (
+      location.pathname.startsWith('/documents/') ||
+      location.pathname.startsWith('/doc/') ||
+      location.pathname.startsWith('/d/')
+    ) {
       setViewMode('edit');
     }
   }, [location.pathname, setViewMode]);

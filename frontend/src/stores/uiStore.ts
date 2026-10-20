@@ -71,9 +71,12 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarWidth: getInitialSidebarWidth(),
   reviewSidebarOpen: false,
   viewMode:
-    typeof window !== 'undefined' && window.location.pathname.startsWith('/docs/')
-      ? 'read'
-      : 'edit',
+    typeof window !== 'undefined' &&
+    (window.location.pathname.startsWith('/documents/') ||
+      window.location.pathname.startsWith('/doc/') ||
+      window.location.pathname.startsWith('/d/'))
+      ? 'edit'
+      : 'read',
   breadcrumbs: [{ label: 'Workspaces', path: '/' }],
   syncStatus: 'saved',
   loginModalOpen: false,

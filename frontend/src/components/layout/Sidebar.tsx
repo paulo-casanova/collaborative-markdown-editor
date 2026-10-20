@@ -2,7 +2,6 @@ import React, { useState, useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
-  FolderTree,
   Trash2,
   Settings,
   Shield,
@@ -73,19 +72,7 @@ export const Sidebar: React.FC = () => {
         <Link
           to="/"
           className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            isActive('/')
-              ? 'bg-cme-primary/10 text-cme-primary font-medium'
-              : 'text-cme-text-base hover:bg-cme-bg-hover'
-          }`}
-        >
-          <FolderTree className="w-4 h-4" />
-          <span>Workspace Explorer</span>
-        </Link>
-
-        <Link
-          to="/tasks"
-          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
-            isActive('/tasks')
+            isActive('/') || isActive('/tasks')
               ? 'bg-cme-primary/10 text-cme-primary font-medium'
               : 'text-cme-text-base hover:bg-cme-bg-hover'
           }`}

@@ -20,6 +20,7 @@ export const LoginModal: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       queryClient.invalidateQueries({ queryKey: ['trash-items'] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      useUIStore.getState().setViewMode('read');
       setLoginModalOpen(false);
       setUsername('');
       setPassword('');
