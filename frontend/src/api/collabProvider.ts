@@ -1,7 +1,7 @@
 import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 
-export type CollabConnectionStatus = 'connecting' | 'connected' | 'disconnected';
+export type CollabConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'session-expired';
 
 export interface RemoteUser {
   id?: string;
@@ -135,7 +135,7 @@ export class CmeCollabProvider {
       this.ws.onclose = this.handleWsClose;
       this.ws.onerror = this.handleWsError;
     } catch {
-      this.scheduleReconnect();
+      this.handleWsClose();
     }
   }
 
@@ -288,9 +288,89 @@ export class CmeCollabProvider {
     }
   };
 
-  private handleWsClose = () => {
+  private isProbingSession = false;
+
+  private async probeAuthSession(): Promise<boolean> {
+    if (typeof window === 'undefined' || typeof fetch === 'undefined') return true;
+    try {
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (this.token) {
+        headers['Authorization'] = `Bearer ${this.token}`;
+      }
+      const res = await fetch('/api/v1/auth/me', {
+        headers,
+        credentials: 'same-origin',
+      });
+      // If redirected, returned non-200, 401, or non-JSON HTML (SSO login screen)
+      if (res.redirected || res.status === 401 || !res.ok) {
+        return false;
+      }
+      const cType = res.headers.get('content-type') || '';
+      if (!cType.includes('application/json')) {
+        return false;
+      }
+      const json = await res.json();
+      return Boolean(json && json.user);
+    } catch {
+      return false;
+    }
+  }
+
+  private handleSessionExpired() {
+    this.setStatus('session-expired');
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
+    if (typeof window === 'undefined') return;
+
+    const RELOAD_KEY = 'cme_last_session_reload';
+    const now = Date.now();
+    const storage = typeof sessionStorage !== 'undefined' ? sessionStorage : null;
+    const lastReload = parseInt(storage?.getItem(RELOAD_KEY) || '0', 10);
+    // Rate limit: at most once per 30 seconds
+    if (now - lastReload < 30000) {
+      return;
+    }
+
+    const triggerReload = () => {
+      storage?.setItem(RELOAD_KEY, Date.now().toString());
+      if (typeof window !== 'undefined' && window.location && typeof window.location.reload === 'function') {
+        window.location.reload();
+      }
+    };
+
+    if (typeof document !== 'undefined' && document.hidden) {
+      // Tab is in the background; reload once the user returns to the tab
+      const onVisibilityChange = () => {
+        if (!document.hidden) {
+          document.removeEventListener('visibilitychange', onVisibilityChange);
+          triggerReload();
+        }
+      };
+      document.addEventListener('visibilitychange', onVisibilityChange);
+    } else {
+      // Tab is currently active/visible, reload immediately
+      triggerReload();
+    }
+  }
+
+  private handleWsClose = async () => {
     this.setStatus('disconnected');
     this.stopPingHeartbeat();
+
+    // After a disconnect / failed reconnect, probe GET /api/v1/auth/me to check if SSO proxy session expired
+    if (!this.isProbingSession && this.shouldConnect) {
+      this.isProbingSession = true;
+      const isValid = await this.probeAuthSession();
+      this.isProbingSession = false;
+      if (!isValid) {
+        this.handleSessionExpired();
+        return;
+      }
+    }
+
     this.scheduleReconnect();
   };
 

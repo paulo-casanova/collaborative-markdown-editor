@@ -116,6 +116,35 @@ void test_missing_env_var() {
     std::cout << "[PASS] test_missing_env_var\n";
 }
 
+void test_paths_with_spaces_and_parentheses() {
+    config::SnippetsConfig cfg;
+    cfg.allowed_hosts = {"raw.githubusercontent.com", "mygit.com"};
+    cfg.endpoints["mg"] = config::SnippetEndpointConfig{
+        .url = "https://mygit.com/${PATH}",
+        .curl_args = ""
+    };
+
+    SnippetFetcher fetcher(cfg);
+    std::string err;
+
+    // Named endpoint with spaces and parentheses: "Foo (TODO).md"
+    auto r1 = fetcher.resolve_source("mg/docs/Foo (TODO).md", &err);
+    assert(r1.has_value());
+    assert(r1.value().target_url == "https://mygit.com/docs/Foo%20%28TODO%29.md");
+
+    // Named endpoint with spaces, parens, and query string
+    auto r2 = fetcher.resolve_source("mg/src/Bar (Final) Version.cpp?ref=v2.0&tag=my tag", &err);
+    assert(r2.has_value());
+    assert(r2.value().target_url == "https://mygit.com/src/Bar%20%28Final%29%20Version.cpp?ref=v2.0&tag=my%20tag");
+
+    // Direct URL with spaces and parentheses
+    auto r3 = fetcher.resolve_source("https://raw.githubusercontent.com/user/repo/main/Foo (TODO).md", &err);
+    assert(r3.has_value());
+    assert(r3.value().target_url == "https://raw.githubusercontent.com/user/repo/main/Foo%20%28TODO%29.md");
+
+    std::cout << "[PASS] test_paths_with_spaces_and_parentheses\n";
+}
+
 int main() {
     std::cout << "Starting Snippet Fetcher Unit Tests...\n";
     test_tokenize_args();
@@ -123,6 +152,7 @@ int main() {
     test_env_substitution();
     test_host_allowlist_and_endpoints();
     test_missing_env_var();
+    test_paths_with_spaces_and_parentheses();
     std::cout << "All Snippet Fetcher Unit Tests PASSED!\n";
     return 0;
 }

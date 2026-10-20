@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { BreadcrumbItem } from '../types/document';
 
-export type SyncStatus = 'saved' | 'syncing' | 'offline' | 'live';
+export type SyncStatus = 'saved' | 'syncing' | 'offline' | 'live' | 'expired';
 export type ViewMode = 'edit' | 'read';
 
 interface UIState {

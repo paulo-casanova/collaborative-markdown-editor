@@ -10,6 +10,7 @@ import {
   Rows2,
   Maximize2,
   Copy,
+  Link2,
   ChevronRight,
 } from 'lucide-react';
 import { useWorkspaceStore, WorkspaceTab } from '../../stores/workspaceStore';
@@ -313,6 +314,21 @@ export const TabBar: React.FC = () => {
             <Copy className="w-3.5 h-3.5 text-sky-500" />
             <span>Copy Document Path</span>
           </button>
+
+          {contextMenu.tab.id && !contextMenu.tab.id.startsWith('dir:') && (
+            <button
+              onClick={() => {
+                const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                navigator.clipboard?.writeText(`${origin}/documents/${contextMenu.tab.id}`);
+                setContextMenu(null);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"
+              data-testid="tab-copy-permalink-btn"
+            >
+              <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+              <span>Copy Permalink</span>
+            </button>
+          )}
         </div>
       )}
     </div>

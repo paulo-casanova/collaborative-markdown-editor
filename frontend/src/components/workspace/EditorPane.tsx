@@ -13,6 +13,8 @@ import {
   Edit2,
   Shield,
   RefreshCw,
+  Link2,
+  Check,
 } from 'lucide-react';
 import { fetchDocument, moveDocument, updateDocument, convertDocument } from '../../api/documents';
 import { DocumentRecord } from '../../types/document';
@@ -55,6 +57,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const [cursorLine, setCursorLine] = useState<number>(1);
   const [showAssets, setShowAssets] = useState<boolean>(false);
   const [showAcl, setShowAcl] = useState<boolean>(false);
+  const [copiedPermalink, setCopiedPermalink] = useState<boolean>(false);
 
   useEffect(() => {
     setLiveContent(undefined);
@@ -306,6 +309,15 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     enabled: Boolean(documentId && documentId !== 'by-path'),
   });
 
+  const handleCopyPermalink = useCallback(() => {
+    if (document?.id) {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      navigator.clipboard?.writeText(`${origin}/documents/${document.id}`);
+      setCopiedPermalink(true);
+      setTimeout(() => setCopiedPermalink(false), 2000);
+    }
+  }, [document?.id]);
+
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState('');
 
@@ -411,6 +423,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
           setSyncStatus('live');
         } else if (status === 'connecting') {
           setSyncStatus('syncing');
+        } else if (status === 'session-expired') {
+          setSyncStatus('expired');
         } else {
           setSyncStatus('offline');
         }
@@ -592,6 +606,25 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             >
               <Shield className="w-3.5 h-3.5 text-blue-500" />
               <span className="hidden sm:inline">Access</span>
+            </button>
+
+            <button
+              onClick={handleCopyPermalink}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title="Copy Permalink to Document"
+              data-testid="editor-copy-permalink-btn"
+            >
+              {copiedPermalink ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-500" />
+                  <span className="hidden sm:inline text-emerald-600 dark:text-emerald-400">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+                  <span className="hidden sm:inline">Permalink</span>
+                </>
+              )}
             </button>
 
             <Link

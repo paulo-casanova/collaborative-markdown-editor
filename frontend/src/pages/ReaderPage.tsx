@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Copy,
   Check,
+  Link2,
   Trash2,
   Pencil,
 } from 'lucide-react';
@@ -139,6 +140,16 @@ export const ReaderPage: React.FC = () => {
   const [isSubmittingReply, setIsSubmittingReply] = useState<Record<string, boolean>>({});
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editingCommentText, setEditingCommentText] = useState('');
+  const [copiedPermalink, setCopiedPermalink] = useState<boolean>(false);
+
+  const handleCopyPermalink = useCallback(() => {
+    if (document?.id) {
+      const origin = typeof window !== 'undefined' ? window.location.origin : '';
+      navigator.clipboard?.writeText(`${origin}/documents/${document.id}`);
+      setCopiedPermalink(true);
+      setTimeout(() => setCopiedPermalink(false), 2000);
+    }
+  }, [document?.id]);
 
   const handleEditComment = async (commentId: string) => {
     const text = editingCommentText.trim();
@@ -434,6 +445,26 @@ export const ReaderPage: React.FC = () => {
             >
               <MessageSquare className="w-3.5 h-3.5" />
               <span>Reviews: {showReviews ? 'ON' : 'OFF'}</span>
+            </button>
+
+            {/* Copy Permalink */}
+            <button
+              onClick={handleCopyPermalink}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title="Copy Permalink to Document"
+              data-testid="reader-copy-permalink-btn"
+            >
+              {copiedPermalink ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-500" />
+                  <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Permalink</span>
+                </>
+              )}
             </button>
 
             {/* Switch to Edit Mode */}

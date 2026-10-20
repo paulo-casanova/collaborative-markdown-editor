@@ -19,6 +19,7 @@ import {
   MoreVertical,
   Shield,
   Download,
+  Link2,
 } from 'lucide-react';
 import {
   fetchWorkspaceTree,
@@ -1029,6 +1030,20 @@ export const FileTree: React.FC = () => {
                 <Edit2 className="w-3.5 h-3.5 text-sky-500" />
                 <span>Rename</span>
               </button>
+              {contextMenu.node.id && (
+                <button
+                  data-testid="filetree-copy-permalink-btn"
+                  onClick={() => {
+                    const origin = typeof window !== 'undefined' ? window.location.origin : '';
+                    navigator.clipboard?.writeText(`${origin}/documents/${contextMenu.node.id}`);
+                    setContextMenu(null);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"
+                >
+                  <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>Copy Permalink</span>
+                </button>
+              )}
               {contextMenu.node.id && (
                 <button
                   data-testid="filetree-convert-btn"

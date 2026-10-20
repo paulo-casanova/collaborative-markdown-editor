@@ -30,6 +30,8 @@ export const App: React.FC = () => {
             <Route index element={<HomePage />} />
             <Route path="documents/by-path" element={<EditorPage />} />
             <Route path="documents/:id" element={<EditorPage />} />
+            <Route path="doc/:id" element={<EditorPage />} />
+            <Route path="d/:id" element={<EditorPage />} />
             <Route path="docs/by-path" element={<ReaderPage />} />
             <Route path="docs/:id" element={<ReaderPage />} />
             <Route path="docs/*" element={<ReaderPage />} />

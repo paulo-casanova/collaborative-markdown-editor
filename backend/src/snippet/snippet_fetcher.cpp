@@ -206,6 +206,59 @@ Result<std::string> SnippetFetcher::substitute_env_vars(
     return result;
 }
 
+static std::string encode_url_path(const std::string& path) {
+    std::string result;
+    result.reserve(path.size() * 3 / 2);
+    for (size_t i = 0; i < path.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(path[i]);
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+            result.push_back(static_cast<char>(c));
+        } else if (c == '%' && i + 2 < path.size() &&
+                   std::isxdigit(static_cast<unsigned char>(path[i+1])) &&
+                   std::isxdigit(static_cast<unsigned char>(path[i+2]))) {
+            // Already percent-encoded
+            result.push_back('%');
+            result.push_back(path[i+1]);
+            result.push_back(path[i+2]);
+            i += 2;
+        } else {
+            // Percent-encode character (e.g. spaces as %20, '(' as %28, ')' as %29)
+            std::ostringstream ss;
+            ss << '%' << std::uppercase << std::hex;
+            ss.width(2);
+            ss.fill('0');
+            ss << static_cast<int>(c);
+            result.append(ss.str());
+        }
+    }
+    return result;
+}
+
+static std::string sanitize_url(const std::string& url) {
+    size_t scheme_end = url.find("://");
+    if (scheme_end == std::string::npos) return url;
+    size_t path_start = url.find('/', scheme_end + 3);
+    if (path_start == std::string::npos) return url;
+
+    std::string prefix = url.substr(0, path_start);
+    std::string path_and_query = url.substr(path_start);
+
+    size_t qmark = path_and_query.find('?');
+    std::string path_part = (qmark != std::string::npos) ? path_and_query.substr(0, qmark) : path_and_query;
+    std::string query_part = (qmark != std::string::npos) ? path_and_query.substr(qmark) : "";
+
+    std::string encoded_path = encode_url_path(path_part);
+    std::string encoded_query;
+    for (char c : query_part) {
+        if (c == ' ') encoded_query += "%20";
+        else if (c == '(') encoded_query += "%28";
+        else if (c == ')') encoded_query += "%29";
+        else encoded_query.push_back(c);
+    }
+
+    return prefix + encoded_path + encoded_query;
+}
+
 Result<ResolvedSnippetRequest> SnippetFetcher::resolve_source(
     const std::string& source,
     std::string* error_msg_out
@@ -225,25 +278,43 @@ Result<ResolvedSnippetRequest> SnippetFetcher::resolve_source(
         const auto& ep = ep_it->second;
         std::string raw_url = ep.url;
 
-        // 1. Replace ${PATH} with path_part
+        // Re-encode path part (handling spaces as %20, parentheses as %28/%29, etc.)
+        std::string encoded_path;
+        size_t qmark = path_part.find('?');
+        if (qmark != std::string::npos) {
+            std::string p_sub = path_part.substr(0, qmark);
+            std::string q_sub = path_part.substr(qmark);
+            std::string encoded_query;
+            for (char c : q_sub) {
+                if (c == ' ') encoded_query += "%20";
+                else if (c == '(') encoded_query += "%28";
+                else if (c == ')') encoded_query += "%29";
+                else encoded_query.push_back(c);
+            }
+            encoded_path = encode_url_path(p_sub) + encoded_query;
+        } else {
+            encoded_path = encode_url_path(path_part);
+        }
+
+        // 1. Replace ${PATH} with encoded_path
         size_t path_placeholder = raw_url.find("${PATH}");
         if (path_placeholder != std::string::npos) {
             std::string before = raw_url.substr(0, path_placeholder);
             std::string after = raw_url.substr(path_placeholder + 7);
 
-            // If path_part already has query parameters (contains '?'),
+            // If encoded_path already has query parameters (contains '?'),
             // replace any leading '?' in the 'after' template with '&' to prevent double '?'
-            if (path_part.find('?') != std::string::npos && !after.empty() && after[0] == '?') {
+            if (encoded_path.find('?') != std::string::npos && !after.empty() && after[0] == '?') {
                 after[0] = '&';
             }
-            raw_url = before + path_part + after;
+            raw_url = before + encoded_path + after;
         } else {
-            // No ${PATH} explicitly in template; append path_part
-            if (!path_part.empty()) {
+            // No ${PATH} explicitly in template; append encoded_path
+            if (!encoded_path.empty()) {
                 if (raw_url.ends_with("/")) {
-                    raw_url += path_part;
+                    raw_url += encoded_path;
                 } else {
-                    raw_url += "/" + path_part;
+                    raw_url += "/" + encoded_path;
                 }
             }
         }
@@ -291,7 +362,8 @@ Result<ResolvedSnippetRequest> SnippetFetcher::resolve_source(
 
     // Direct HTTP/HTTPS URL
     if (source.starts_with("http://") || source.starts_with("https://")) {
-        std::string host = extract_host_from_url(source);
+        std::string sanitized = sanitize_url(source);
+        std::string host = extract_host_from_url(sanitized);
         if (!is_host_allowed(host)) {
             std::string err = "Host '" + host + "' is not in the allowed hosts list for snippet fetching";
             if (error_msg_out) *error_msg_out = err;
@@ -299,7 +371,7 @@ Result<ResolvedSnippetRequest> SnippetFetcher::resolve_source(
         }
 
         std::string missing_var;
-        auto sub_url_res = substitute_env_vars(source, &missing_var);
+        auto sub_url_res = substitute_env_vars(sanitized, &missing_var);
         if (!sub_url_res.has_value()) {
             std::string err = "Environment variable '" + missing_var + "' is not set in URL";
             if (error_msg_out) *error_msg_out = err;
@@ -358,6 +430,7 @@ CommandResult SnippetFetcher::execute_curl(
 
         std::vector<std::string> all_args = {
             "curl",
+            "-g",
             "-s",
             "-S",
             "-L",

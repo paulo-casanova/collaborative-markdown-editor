@@ -44,6 +44,16 @@ export const Header: React.FC = () => {
             <span>Offline</span>
           </span>
         );
+      case 'expired':
+        return (
+          <span
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20"
+            data-testid="session-expired-badge"
+          >
+            <RefreshCw className="w-3 h-3 animate-spin" />
+            <span>Session expired - reconnecting...</span>
+          </span>
+        );
       case 'saved':
       default:
         return (
