@@ -27,7 +27,12 @@ public:
     [[nodiscard]] const std::string& lease_name() const { return lease_name_; }
     [[nodiscard]] bool is_held() const { return is_held_.load(); }
 
-    Result<bool> acquire();
+    Result<bool> acquire(bool log_warning = true);
+    Result<bool> acquire_or_wait(
+        int retry_interval_seconds = 1,
+        int timeout_seconds = 0,
+        std::function<bool()> stop_check = nullptr
+    );
     Result<bool> renew();
     void release();
 
@@ -43,6 +48,7 @@ private:
 
     std::atomic<bool> is_held_{false};
     std::atomic<bool> running_{false};
+    std::atomic<bool> stop_requested_{false};
     std::thread heartbeat_thread_;
     std::mutex cv_mtx_;
     std::condition_variable cv_;

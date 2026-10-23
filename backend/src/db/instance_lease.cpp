@@ -32,7 +32,7 @@ InstanceLeaseManager::~InstanceLeaseManager() {
     stop();
 }
 
-Result<bool> InstanceLeaseManager::acquire() {
+Result<bool> InstanceLeaseManager::acquire(bool log_warning) {
     if (!pool_) {
         return std::unexpected(ErrorCode::DatabaseError);
     }
@@ -84,25 +84,100 @@ Result<bool> InstanceLeaseManager::acquire() {
         }
 
         // Another active instance holds the lease
-        auto cur_res = tx.exec_params(
-            "SELECT holder_id, expires_at FROM instance_lease WHERE lease_name = $1;",
-            lease_name_
-        );
-        tx.commit();
+        if (log_warning) {
+            auto cur_res = tx.exec_params(
+                "SELECT holder_id, expires_at FROM instance_lease WHERE lease_name = $1;",
+                lease_name_
+            );
+            tx.commit();
 
-        if (!cur_res.empty()) {
-            std::string active_holder = cur_res[0]["holder_id"].c_str();
-            std::string expires_at = cur_res[0]["expires_at"].c_str();
-            std::cerr << "[WARN] Cannot acquire instance lease '" << lease_name_
-                      << "': active lease held by '" << active_holder
-                      << "' (expires at " << expires_at << ").\n";
+            if (!cur_res.empty()) {
+                std::string active_holder = cur_res[0]["holder_id"].c_str();
+                std::string expires_at = cur_res[0]["expires_at"].c_str();
+                std::cerr << "[WARN] Cannot acquire instance lease '" << lease_name_
+                          << "': active lease held by '" << active_holder
+                          << "' (expires at " << expires_at << ").\n";
+            }
+        } else {
+            tx.commit();
         }
 
         is_held_ = false;
         return false;
     } catch (const std::exception& e) {
-        std::cerr << "[ERROR] Exception during instance lease acquisition: " << e.what() << "\n";
+        if (log_warning) {
+            std::cerr << "[ERROR] Exception during instance lease acquisition: " << e.what() << "\n";
+        }
         return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<bool> InstanceLeaseManager::acquire_or_wait(
+    int retry_interval_seconds,
+    int timeout_seconds,
+    std::function<bool()> stop_check
+) {
+    if (retry_interval_seconds <= 0) {
+        retry_interval_seconds = 1;
+    }
+
+    auto start_time = std::chrono::steady_clock::now();
+    bool first_attempt = true;
+    auto last_log_time = start_time;
+
+    while (true) {
+        if (stop_requested_ || (stop_check && stop_check())) {
+            std::cout << "[INFO] Instance lease acquisition wait aborted (shutdown requested).\n";
+            return false;
+        }
+
+        if (timeout_seconds > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - start_time
+            ).count();
+            if (elapsed >= timeout_seconds) {
+                std::cerr << "[WARN] Timed out waiting for instance lease '" << lease_name_
+                          << "' after " << elapsed << "s.\n";
+                return false;
+            }
+        }
+
+        // Try to acquire the lease. On first attempt, let acquire() log warning if held.
+        auto acq_res = acquire(first_attempt);
+        if (acq_res.has_value() && acq_res.value()) {
+            if (!first_attempt) {
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - start_time
+                ).count();
+                std::cout << "[INFO] Successfully acquired instance lease '" << lease_name_
+                          << "' after waiting " << elapsed << "s.\n";
+            }
+            return true;
+        }
+
+        if (first_attempt) {
+            std::cout << "[INFO] Instance lease '" << lease_name_
+                      << "' is currently held. Waiting for lease to become available...\n";
+            first_attempt = false;
+        } else {
+            auto now = std::chrono::steady_clock::now();
+            auto since_last_log = std::chrono::duration_cast<std::chrono::seconds>(
+                now - last_log_time
+            ).count();
+            if (since_last_log >= 10) {
+                auto total_elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    now - start_time
+                ).count();
+                std::cout << "[INFO] Still waiting for instance lease '" << lease_name_
+                          << "' (elapsed: " << total_elapsed << "s)...\n";
+                last_log_time = now;
+            }
+        }
+
+        std::unique_lock<std::mutex> lock(cv_mtx_);
+        cv_.wait_for(lock, std::chrono::seconds(retry_interval_seconds), [this, &stop_check]() {
+            return stop_requested_.load() || (stop_check && stop_check());
+        });
     }
 }
 
@@ -204,8 +279,12 @@ void InstanceLeaseManager::start_heartbeat(std::function<void()> on_lease_lost) 
 }
 
 void InstanceLeaseManager::stop() {
-    if (running_.exchange(false)) {
+    stop_requested_ = true;
+    {
+        std::lock_guard<std::mutex> lock(cv_mtx_);
         cv_.notify_all();
+    }
+    if (running_.exchange(false)) {
         if (heartbeat_thread_.joinable()) {
             heartbeat_thread_.join();
         }

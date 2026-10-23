@@ -87,8 +87,66 @@ int main() {
     m2.stop();
     assert(!m2.is_held());
 
+    // Step 6b: Test acquire_or_wait with timeout, stop cancellation, and successful handoff
+    std::cout << "[STEP 6b] Testing acquire_or_wait mechanics...\n";
+    {
+        db::InstanceLeaseManager hold_m(pool, test_lease_name, 5, 1);
+        auto hold_acq = hold_m.acquire();
+        assert(hold_acq.has_value() && hold_acq.value() == true);
+
+        // Subtest 1: Timeout waiting for lease
+        db::InstanceLeaseManager wait_m1(pool, test_lease_name, 5, 1);
+        auto t0 = std::chrono::steady_clock::now();
+        auto wait_res1 = wait_m1.acquire_or_wait(1, 2); // 2s timeout
+        auto wait_duration = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - t0
+        ).count();
+        assert(wait_res1.has_value() && wait_res1.value() == false);
+        assert(!wait_m1.is_held());
+        assert(wait_duration >= 2);
+        std::cout << "  - acquire_or_wait timed out after " << wait_duration << "s as expected.\n";
+
+        // Subtest 2: Successful handoff via acquire_or_wait
+        db::InstanceLeaseManager wait_m2(pool, test_lease_name, 5, 1);
+        std::atomic<bool> wait_m2_acquired{false};
+        std::thread wait_thread([&wait_m2, &wait_m2_acquired]() {
+            auto res = wait_m2.acquire_or_wait(1, 10);
+            if (res.has_value() && res.value()) {
+                wait_m2_acquired = true;
+            }
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        assert(!wait_m2_acquired);
+        // Release holding lease
+        hold_m.stop();
+
+        wait_thread.join();
+        assert(wait_m2_acquired);
+        assert(wait_m2.is_held());
+        std::cout << "  - acquire_or_wait successfully acquired lease when released.\n";
+
+        // Subtest 3: Immediate stop cancellation while waiting
+        db::InstanceLeaseManager wait_m3(pool, test_lease_name, 5, 1);
+        std::atomic<bool> wait_m3_finished{false};
+        std::thread cancel_thread([&wait_m3, &wait_m3_finished]() {
+            auto res = wait_m3.acquire_or_wait(1, 30);
+            assert(res.has_value() && res.value() == false);
+            wait_m3_finished = true;
+        });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        wait_m3.stop(); // Stop while waiting
+        cancel_thread.join();
+        assert(wait_m3_finished);
+        assert(!wait_m3.is_held());
+        std::cout << "  - acquire_or_wait canceled immediately on stop().\n";
+
+        wait_m2.stop();
+    }
+
     // Step 7: Server daemon integration test
-    std::cout << "[STEP 7] Testing Server daemon multi-instance mutual exclusion...\n";
+    std::cout << "[STEP 7] Testing Server daemon multi-instance mutual exclusion and standby waiting...\n";
     config::AppConfig srv_cfg1;
     srv_cfg1.server.bind = "127.0.0.1";
     srv_cfg1.server.port = 18096;
@@ -97,6 +155,8 @@ int main() {
     srv_cfg1.database.lease_enabled = true;
     srv_cfg1.database.lease_ttl_seconds = 5;
     srv_cfg1.database.lease_renew_interval_seconds = 1;
+    srv_cfg1.database.lease_wait = true;
+    srv_cfg1.database.lease_retry_interval_seconds = 1;
     srv_cfg1.storage.backend = "posix";
     srv_cfg1.storage.root_path = "/tmp/cme_lease_test_storage";
     std::filesystem::create_directories(srv_cfg1.storage.root_path);
@@ -113,36 +173,78 @@ int main() {
     assert(health1["instance_lease"]["held"] == true);
     std::cout << "  - Server 1 started and holds instance lease.\n";
 
-    // Attempt to start server2 with same lease name
-    config::AppConfig srv_cfg2 = srv_cfg1;
-    srv_cfg2.server.port = 18097;
-    auto server2 = std::make_shared<server::Server>(srv_cfg2);
-    auto s2_res = server2->start();
-    assert(!s2_res.has_value());
-    assert(s2_res.error() == ErrorCode::PermissionDenied);
-    std::cout << "  - Server 2 start rejected with PermissionDenied (lease conflict prevented split-brain).\n";
+    // Part A: Server 2 with lease_wait = false fails immediately with PermissionDenied
+    {
+        config::AppConfig srv_cfg_nowait = srv_cfg1;
+        srv_cfg_nowait.server.port = 18097;
+        srv_cfg_nowait.database.lease_wait = false;
+        auto server_nowait = std::make_shared<server::Server>(srv_cfg_nowait);
+        auto s_res = server_nowait->start();
+        assert(!s_res.has_value());
+        assert(s_res.error() == ErrorCode::PermissionDenied);
+        std::cout << "  - Server with lease_wait=false rejected immediately with PermissionDenied.\n";
+    }
 
-    // Gracefully stop server1
+    // Part B: Server 2 with lease_wait = true waits for lease and automatically starts when Server 1 stops
+    config::AppConfig srv_cfg2 = srv_cfg1;
+    srv_cfg2.server.port = 18098;
+    srv_cfg2.database.lease_wait = true;
+    srv_cfg2.database.lease_retry_interval_seconds = 1;
+    auto server2 = std::make_shared<server::Server>(srv_cfg2);
+
+    std::atomic<bool> s2_running{false};
+    std::thread s2_thread([server2, &s2_running]() {
+        s2_running = true;
+        server2->start();
+        s2_running = false;
+    });
+
+    // Wait 500ms: Server 2 should be running in thread but waiting for lease (not yet held)
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    assert(s2_running.load() == true);
+    assert(server2->lease_manager() == nullptr || !server2->lease_manager()->is_held());
+    std::cout << "  - Server 2 started and is waiting for lease.\n";
+
+    // Stop server 1 (releases lease)
     server1->stop();
     if (s1_thread.joinable()) {
         s1_thread.join();
     }
     std::cout << "  - Server 1 stopped and released lease.\n";
 
-    // Now server2 can start
-    std::thread s2_thread([server2]() {
-        server2->start();
-    });
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    // Server 2 should now acquire lease and finish starting up
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
     auto health2 = server2->get_health_status();
     assert(health2.contains("instance_lease"));
     assert(health2["instance_lease"]["held"] == true);
-    std::cout << "  - Server 2 successfully started after server 1 was stopped.\n";
+    std::cout << "  - Server 2 successfully acquired lease and completed startup.\n";
+
+    // Part C: Server 3 starts, waits for lease held by Server 2, and cleanly aborts on stop()
+    config::AppConfig srv_cfg3 = srv_cfg1;
+    srv_cfg3.server.port = 18099;
+    srv_cfg3.database.lease_wait = true;
+    srv_cfg3.database.lease_retry_interval_seconds = 1;
+    auto server3 = std::make_shared<server::Server>(srv_cfg3);
+
+    std::thread s3_thread([server3]() {
+        auto res = server3->start();
+        assert(res.has_value()); // Clean exit with code 0 on stop
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    assert(server3->lease_manager() == nullptr || !server3->lease_manager()->is_held());
+    std::cout << "  - Server 3 is waiting for lease.\n";
+
+    // Gracefully stop server 3 while waiting
+    server3->stop();
+    s3_thread.join();
+    std::cout << "  - Server 3 gracefully cancelled startup when stop() was called.\n";
 
     server2->stop();
     if (s2_thread.joinable()) {
         s2_thread.join();
     }
+    std::cout << "  - Server 2 stopped and released lease.\n";
 
     std::filesystem::remove_all(srv_cfg1.storage.root_path);
 

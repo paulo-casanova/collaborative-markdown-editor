@@ -49,6 +49,9 @@ struct DatabaseConfig {
     std::string lease_name{"cme_server"};
     int lease_ttl_seconds{10};
     int lease_renew_interval_seconds{3};
+    bool lease_wait{true};                         // If true, server waits for lease on startup instead of failing immediately
+    int lease_retry_interval_seconds{1};           // Polling interval in seconds while waiting for lease
+    int lease_acquire_timeout_seconds{0};          // Maximum wait time in seconds (0 = wait indefinitely)
 };
 
 struct AuthNConfig {

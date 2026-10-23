@@ -37,6 +37,9 @@ void apply_env_overrides(AppConfig& cfg) {
     if (const char* v = std::getenv("CME_DATABASE_LEASE_NAME")) cfg.database.lease_name = v;
     if (const char* v = std::getenv("CME_DATABASE_LEASE_TTL_SECONDS")) cfg.database.lease_ttl_seconds = std::stoi(v);
     if (const char* v = std::getenv("CME_DATABASE_LEASE_RENEW_INTERVAL_SECONDS")) cfg.database.lease_renew_interval_seconds = std::stoi(v);
+    if (const char* v = std::getenv("CME_DATABASE_LEASE_WAIT")) cfg.database.lease_wait = (std::string(v) == "true" || std::string(v) == "1");
+    if (const char* v = std::getenv("CME_DATABASE_LEASE_RETRY_INTERVAL_SECONDS")) cfg.database.lease_retry_interval_seconds = std::stoi(v);
+    if (const char* v = std::getenv("CME_DATABASE_LEASE_ACQUIRE_TIMEOUT_SECONDS")) cfg.database.lease_acquire_timeout_seconds = std::stoi(v);
     if (const char* v = std::getenv("CME_AUTHN_PROVIDER")) cfg.authn.provider = v;
     if (const char* v = std::getenv("CME_AUTHN_DELEGATED_HEADER")) cfg.authn.delegated_header = v;
     if (const char* v = std::getenv("CME_AUTHN_PROXY_SECRET_HEADER")) cfg.authn.proxy_secret_header = v;
@@ -150,6 +153,9 @@ void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
         if (db["lease_name"]) cfg.database.lease_name = db["lease_name"].as<std::string>();
         if (db["lease_ttl_seconds"]) cfg.database.lease_ttl_seconds = db["lease_ttl_seconds"].as<int>();
         if (db["lease_renew_interval_seconds"]) cfg.database.lease_renew_interval_seconds = db["lease_renew_interval_seconds"].as<int>();
+        if (db["lease_wait"]) cfg.database.lease_wait = db["lease_wait"].as<bool>();
+        if (db["lease_retry_interval_seconds"]) cfg.database.lease_retry_interval_seconds = db["lease_retry_interval_seconds"].as<int>();
+        if (db["lease_acquire_timeout_seconds"]) cfg.database.lease_acquire_timeout_seconds = db["lease_acquire_timeout_seconds"].as<int>();
     }
 
     if (root["authn"]) {

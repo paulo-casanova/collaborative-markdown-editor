@@ -19,6 +19,13 @@ database:
   url: "postgresql://cme:secret@localhost:5432/cme_test"
   pool_size: 8
   connect_timeout_seconds: 5
+  lease_enabled: true
+  lease_name: "cme_server"
+  lease_ttl_seconds: 10
+  lease_renew_interval_seconds: 3
+  lease_wait: true
+  lease_retry_interval_seconds: 1
+  lease_acquire_timeout_seconds: 0 # 0 = wait indefinitely until acquired or stopped
 
 authn:
   provider: "delegated"

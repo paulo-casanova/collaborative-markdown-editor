@@ -279,7 +279,7 @@ Result<void> Server::start() {
                   << " (server will start in degraded mode)\n";
     }
 
-    // 2.1 Enforce Single-Instance Lease (Issue #8)
+    // 2.1 Enforce Single-Instance Lease (Issue #8 & Standby Wait)
     if (config_.database.lease_enabled && db_pool_) {
         lease_manager_ = std::make_shared<db::InstanceLeaseManager>(
             db_pool_,
@@ -287,11 +287,27 @@ Result<void> Server::start() {
             config_.database.lease_ttl_seconds,
             config_.database.lease_renew_interval_seconds
         );
-        auto lease_res = lease_manager_->acquire();
+
+        Result<bool> lease_res;
+        if (config_.database.lease_wait) {
+            lease_res = lease_manager_->acquire_or_wait(
+                config_.database.lease_retry_interval_seconds,
+                config_.database.lease_acquire_timeout_seconds,
+                [this]() { return !is_running_.load(); }
+            );
+        } else {
+            lease_res = lease_manager_->acquire();
+        }
+
         if (!lease_res.has_value() || !lease_res.value()) {
+            if (!is_running_) {
+                std::cout << "[INFO] Server startup cancelled before lease was acquired.\n";
+                return {};
+            }
             std::cerr << "[FATAL] Failed to acquire instance lease: another CME instance is currently running.\n";
             return std::unexpected(ErrorCode::PermissionDenied);
         }
+
         lease_manager_->start_heartbeat([this]() {
             std::cerr << "[FATAL] Lost instance lease! Shutting down server to prevent split-brain.\n";
             this->stop();
