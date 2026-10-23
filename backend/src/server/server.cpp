@@ -265,6 +265,12 @@ Result<void> Server::start() {
     }
     storage_ = *storage_res;
     std::cout << "[INFO] Storage backend ('" << config_.storage.backend << "') initialized.\n";
+    if (!config_.storage.mounts.empty()) {
+        std::cout << "[INFO] Configured " << config_.storage.mounts.size() << " storage mount(s):\n";
+        for (const auto& m : config_.storage.mounts) {
+            std::cout << "  - Prefix: '" << m.prefix << "' -> Host Path: " << m.path << "\n";
+        }
+    }
 
     // 2. Initialize Database Connection Pool
     try {

@@ -311,11 +311,25 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
     AppConfig cfg;
 
     // 1. Scan CLI for an explicit --config flag first
+    bool config_specified_explicitly = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
             cfg.config_file_path = argv[++i];
+            config_specified_explicitly = true;
             break;
+        }
+    }
+
+    // If no config file was explicitly specified, search for local config.yaml
+    if (!config_specified_explicitly) {
+        if (const char* env_cfg = std::getenv("CME_CONFIG_FILE")) {
+            cfg.config_file_path = env_cfg;
+            config_specified_explicitly = true;
+        } else if (std::filesystem::exists("config.yaml")) {
+            cfg.config_file_path = "config.yaml";
+        } else if (std::filesystem::exists("../config.yaml")) {
+            cfg.config_file_path = "../config.yaml";
         }
     }
 
@@ -324,9 +338,12 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
         try {
             YAML::Node root = YAML::LoadFile(cfg.config_file_path);
             parse_yaml_node(root, cfg);
+            std::cout << "[INFO] Loaded configuration from: " << cfg.config_file_path << "\n";
         } catch (const std::exception& e) {
             std::cerr << "[WARN] Failed to load config file: " << cfg.config_file_path << " (" << e.what() << ")\n";
         }
+    } else if (config_specified_explicitly) {
+        std::cerr << "[WARN] Specified configuration file not found: " << cfg.config_file_path << "\n";
     }
 
     // 3. Apply Environment Variable Overrides
