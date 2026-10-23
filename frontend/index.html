@@ -2,11 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/png" href="/cme-icon-light.png" id="cme-favicon" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Collaborative Markdown Editor (CME)</title>
 
-    <!-- FOUC Prevention Script -->
+    <!-- FOUC & Theme Initialization Script -->
     <script>
       (function () {
         try {
@@ -20,6 +20,10 @@
             document.documentElement.classList.add('dark');
           } else {
             document.documentElement.classList.remove('dark');
+          }
+          var favicon = document.getElementById('cme-favicon');
+          if (favicon) {
+            favicon.href = resolved === 'dark' ? '/cme-icon-dark.png' : '/cme-icon-light.png';
           }
         } catch (e) {}
       })();

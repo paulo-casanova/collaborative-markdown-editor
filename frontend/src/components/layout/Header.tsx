@@ -80,13 +80,29 @@ export const Header: React.FC = () => {
         </button>
 
         {/* CME Brand */}
-        <Link to="/" className="flex items-center gap-2 flex-shrink-0 group">
-          <div className="w-7 h-7 rounded-lg bg-cme-primary text-white flex items-center justify-center font-bold text-sm shadow-sm group-hover:opacity-90 transition-opacity">
-            M↓
-          </div>
-          <span className="font-bold text-sm tracking-tight text-cme-text-base hidden md:inline">
-            CME
-          </span>
+        <Link to="/" className="flex items-center gap-2 flex-shrink-0 group" title="Collaborative Markdown Editor">
+          {/* Full CME Logo with Dark/Light theme switching for medium+ screens */}
+          <img
+            src="/cme-light.png"
+            alt="CME"
+            className="h-7 w-auto object-contain group-hover:opacity-90 transition-opacity dark:hidden hidden sm:block"
+          />
+          <img
+            src="/cme-dark.png"
+            alt="CME"
+            className="h-7 w-auto object-contain group-hover:opacity-90 transition-opacity hidden dark:sm:block"
+          />
+          {/* Square CME Icon Mark for small mobile screens */}
+          <img
+            src="/cme-icon-light.png"
+            alt="CME"
+            className="w-7 h-7 object-contain group-hover:opacity-90 transition-opacity sm:hidden dark:hidden"
+          />
+          <img
+            src="/cme-icon-dark.png"
+            alt="CME"
+            className="w-7 h-7 object-contain group-hover:opacity-90 transition-opacity sm:hidden hidden dark:block dark:sm:hidden"
+          />
         </Link>
 
         <div className="h-4 w-[1px] bg-cme-border-base mx-1 hidden sm:block" />

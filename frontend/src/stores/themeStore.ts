@@ -35,6 +35,11 @@ function applyDomTheme(resolved: ResolvedTheme) {
   } else {
     root.classList.remove('dark');
   }
+
+  const favicon = document.getElementById('cme-favicon') as HTMLLinkElement | null;
+  if (favicon) {
+    favicon.href = resolved === 'dark' ? '/cme-icon-dark.png' : '/cme-icon-light.png';
+  }
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => {

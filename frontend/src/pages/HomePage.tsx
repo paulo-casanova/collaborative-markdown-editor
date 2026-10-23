@@ -6,7 +6,6 @@ import {
   BookOpen,
   Shield,
   Layers,
-  Sparkles,
   Zap,
   Users,
 } from 'lucide-react';
@@ -39,10 +38,9 @@ export const HomePage: React.FC = () => {
       {/* Hero Welcome Banner */}
       <div className="p-6 md:p-8 rounded-2xl bg-gradient-to-r from-cme-primary/10 via-cme-bg-subtle to-cme-accent/10 border border-cme-border-base relative overflow-hidden">
         <div className="relative z-10 space-y-3">
-          <div className="flex items-center gap-2">
-            <span className="p-1.5 rounded-lg bg-cme-primary text-white">
-              <Sparkles className="w-4 h-4" />
-            </span>
+          <div className="flex items-center gap-2.5">
+            <img src="/cme-icon-light.png" alt="CME" className="w-6 h-6 object-contain dark:hidden" />
+            <img src="/cme-icon-dark.png" alt="CME" className="w-6 h-6 object-contain hidden dark:block" />
             <span className="text-xs font-semibold uppercase tracking-wider text-cme-primary">
               Real-Time Collaboration Platform
             </span>
