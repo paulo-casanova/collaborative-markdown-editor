@@ -8,7 +8,7 @@ namespace cme::storage {
 Result<std::shared_ptr<IStorageBackend>> create_storage_backend(const config::StorageConfig& config) {
     if (config.backend.empty() || config.backend == "posix") {
         try {
-            return std::make_shared<PosixStorageBackend>(config.root_path);
+            return std::make_shared<PosixStorageBackend>(config.root_path, config.mounts);
         } catch (const std::exception& e) {
             std::cerr << "[ERROR] Failed to initialize PosixStorageBackend at: "
                       << config.root_path << " (" << e.what() << ")\n";

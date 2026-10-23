@@ -14,6 +14,16 @@ storage:
   root_path: "/var/lib/cme/storage"
   trash_retention_days: 30
   snapshot_interval_seconds: 300
+  # Optional explicit directory mounts mapping workspace virtual prefixes to host folders:
+  # mounts:
+  #   - prefix: "notes"
+  #     path: "/home/pasc/paulo.casanova@gmail.com/Diary/Obsidian/Threads"
+  #   - prefix: "specs"
+  #     path: "/var/data/specs"
+  # Or key-value mapping format:
+  # mounts:
+  #   notes: "/home/pasc/paulo.casanova@gmail.com/Diary/Obsidian/Threads"
+  #   specs: "/var/data/specs"
 
 database:
   url: "postgresql://cme:secret@localhost:5432/cme_test"

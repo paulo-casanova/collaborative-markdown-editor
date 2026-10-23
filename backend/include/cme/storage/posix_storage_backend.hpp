@@ -6,8 +6,10 @@
 #pragma once
 
 #include "cme/storage/storage_backend.hpp"
+#include "cme/config/config.hpp"
 #include <filesystem>
 #include <mutex>
+#include <vector>
 
 namespace cme::storage {
 
@@ -30,8 +32,12 @@ public:
      * Automatically creates `content/`, `trash/`, `snapshots/`, and `backups/` if missing.
      * 
      * @param root_path Filesystem directory path for storage root.
+     * @param mounts Optional additional directory mounts mapped to workspace prefixes.
      */
-    explicit PosixStorageBackend(std::filesystem::path root_path);
+    explicit PosixStorageBackend(
+        std::filesystem::path root_path,
+        std::vector<config::StorageMountConfig> mounts = {}
+    );
 
     ~PosixStorageBackend() override = default;
 
@@ -122,7 +128,24 @@ public:
      */
     [[nodiscard]] const std::filesystem::path& backups_root() const noexcept { return backups_root_; }
 
+    /**
+     * @brief Access configured multi-mounts.
+     */
+    [[nodiscard]] const std::vector<config::StorageMountConfig>& mounts() const noexcept { return configured_mounts_; }
+
 private:
+    struct ResolvedMount {
+        std::string prefix;
+        std::filesystem::path path;
+    };
+
+    struct ResolvedWorkspacePath {
+        std::filesystem::path physical_path;
+        std::filesystem::path base_root;
+        std::string mount_prefix;
+        bool is_mount{false};
+    };
+
     std::filesystem::path root_path_;
     std::filesystem::path content_root_;
     std::filesystem::path trash_root_;
@@ -130,10 +153,17 @@ private:
     std::filesystem::path backups_root_;
     std::filesystem::path crdt_root_;
 
+    std::vector<config::StorageMountConfig> configured_mounts_;
+    std::vector<ResolvedMount> resolved_mounts_;
+
     mutable std::mutex mutex_;
 
     [[nodiscard]] Result<std::filesystem::path> resolve_safe_path(
         const std::filesystem::path& base_dir,
+        const std::string& relative_path
+    ) const;
+
+    [[nodiscard]] Result<ResolvedWorkspacePath> resolve_workspace_path(
         const std::string& relative_path
     ) const;
 

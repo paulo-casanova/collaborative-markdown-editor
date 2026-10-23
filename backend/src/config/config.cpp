@@ -26,6 +26,29 @@ void apply_env_overrides(AppConfig& cfg) {
     }
     if (const char* v = std::getenv("CME_STORAGE_BACKEND")) cfg.storage.backend = v;
     if (const char* v = std::getenv("CME_STORAGE_ROOT_PATH")) cfg.storage.root_path = v;
+    if (const char* v = std::getenv("CME_STORAGE_MOUNTS")) {
+        cfg.storage.mounts.clear();
+        std::string list_str(v);
+        std::stringstream ss(list_str);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+            while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+            auto eq = item.find('=');
+            if (eq != std::string::npos) {
+                StorageMountConfig m;
+                m.prefix = item.substr(0, eq);
+                m.path = item.substr(eq + 1);
+                while (!m.prefix.empty() && std::isspace(static_cast<unsigned char>(m.prefix.front()))) m.prefix.erase(m.prefix.begin());
+                while (!m.prefix.empty() && std::isspace(static_cast<unsigned char>(m.prefix.back()))) m.prefix.pop_back();
+                while (!m.path.empty() && std::isspace(static_cast<unsigned char>(m.path.front()))) m.path.erase(m.path.begin());
+                while (!m.path.empty() && std::isspace(static_cast<unsigned char>(m.path.back()))) m.path.pop_back();
+                if (!m.prefix.empty() && !m.path.empty()) {
+                    cfg.storage.mounts.push_back(m);
+                }
+            }
+        }
+    }
     if (const char* v = std::getenv("CME_STORAGE_S3_BUCKET")) cfg.storage.s3_bucket = v;
     if (const char* v = std::getenv("CME_STORAGE_S3_REGION")) cfg.storage.s3_region = v;
     if (const char* v = std::getenv("CME_STORAGE_S3_ENDPOINT")) cfg.storage.s3_endpoint = v;
@@ -133,6 +156,30 @@ void parse_yaml_node(const YAML::Node& root, AppConfig& cfg) {
         auto st = root["storage"];
         if (st["backend"]) cfg.storage.backend = st["backend"].as<std::string>();
         if (st["root_path"]) cfg.storage.root_path = st["root_path"].as<std::string>();
+        if (st["mounts"]) {
+            cfg.storage.mounts.clear();
+            if (st["mounts"].IsSequence()) {
+                for (const auto& m_node : st["mounts"]) {
+                    if (m_node.IsMap()) {
+                        StorageMountConfig m;
+                        if (m_node["prefix"]) m.prefix = m_node["prefix"].as<std::string>();
+                        if (m_node["path"]) m.path = m_node["path"].as<std::string>();
+                        if (!m.prefix.empty() && !m.path.empty()) {
+                            cfg.storage.mounts.push_back(m);
+                        }
+                    }
+                }
+            } else if (st["mounts"].IsMap()) {
+                for (auto it = st["mounts"].begin(); it != st["mounts"].end(); ++it) {
+                    StorageMountConfig m;
+                    m.prefix = it->first.as<std::string>();
+                    m.path = it->second.as<std::string>();
+                    if (!m.prefix.empty() && !m.path.empty()) {
+                        cfg.storage.mounts.push_back(m);
+                    }
+                }
+            }
+        }
         if (st["trash_retention_days"]) cfg.storage.trash_retention_days = st["trash_retention_days"].as<int>();
         if (st["snapshot_interval_seconds"]) cfg.storage.snapshot_interval_seconds = st["snapshot_interval_seconds"].as<int>();
         if (st["s3_bucket"]) cfg.storage.s3_bucket = st["s3_bucket"].as<std::string>();
@@ -286,6 +333,7 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
     apply_env_overrides(cfg);
 
     // 4. Apply Command Line Arguments (Highest Precedence)
+    bool cli_mounts_cleared = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if ((arg == "--config" || arg == "-c") && i + 1 < argc) {
@@ -299,6 +347,31 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
             cfg.storage.root_path = argv[++i];
         } else if (arg == "--storage-backend" && i + 1 < argc) {
             cfg.storage.backend = argv[++i];
+        } else if ((arg == "--mount" || arg == "--mounts") && i + 1 < argc) {
+            if (!cli_mounts_cleared) {
+                cfg.storage.mounts.clear();
+                cli_mounts_cleared = true;
+            }
+            std::string list_str(argv[++i]);
+            std::stringstream ss(list_str);
+            std::string item;
+            while (std::getline(ss, item, ',')) {
+                while (!item.empty() && std::isspace(static_cast<unsigned char>(item.front()))) item.erase(item.begin());
+                while (!item.empty() && std::isspace(static_cast<unsigned char>(item.back()))) item.pop_back();
+                auto eq = item.find('=');
+                if (eq != std::string::npos) {
+                    StorageMountConfig m;
+                    m.prefix = item.substr(0, eq);
+                    m.path = item.substr(eq + 1);
+                    while (!m.prefix.empty() && std::isspace(static_cast<unsigned char>(m.prefix.front()))) m.prefix.erase(m.prefix.begin());
+                    while (!m.prefix.empty() && std::isspace(static_cast<unsigned char>(m.prefix.back()))) m.prefix.pop_back();
+                    while (!m.path.empty() && std::isspace(static_cast<unsigned char>(m.path.front()))) m.path.erase(m.path.begin());
+                    while (!m.path.empty() && std::isspace(static_cast<unsigned char>(m.path.back()))) m.path.pop_back();
+                    if (!m.prefix.empty() && !m.path.empty()) {
+                        cfg.storage.mounts.push_back(m);
+                    }
+                }
+            }
         } else if (arg == "--s3-bucket" && i + 1 < argc) {
             cfg.storage.s3_bucket = argv[++i];
         } else if (arg == "--s3-endpoint" && i + 1 < argc) {

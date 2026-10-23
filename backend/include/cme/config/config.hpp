@@ -25,11 +25,17 @@ struct ServerConfig {
     std::vector<std::string> cors_allowed_origins{}; // Empty by default = CORS disabled
 };
 
+struct StorageMountConfig {
+    std::string prefix{""}; // Workspace virtual path prefix, e.g. "specs", "notes"
+    std::string path{""};   // Host filesystem target path, e.g. "/var/data/specs"
+};
+
 struct StorageConfig {
     std::string backend{"posix"}; // "posix", "s3"
     std::string root_path{"/var/lib/cme/storage"};
     int trash_retention_days{30};
     int snapshot_interval_seconds{300};
+    std::vector<StorageMountConfig> mounts{}; // Additional explicit host filesystem directory mounts
 
     // S3 / Object Storage configuration
     std::string s3_bucket{""};

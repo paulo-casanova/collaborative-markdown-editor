@@ -187,6 +187,141 @@ int main() {
     assert(!factory_inv.has_value());
     assert(factory_inv.error() == cme::ErrorCode::InvalidArgument);
 
+    // 9. Multi-Mount Virtual Routing, CRUD, Listings, Cross-Mount Moves, and Trash
+    std::cout << "[TEST] 9. Multi-Mount Virtual Routing, CRUD, Listings, Cross-Mount Moves, and Trash...\n";
+    std::filesystem::path mount_specs = std::filesystem::temp_directory_path() / "cme_sal_mount_specs";
+    std::filesystem::path mount_notes = std::filesystem::temp_directory_path() / "cme_sal_mount_notes";
+    std::filesystem::remove_all(mount_specs);
+    std::filesystem::remove_all(mount_notes);
+
+    std::vector<cme::config::StorageMountConfig> mounts = {
+        {"specs", mount_specs.string()},
+        {"notes", mount_notes.string()}
+    };
+
+    PosixStorageBackend mm_backend(test_root / "multi_mount", mounts);
+
+    // Verify configured mounts accessor
+    assert(mm_backend.mounts().size() == 2);
+    assert(std::filesystem::exists(mount_specs));
+    assert(std::filesystem::exists(mount_notes));
+
+    // A. Write to mount and verify physical host path
+    auto mw_res = mm_backend.write_file("specs/arch.md", "# Architecture Spec\nDistributed layout.");
+    assert(mw_res.has_value());
+    assert(std::filesystem::exists(mount_specs / "arch.md"));
+    assert(!std::filesystem::exists(mm_backend.content_root() / "specs" / "arch.md"));
+
+    // B. Read from mount
+    auto mr_res = mm_backend.read_file("specs/arch.md");
+    assert(mr_res.has_value());
+    assert(*mr_res == "# Architecture Spec\nDistributed layout.");
+
+    // C. Write to second mount
+    auto nw_res = mm_backend.write_file("notes/meeting.md", "Team notes for Friday.");
+    assert(nw_res.has_value());
+    assert(std::filesystem::exists(mount_notes / "meeting.md"));
+    assert(*mm_backend.read_file("notes/meeting.md") == "Team notes for Friday.");
+
+    // D. Write to default storage
+    auto dw_res = mm_backend.write_file("default.md", "Default root content.");
+    assert(dw_res.has_value());
+    assert(std::filesystem::exists(mm_backend.content_root() / "default.md"));
+
+    // E. Directory listings
+    // Flat listing at root "" must include mounts and default files
+    auto mm_root_flat = mm_backend.list_directory("", false);
+    assert(mm_root_flat.has_value());
+    bool found_specs = false;
+    bool found_notes = false;
+    bool found_default = false;
+    for (const auto& item : *mm_root_flat) {
+        if (item.relative_path == "specs") {
+            found_specs = true;
+            assert(item.is_directory);
+        }
+        if (item.relative_path == "notes") {
+            found_notes = true;
+            assert(item.is_directory);
+        }
+        if (item.relative_path == "default.md") {
+            found_default = true;
+            assert(!item.is_directory);
+        }
+    }
+    assert(found_specs && found_notes && found_default);
+
+    // Sub-mount listing
+    auto mm_specs_flat = mm_backend.list_directory("specs", false);
+    assert(mm_specs_flat.has_value());
+    assert(mm_specs_flat->size() == 1);
+    assert(mm_specs_flat->front().name == "arch.md");
+    assert(mm_specs_flat->front().relative_path == "specs/arch.md");
+
+    // Recursive listing at root
+    auto mm_root_rec = mm_backend.list_directory("", true);
+    assert(mm_root_rec.has_value());
+    bool found_specs_arch = false;
+    bool found_notes_meeting = false;
+    for (const auto& item : *mm_root_rec) {
+        if (item.relative_path == "specs/arch.md") found_specs_arch = true;
+        if (item.relative_path == "notes/meeting.md") found_notes_meeting = true;
+    }
+    assert(found_specs_arch && found_notes_meeting);
+
+    // F. Bundle detection in mount
+    mm_backend.create_directory("specs/bundle.bundle");
+    mm_backend.write_file("specs/bundle.bundle/index.md", "# Bundle");
+    assert(*mm_backend.is_bundle("specs/bundle.bundle"));
+
+    // G. Cross-mount moving
+    // Move from default storage to mount "specs"
+    auto move_to_mount = mm_backend.move_node("default.md", "specs/imported_default.md");
+    assert(move_to_mount.has_value());
+    assert(!*mm_backend.exists("default.md"));
+    assert(*mm_backend.exists("specs/imported_default.md"));
+    assert(std::filesystem::exists(mount_specs / "imported_default.md"));
+    assert(*mm_backend.read_file("specs/imported_default.md") == "Default root content.");
+
+    // Move between two mounts ("specs" -> "notes")
+    auto move_cross_mount = mm_backend.move_node("specs/imported_default.md", "notes/final_doc.md");
+    assert(move_cross_mount.has_value());
+    assert(!*mm_backend.exists("specs/imported_default.md"));
+    assert(*mm_backend.exists("notes/final_doc.md"));
+    assert(std::filesystem::exists(mount_notes / "final_doc.md"));
+    assert(*mm_backend.read_file("notes/final_doc.md") == "Default root content.");
+
+    // H. Soft-delete from mount to trash & restore
+    auto trash_res_mm = mm_backend.delete_to_trash("notes/final_doc.md");
+    assert(trash_res_mm.has_value());
+    assert(!*mm_backend.exists("notes/final_doc.md"));
+    assert(!std::filesystem::exists(mount_notes / "final_doc.md"));
+
+    auto restore_res_mm = mm_backend.restore_from_trash(*trash_res_mm, "notes/restored_doc.md");
+    assert(restore_res_mm.has_value());
+    assert(*mm_backend.exists("notes/restored_doc.md"));
+    assert(std::filesystem::exists(mount_notes / "restored_doc.md"));
+    assert(*mm_backend.read_file("notes/restored_doc.md") == "Default root content.");
+
+    // Clean up mount sandboxes
+    std::filesystem::remove_all(mount_specs);
+    std::filesystem::remove_all(mount_notes);
+
+    // 10. CLI & Config Multi-Mount Parsing Test
+    std::cout << "[TEST] 10. CLI & Config Multi-Mount Parsing Test...\n";
+    const char* mock_argv[] = {
+        "cme-server",
+        "--mount", "wiki=/tmp/cme_wiki",
+        "--mounts", "specs=/tmp/cme_specs,notes=/tmp/cme_notes"
+    };
+    int mock_argc = sizeof(mock_argv) / sizeof(mock_argv[0]);
+    auto cli_cfg = cme::config::AppConfig::load(mock_argc, const_cast<char**>(mock_argv));
+    assert(cli_cfg.has_value());
+    assert(cli_cfg->storage.mounts.size() == 3);
+    assert(cli_cfg->storage.mounts[0].prefix == "wiki" && cli_cfg->storage.mounts[0].path == "/tmp/cme_wiki");
+    assert(cli_cfg->storage.mounts[1].prefix == "specs" && cli_cfg->storage.mounts[1].path == "/tmp/cme_specs");
+    assert(cli_cfg->storage.mounts[2].prefix == "notes" && cli_cfg->storage.mounts[2].path == "/tmp/cme_notes");
+
     // Clean up test sandbox
     std::filesystem::remove_all(test_root);
 
