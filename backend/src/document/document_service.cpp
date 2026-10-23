@@ -266,11 +266,12 @@ Result<DocumentRecord> DocumentService::create_document(
     // Check directory permission
     std::filesystem::path fp(norm_path);
     std::string parent_dir = fp.parent_path().string();
+    if (parent_dir == ".") parent_dir = "";
     auto access_res = check_access(user, "", parent_dir);
     if (!access_res.has_value()) {
         return std::unexpected(access_res.error());
     }
-    if (access_res.value() < db::AccessLevel::Edit && !parent_dir.empty()) {
+    if (access_res.value() < db::AccessLevel::Edit) {
         return std::unexpected(ErrorCode::PermissionDenied);
     }
 
@@ -365,11 +366,12 @@ Result<std::string> DocumentService::create_directory(
 
     std::filesystem::path fp(norm_path);
     std::string parent_dir = fp.parent_path().string();
+    if (parent_dir == ".") parent_dir = "";
     auto access_res = check_access(user, "", parent_dir);
     if (!access_res.has_value()) {
         return std::unexpected(access_res.error());
     }
-    if (access_res.value() < db::AccessLevel::Edit && !parent_dir.empty()) {
+    if (access_res.value() < db::AccessLevel::Edit) {
         return std::unexpected(ErrorCode::PermissionDenied);
     }
 
@@ -462,11 +464,10 @@ Result<std::string> DocumentService::rename_directory(
 
     std::filesystem::path fp_new(norm_new);
     std::string new_parent = fp_new.parent_path().string();
-    if (!new_parent.empty()) {
-        auto access_new = check_access(user, "", new_parent);
-        if (!access_new.has_value() || access_new.value() < db::AccessLevel::Edit) {
-            return std::unexpected(ErrorCode::PermissionDenied);
-        }
+    if (new_parent == ".") new_parent = "";
+    auto access_new = check_access(user, "", new_parent);
+    if (!access_new.has_value() || access_new.value() < db::AccessLevel::Edit) {
+        return std::unexpected(ErrorCode::PermissionDenied);
     }
 
     // Perform storage move
@@ -1152,11 +1153,10 @@ Result<DocumentRecord> DocumentService::move_document(
         // Check permission on destination directory
         std::filesystem::path fp(norm_new_path);
         std::string dest_dir = fp.parent_path().string();
+        if (dest_dir == ".") dest_dir = "";
         auto access_new = check_access(user, "", dest_dir);
         if (!access_new.has_value() || access_new.value() < db::AccessLevel::Edit) {
-            if (!dest_dir.empty()) {
-                return std::unexpected(ErrorCode::PermissionDenied);
-            }
+            return std::unexpected(ErrorCode::PermissionDenied);
         }
 
         // Move in storage
@@ -1541,11 +1541,10 @@ Result<DocumentRecord> DocumentService::upload_workspace_file(
     // Check permission on path or parent directory
     std::filesystem::path fp(clean_path);
     std::string parent_dir = fp.parent_path().string();
+    if (parent_dir == ".") parent_dir = "";
     auto access_res = check_access(user, "", parent_dir);
     if (!access_res.has_value() || access_res.value() < db::AccessLevel::Edit) {
-        if (!parent_dir.empty()) {
-            return std::unexpected(ErrorCode::PermissionDenied);
-        }
+        return std::unexpected(ErrorCode::PermissionDenied);
     }
 
     auto write_res = storage_->write_file(clean_path, data, true);
@@ -2842,39 +2841,74 @@ Result<nlohmann::json> DocumentService::set_node_permission(
         return std::unexpected(ErrorCode::InvalidArgument);
     }
 
+    std::string clean_grantee_type = grantee_type;
+    for (auto& c : clean_grantee_type) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    if (clean_grantee_type != "USER" && clean_grantee_type != "TEAM" && clean_grantee_type != "EVERYONE") {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+    if (clean_grantee_type != "EVERYONE" && grantee_id.empty()) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
     try {
         pqxx::work tx(conn_res->get());
         if (target_type == "DOCUMENT") {
-            tx.exec_params(
-                "DELETE FROM permissions WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid AND grantee_type = $2 AND grantee_id = $3::uuid",
-                target_id,
-                grantee_type,
-                grantee_id
-            );
-            tx.exec_params(
-                "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DOCUMENT', $1::uuid, $2, $3::uuid, $4, $5)",
-                target_id,
-                grantee_type,
-                grantee_id,
-                clean_lvl,
-                is_inheritable
-            );
+            if (clean_grantee_type == "EVERYONE") {
+                tx.exec_params(
+                    "DELETE FROM permissions WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid AND grantee_type = 'EVERYONE'",
+                    target_id
+                );
+                tx.exec_params(
+                    "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DOCUMENT', $1::uuid, 'EVERYONE', NULL, $2, $3)",
+                    target_id,
+                    clean_lvl,
+                    is_inheritable
+                );
+            } else {
+                tx.exec_params(
+                    "DELETE FROM permissions WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid AND grantee_type = $2 AND grantee_id = $3::uuid",
+                    target_id,
+                    clean_grantee_type,
+                    grantee_id
+                );
+                tx.exec_params(
+                    "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DOCUMENT', $1::uuid, $2, $3::uuid, $4, $5)",
+                    target_id,
+                    clean_grantee_type,
+                    grantee_id,
+                    clean_lvl,
+                    is_inheritable
+                );
+            }
         } else {
             std::string clean_dir = normalize_rel_path(dir_path);
-            tx.exec_params(
-                "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1 AND grantee_type = $2 AND grantee_id = $3::uuid",
-                clean_dir,
-                grantee_type,
-                grantee_id
-            );
-            tx.exec_params(
-                "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DIRECTORY', $1, $2, $3::uuid, $4, $5)",
-                clean_dir,
-                grantee_type,
-                grantee_id,
-                clean_lvl,
-                is_inheritable
-            );
+            if (clean_grantee_type == "EVERYONE") {
+                tx.exec_params(
+                    "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1 AND grantee_type = 'EVERYONE'",
+                    clean_dir
+                );
+                tx.exec_params(
+                    "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DIRECTORY', $1, 'EVERYONE', NULL, $2, $3)",
+                    clean_dir,
+                    clean_lvl,
+                    is_inheritable
+                );
+            } else {
+                tx.exec_params(
+                    "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1 AND grantee_type = $2 AND grantee_id = $3::uuid",
+                    clean_dir,
+                    clean_grantee_type,
+                    grantee_id
+                );
+                tx.exec_params(
+                    "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) VALUES ('DIRECTORY', $1, $2, $3::uuid, $4, $5)",
+                    clean_dir,
+                    clean_grantee_type,
+                    grantee_id,
+                    clean_lvl,
+                    is_inheritable
+                );
+            }
         }
         tx.commit();
         return get_node_permissions(target_type, target_id, dir_path, user);

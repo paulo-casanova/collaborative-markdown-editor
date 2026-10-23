@@ -4,6 +4,7 @@ import {
   ShieldCheck,
   User,
   Users,
+  Globe,
   Trash2,
   Plus,
   X,
@@ -42,7 +43,7 @@ export const AccessControlModal: React.FC<AccessControlModalProps> = ({
   const [activeTab, setActiveTab] = useState<'manage' | 'test'>('manage');
 
   // Management Form State
-  const [selectedGranteeType, setSelectedGranteeType] = useState<'USER' | 'TEAM'>('USER');
+  const [selectedGranteeType, setSelectedGranteeType] = useState<'USER' | 'TEAM' | 'EVERYONE'>('USER');
   const [selectedGranteeId, setSelectedGranteeId] = useState<string>('');
   const [selectedAccessLevel, setSelectedAccessLevel] = useState<'READ' | 'COMMENT' | 'EDIT' | 'ADMIN'>('READ');
   const [isInheritable, setIsInheritable] = useState<boolean>(true);
@@ -97,13 +98,13 @@ export const AccessControlModal: React.FC<AccessControlModalProps> = ({
   // Set permission mutation
   const setPermMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedGranteeId) return;
+      if (selectedGranteeType !== 'EVERYONE' && !selectedGranteeId) return;
       return setNodePermission({
         target_type: targetType,
         target_id: targetId,
         directory_path: directoryPath,
         grantee_type: selectedGranteeType,
-        grantee_id: selectedGranteeId,
+        grantee_id: selectedGranteeType === 'EVERYONE' ? '' : selectedGranteeId,
         access_level: selectedAccessLevel,
         is_inheritable: targetType === 'DIRECTORY' ? isInheritable : true,
       });
@@ -344,6 +345,7 @@ export const AccessControlModal: React.FC<AccessControlModalProps> = ({
                             ? 'bg-blue-500 text-white'
                             : 'text-cme-text-muted hover:text-cme-text-base'
                         }`}
+                        data-testid="grantee-type-user-btn"
                       >
                         User
                       </button>
@@ -358,30 +360,56 @@ export const AccessControlModal: React.FC<AccessControlModalProps> = ({
                             ? 'bg-blue-500 text-white'
                             : 'text-cme-text-muted hover:text-cme-text-base'
                         }`}
+                        data-testid="grantee-type-team-btn"
                       >
                         Team
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedGranteeType('EVERYONE');
+                          setSelectedGranteeId('');
+                        }}
+                        className={`px-3 py-1.5 transition-colors ${
+                          selectedGranteeType === 'EVERYONE'
+                            ? 'bg-blue-500 text-white'
+                            : 'text-cme-text-muted hover:text-cme-text-base'
+                        }`}
+                        data-testid="grantee-type-everyone-btn"
+                      >
+                        Everyone
+                      </button>
                     </div>
 
-                    <select
-                      value={selectedGranteeId}
-                      onChange={(e) => setSelectedGranteeId(e.target.value)}
-                      className="flex-1 min-w-[160px] px-3 py-1.5 text-xs rounded-lg bg-cme-bg-surface border border-cme-border-base text-cme-text-base"
-                      data-testid="grantee-select"
-                    >
-                      <option value="">Select {selectedGranteeType === 'USER' ? 'User' : 'Team'}...</option>
-                      {selectedGranteeType === 'USER'
-                        ? principals?.users.map((u) => (
-                            <option key={u.id} value={u.id}>
-                              {u.display_name} (@{u.username})
-                            </option>
-                          ))
-                        : principals?.teams.map((t) => (
-                            <option key={t.id} value={t.id}>
-                              Team: {t.name}
-                            </option>
-                          ))}
-                    </select>
+                    {selectedGranteeType === 'EVERYONE' ? (
+                      <div
+                        className="flex-1 min-w-[160px] px-3 py-1.5 text-xs rounded-lg bg-cme-bg-surface border border-cme-border-base text-cme-text-muted flex items-center gap-1.5"
+                        data-testid="grantee-everyone-badge"
+                      >
+                        <Globe className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                        <span className="font-medium text-cme-text-base">All Authenticated Users</span>
+                      </div>
+                    ) : (
+                      <select
+                        value={selectedGranteeId}
+                        onChange={(e) => setSelectedGranteeId(e.target.value)}
+                        className="flex-1 min-w-[160px] px-3 py-1.5 text-xs rounded-lg bg-cme-bg-surface border border-cme-border-base text-cme-text-base"
+                        data-testid="grantee-select"
+                      >
+                        <option value="">Select {selectedGranteeType === 'USER' ? 'User' : 'Team'}...</option>
+                        {selectedGranteeType === 'USER'
+                          ? principals?.users.map((u) => (
+                              <option key={u.id} value={u.id}>
+                                {u.display_name} (@{u.username})
+                              </option>
+                            ))
+                          : principals?.teams.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                Team: {t.name}
+                              </option>
+                            ))}
+                      </select>
+                    )}
 
                     <select
                       value={selectedAccessLevel}
@@ -397,7 +425,7 @@ export const AccessControlModal: React.FC<AccessControlModalProps> = ({
 
                     <button
                       onClick={() => setPermMutation.mutate()}
-                      disabled={!selectedGranteeId || setPermMutation.isPending}
+                      disabled={(selectedGranteeType !== 'EVERYONE' && !selectedGranteeId) || setPermMutation.isPending}
                       className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50 transition-colors shadow-xs"
                       data-testid="add-permission-btn"
                     >
@@ -445,7 +473,9 @@ export const AccessControlModal: React.FC<AccessControlModalProps> = ({
                         data-testid={`explicit-grant-${grant.id}`}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          {grant.grantee_type === 'TEAM' ? (
+                          {grant.grantee_type === 'EVERYONE' ? (
+                            <Globe className="w-4 h-4 text-purple-500 shrink-0" />
+                          ) : grant.grantee_type === 'TEAM' ? (
                             <Users className="w-4 h-4 text-indigo-500 shrink-0" />
                           ) : (
                             <User className="w-4 h-4 text-emerald-500 shrink-0" />
@@ -524,7 +554,9 @@ export const AccessControlModal: React.FC<AccessControlModalProps> = ({
                         data-testid={`inherited-grant-${grant.id}`}
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          {grant.grantee_type === 'TEAM' ? (
+                          {grant.grantee_type === 'EVERYONE' ? (
+                            <Globe className="w-4 h-4 text-purple-400 shrink-0" />
+                          ) : grant.grantee_type === 'TEAM' ? (
                             <Users className="w-4 h-4 text-indigo-400 shrink-0" />
                           ) : (
                             <User className="w-4 h-4 text-emerald-400 shrink-0" />

@@ -925,6 +925,20 @@ export const FileTree: React.FC = () => {
             <Upload className="w-3.5 h-3.5" />
           </button>
           <button
+            onClick={() =>
+              setAclTarget({
+                targetType: 'DIRECTORY',
+                directoryPath: '',
+                title: 'Workspace Root',
+              })
+            }
+            className="p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+            title="Workspace Permissions"
+            data-testid="filetree-root-permissions-btn"
+          >
+            <Shield className="w-3.5 h-3.5 text-blue-500" />
+          </button>
+          <button
             onClick={() => refetch()}
             disabled={isRefetching}
             className={`p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors ${

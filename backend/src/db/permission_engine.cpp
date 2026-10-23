@@ -142,7 +142,7 @@ Result<AccessLevel> PermissionEngine::check_permission(
 
             auto doc_acls = tx.exec_params(
                 R"(
-                SELECT grantee_type, grantee_id::text, access_level
+                SELECT grantee_type, COALESCE(grantee_id::text, ''), access_level
                 FROM permissions
                 WHERE target_type = 'DOCUMENT' AND target_id = $1::uuid
                 )",
@@ -158,12 +158,14 @@ Result<AccessLevel> PermissionEngine::check_permission(
                     merge_level(lvl);
                 } else if (grantee_type == "TEAM" && effective_teams.contains(grantee_id)) {
                     merge_level(lvl);
+                } else if (grantee_type == "EVERYONE") {
+                    merge_level(lvl);
                 }
             }
         }
 
         // 4. Directory Hierarchy (Additive Inheritance from node up to root)
-        if (!fs_path.empty()) {
+        if (!fs_path.empty() || document_id.empty()) {
             std::filesystem::path current_dir;
             bool is_direct_dir = false;
             if (!document_id.empty()) {
@@ -176,7 +178,9 @@ Result<AccessLevel> PermissionEngine::check_permission(
 
             while (true) {
                 std::string dir_str = current_dir.string();
-                if (dir_str == ".") dir_str = "";
+                if (dir_str == "." || dir_str == "/") dir_str = "";
+                while (!dir_str.empty() && (dir_str.front() == '/' || dir_str.front() == '\\')) dir_str.erase(0, 1);
+                while (!dir_str.empty() && (dir_str.back() == '/' || dir_str.back() == '\\')) dir_str.pop_back();
 
                 // Check directory ownership in directory_metadata
                 auto dir_meta = tx.exec_params(
@@ -194,7 +198,7 @@ Result<AccessLevel> PermissionEngine::check_permission(
 
                 auto dir_acls = tx.exec_params(
                     R"(
-                    SELECT grantee_type, grantee_id::text, access_level, is_inheritable
+                    SELECT grantee_type, COALESCE(grantee_id::text, ''), access_level, is_inheritable
                     FROM permissions
                     WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1
                     )",
@@ -214,6 +218,8 @@ Result<AccessLevel> PermissionEngine::check_permission(
                     if (grantee_type == "USER" && grantee_id == user_id) {
                         merge_level(lvl);
                     } else if (grantee_type == "TEAM" && effective_teams.contains(grantee_id)) {
+                        merge_level(lvl);
+                    } else if (grantee_type == "EVERYONE") {
                         merge_level(lvl);
                     }
                 }
@@ -307,8 +313,8 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
 
             auto acls = tx.exec_params(
                 R"(
-                SELECT p.id, p.grantee_type, p.grantee_id::text,
-                       COALESCE(u.display_name, u.username, t.name, 'Unknown'),
+                SELECT p.id, p.grantee_type, COALESCE(p.grantee_id::text, ''),
+                       CASE WHEN p.grantee_type = 'EVERYONE' THEN 'Everyone' ELSE COALESCE(u.display_name, u.username, t.name, 'Unknown') END,
                        p.access_level, p.is_inheritable
                 FROM permissions p
                 LEFT JOIN users u ON p.grantee_type = 'USER' AND p.grantee_id = u.id
@@ -363,8 +369,8 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
 
             auto acls = tx.exec_params(
                 R"(
-                SELECT p.id, p.grantee_type, p.grantee_id::text,
-                       COALESCE(u.display_name, u.username, t.name, 'Unknown'),
+                SELECT p.id, p.grantee_type, COALESCE(p.grantee_id::text, ''),
+                       CASE WHEN p.grantee_type = 'EVERYONE' THEN 'Everyone' ELSE COALESCE(u.display_name, u.username, t.name, 'Unknown') END,
                        p.access_level, p.is_inheritable
                 FROM permissions p
                 LEFT JOIN users u ON p.grantee_type = 'USER' AND p.grantee_id = u.id
@@ -396,8 +402,8 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
 
                 auto dir_acls = tx.exec_params(
                     R"(
-                    SELECT p.id, p.grantee_type, p.grantee_id::text,
-                           COALESCE(u.display_name, u.username, t.name, 'Unknown'),
+                    SELECT p.id, p.grantee_type, COALESCE(p.grantee_id::text, ''),
+                           CASE WHEN p.grantee_type = 'EVERYONE' THEN 'Everyone' ELSE COALESCE(u.display_name, u.username, t.name, 'Unknown') END,
                            p.access_level, p.is_inheritable
                     FROM permissions p
                     LEFT JOIN users u ON p.grantee_type = 'USER' AND p.grantee_id = u.id
@@ -438,7 +444,8 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
         }
         for (const auto& g : details.explicit_grants) {
             if ((g.grantee_type == "USER" && g.grantee_id == user_id) ||
-                (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id))) {
+                (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id)) ||
+                (g.grantee_type == "EVERYONE")) {
                 if (static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(eff_level)) {
                     eff_level = g.access_level;
                 }
@@ -446,7 +453,8 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
         }
         for (const auto& g : details.inherited_grants) {
             if ((g.grantee_type == "USER" && g.grantee_id == user_id) ||
-                (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id))) {
+                (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id)) ||
+                (g.grantee_type == "EVERYONE")) {
                 if (static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(eff_level)) {
                     eff_level = g.access_level;
                 }
@@ -620,8 +628,8 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
             // Explicit Document Grants
             auto acls = tx.exec_params(
                 R"(
-                SELECT p.id, p.grantee_type, p.grantee_id::text,
-                       COALESCE(u.display_name, u.username, t.name, 'Unknown'),
+                SELECT p.id, p.grantee_type, COALESCE(p.grantee_id::text, ''),
+                       CASE WHEN p.grantee_type = 'EVERYONE' THEN 'Everyone' ELSE COALESCE(u.display_name, u.username, t.name, 'Unknown') END,
                        p.access_level, p.is_inheritable
                 FROM permissions p
                 LEFT JOIN users u ON p.grantee_type = 'USER' AND p.grantee_id = u.id
@@ -638,7 +646,19 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                 AccessLevel lvl = parse_access_level(r[4].as<std::string>());
                 bool is_inh = r[5].as<bool>();
 
-                if (result.subject_type == "USER") {
+                if (g_type == "EVERYONE") {
+                    merge_effective(lvl);
+                    result.matched_rules.push_back({
+                        .source = "EXPLICIT_GRANT",
+                        .level = lvl,
+                        .grantee_type = "EVERYONE",
+                        .grantee_id = "",
+                        .grantee_name = "Everyone",
+                        .inherited_from = "",
+                        .is_inheritable = is_inh,
+                        .description = "Explicit grant to Everyone: " + std::string(to_string(lvl))
+                    });
+                } else if (result.subject_type == "USER") {
                     if (g_type == "USER" && g_id == subject_id) {
                         merge_effective(lvl);
                         result.matched_rules.push_back({
@@ -748,8 +768,8 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
             // Direct Directory Grants
             auto acls = tx.exec_params(
                 R"(
-                SELECT p.id, p.grantee_type, p.grantee_id::text,
-                       COALESCE(u.display_name, u.username, t.name, 'Unknown'),
+                SELECT p.id, p.grantee_type, COALESCE(p.grantee_id::text, ''),
+                       CASE WHEN p.grantee_type = 'EVERYONE' THEN 'Everyone' ELSE COALESCE(u.display_name, u.username, t.name, 'Unknown') END,
                        p.access_level, p.is_inheritable
                 FROM permissions p
                 LEFT JOIN users u ON p.grantee_type = 'USER' AND p.grantee_id = u.id
@@ -768,7 +788,19 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
 
                 std::string inh_str = is_inh ? " (inheritable to children)" : " (applies only to this directory)";
 
-                if (result.subject_type == "USER") {
+                if (g_type == "EVERYONE") {
+                    merge_effective(lvl);
+                    result.matched_rules.push_back({
+                        .source = "EXPLICIT_GRANT",
+                        .level = lvl,
+                        .grantee_type = "EVERYONE",
+                        .grantee_id = "",
+                        .grantee_name = "Everyone",
+                        .inherited_from = "",
+                        .is_inheritable = is_inh,
+                        .description = "Direct grant to Everyone: " + std::string(to_string(lvl)) + inh_str
+                    });
+                } else if (result.subject_type == "USER") {
                     if (g_type == "USER" && g_id == subject_id) {
                         merge_effective(lvl);
                         result.matched_rules.push_back({
@@ -821,8 +853,8 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
 
                 auto dir_acls = tx.exec_params(
                     R"(
-                    SELECT p.id, p.grantee_type, p.grantee_id::text,
-                           COALESCE(u.display_name, u.username, t.name, 'Unknown'),
+                    SELECT p.id, p.grantee_type, COALESCE(p.grantee_id::text, ''),
+                           CASE WHEN p.grantee_type = 'EVERYONE' THEN 'Everyone' ELSE COALESCE(u.display_name, u.username, t.name, 'Unknown') END,
                            p.access_level, p.is_inheritable
                     FROM permissions p
                     LEFT JOIN users u ON p.grantee_type = 'USER' AND p.grantee_id = u.id
@@ -840,7 +872,19 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                     AccessLevel lvl = parse_access_level(r[4].as<std::string>());
                     std::string from_str = dir_str.empty() ? "/" : dir_str;
 
-                    if (result.subject_type == "USER") {
+                    if (g_type == "EVERYONE") {
+                        merge_effective(lvl);
+                        result.matched_rules.push_back({
+                            .source = "INHERITED_GRANT",
+                            .level = lvl,
+                            .grantee_type = "EVERYONE",
+                            .grantee_id = "",
+                            .grantee_name = "Everyone",
+                            .inherited_from = from_str,
+                            .is_inheritable = true,
+                            .description = "Inherited from '" + from_str + "' via Everyone: " + std::string(to_string(lvl))
+                        });
+                    } else if (result.subject_type == "USER") {
                         if (g_type == "USER" && g_id == subject_id) {
                             merge_effective(lvl);
                             result.matched_rules.push_back({

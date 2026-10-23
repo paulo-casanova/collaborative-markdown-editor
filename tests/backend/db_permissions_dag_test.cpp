@@ -267,6 +267,106 @@ int main() {
         assert(test_team_res->effective_level == AccessLevel::Read);
         assert(!test_team_res->matched_rules.empty());
 
+        // Test I: Root Directory Permission Enforcement (Issue #15)
+        std::cout << "\n[TEST] Testing Root Directory Permission Enforcement...\n";
+        {
+            // By default, Charlie has no ACL on root "" -> NONE
+            auto perm_root_charlie = PermissionEngine::check_permission(conn, charlie_id, "", "");
+            assert(perm_root_charlie.has_value());
+            std::cout << "  - Charlie permission on root directory: " << to_string(*perm_root_charlie) << "\n";
+            assert(*perm_root_charlie == AccessLevel::None);
+
+            // Admin user bypasses ACLs -> ADMIN on root
+            auto perm_root_admin = PermissionEngine::check_permission(conn, admin_id, "", "");
+            assert(perm_root_admin.has_value());
+            std::cout << "  - Admin permission on root directory: " << to_string(*perm_root_admin) << "\n";
+            assert(*perm_root_admin == AccessLevel::Admin);
+        }
+
+        // Test J: Grant EVERYONE -> EDIT on Root Workspace (Issue #16 & #15)
+        std::cout << "\n[TEST] Testing EVERYONE ACL on root directory...\n";
+        int64_t root_perm_id = 0;
+        {
+            pqxx::work r_tx(conn);
+            auto r = r_tx.exec(
+                "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) "
+                "VALUES ('DIRECTORY', '', 'EVERYONE', NULL, 'EDIT', TRUE) RETURNING id;"
+            );
+            root_perm_id = r[0][0].as<int64_t>();
+            r_tx.commit();
+        }
+
+        {
+            // Now Charlie on root "" has EDIT via EVERYONE
+            auto perm_root_charlie = PermissionEngine::check_permission(conn, charlie_id, "", "");
+            assert(perm_root_charlie.has_value());
+            std::cout << "  - Charlie on root after EVERYONE grant: " << to_string(*perm_root_charlie) << "\n";
+            assert(*perm_root_charlie == AccessLevel::Edit);
+
+            // Verify get_permission_details on root directory
+            auto details_root = PermissionEngine::get_permission_details(conn, charlie_id, "DIRECTORY", "", "");
+            assert(details_root.has_value());
+            assert(details_root->effective_level == AccessLevel::Edit);
+            assert(!details_root->explicit_grants.empty());
+            bool found_everyone = false;
+            for (const auto& g : details_root->explicit_grants) {
+                if (g.grantee_type == "EVERYONE" && g.grantee_name == "Everyone") {
+                    found_everyone = true;
+                    assert(g.access_level == AccessLevel::Edit);
+                    assert(g.grantee_id.empty());
+                }
+            }
+            assert(found_everyone);
+            std::cout << "  - get_permission_details on root reports EVERYONE grant correctly.\n";
+
+            // Verify test_permission inspector for Charlie on root
+            auto test_root = PermissionEngine::test_permission(conn, "USER", charlie_id, "DIRECTORY", "", "");
+            assert(test_root.has_value());
+            assert(test_root->effective_level == AccessLevel::Edit);
+            bool found_rule = false;
+            for (const auto& rule : test_root->matched_rules) {
+                if (rule.grantee_type == "EVERYONE") {
+                    found_rule = true;
+                    assert(rule.level == AccessLevel::Edit);
+                }
+            }
+            assert(found_rule);
+            std::cout << "  - test_permission on root matched EVERYONE rule.\n";
+        }
+
+        // Test K: Document with explicit EVERYONE ACL
+        std::cout << "\n[TEST] Testing Document with explicit EVERYONE ACL...\n";
+        {
+            // Remove the root grant first
+            pqxx::work rm_tx(conn);
+            rm_tx.exec_params("DELETE FROM permissions WHERE id = $1;", root_perm_id);
+
+            // Create doc
+            auto r_ev = rm_tx.exec(
+                "INSERT INTO documents (fs_path, title) VALUES ('test/public_doc.md', 'Public Document') RETURNING id::text;"
+            );
+            std::string ev_doc_id = r_ev[0][0].as<std::string>();
+
+            // Grant EVERYONE COMMENT
+            rm_tx.exec_params(
+                "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level) "
+                "VALUES ('DOCUMENT', $1::uuid, 'EVERYONE', NULL, 'COMMENT');",
+                ev_doc_id
+            );
+            rm_tx.commit();
+
+            // Charlie should have COMMENT
+            auto perm_ev = PermissionEngine::check_permission(conn, charlie_id, ev_doc_id, "test/public_doc.md");
+            assert(perm_ev.has_value());
+            std::cout << "  - Charlie permission on public_doc.md: " << to_string(*perm_ev) << "\n";
+            assert(*perm_ev == AccessLevel::Comment);
+
+            // Charlie on root is still NONE
+            auto perm_root = PermissionEngine::check_permission(conn, charlie_id, "", "");
+            assert(perm_root.has_value());
+            assert(*perm_root == AccessLevel::None);
+        }
+
         std::cout << "\n[PASS] All db_permissions_dag_test test cases succeeded!\n";
 
         // Clean up test records

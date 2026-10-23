@@ -11,8 +11,8 @@ export interface SetPermissionPayload {
   target_type?: 'DOCUMENT' | 'DIRECTORY';
   target_id?: string;
   directory_path?: string;
-  grantee_type: 'USER' | 'TEAM';
-  grantee_id: string;
+  grantee_type: 'USER' | 'TEAM' | 'EVERYONE';
+  grantee_id?: string;
   access_level: 'READ' | 'COMMENT' | 'EDIT' | 'ADMIN';
   is_inheritable?: boolean;
 }

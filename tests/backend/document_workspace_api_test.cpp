@@ -96,7 +96,7 @@ int main() {
         pqxx::work tx(conn_res->get());
         tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%' OR fs_path LIKE 'Highway%';");
         tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
-        tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
+        tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%' OR COALESCE(directory_path, '') = '';");
         tx.exec("DELETE FROM users WHERE username = 'doc_author';");
         tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         std::string pw_hash = cme::auth::hash_password_bcrypt("pass123", 10);
@@ -231,6 +231,71 @@ int main() {
         auto not_found = doc_service.get_document_by_id(created_doc_id, author_user);
         assert(!not_found.has_value() && not_found.error() == cme::ErrorCode::NotFound);
         std::cout << "  - Soft-delete to trash and database purge verified.\n";
+
+        // 1.11 Root Permission Enforcement & EVERYONE ACL (Issues #15 & #16)
+        std::string regular_user_id;
+        {
+            auto conn_r = pool->acquire();
+            assert(conn_r.has_value());
+            pqxx::work u_tx(conn_r->get());
+            u_tx.exec("DELETE FROM documents WHERE fs_path = 'root_test_doc.md';");
+            u_tx.exec("DELETE FROM permissions WHERE COALESCE(directory_path, '') = '';");
+            u_tx.exec("DELETE FROM users WHERE username = 'regular_joe';");
+            std::string pw_hash = cme::auth::hash_password_bcrypt("pass123", 10);
+            auto r = u_tx.exec_params(
+                "INSERT INTO users (username, password_hash, display_name, is_system_admin) "
+                "VALUES ('regular_joe', $1, 'Regular Joe', FALSE) RETURNING id;",
+                pw_hash
+            );
+            regular_user_id = r[0][0].as<std::string>();
+            u_tx.commit();
+        }
+
+        cme::auth::UserIdentity regular_user{
+            .user_id = regular_user_id,
+            .username = "regular_joe",
+            .display_name = "Regular Joe",
+            .is_system_admin = false
+        };
+        // By default without root permissions, regular user cannot create at root
+        cme::document::CreateDocumentRequest root_doc_req{
+            .path = "root_test_doc.md",
+            .content = "# Root Doc",
+            .title = "Root Doc"
+        };
+        auto root_create_denied = doc_service.create_document(root_doc_req, regular_user);
+        assert(!root_create_denied.has_value());
+        assert(root_create_denied.error() == cme::ErrorCode::PermissionDenied);
+
+        // Grant EVERYONE EDIT on root directory
+        auto perm_res = doc_service.set_node_permission(
+            "DIRECTORY", "", "", "EVERYONE", "", "EDIT", true, author_user
+        );
+        assert(perm_res.has_value());
+
+        // Now regular user CAN create document at root
+        auto root_create_allowed = doc_service.create_document(root_doc_req, regular_user);
+        assert(root_create_allowed.has_value());
+
+        // Clean up root doc
+        auto rm_root_doc = doc_service.delete_document(root_create_allowed.value().id, author_user);
+        assert(rm_root_doc.has_value());
+
+        // Revoke EVERYONE permission on root directory
+        {
+            auto conn_r = pool->acquire();
+            assert(conn_r.has_value());
+            pqxx::work r_tx(conn_r->get());
+            r_tx.exec("DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = '' AND grantee_type = 'EVERYONE';");
+            r_tx.exec("DELETE FROM documents WHERE fs_path = 'root_test_doc.md' OR fs_path LIKE '%root_test_doc.md';");
+            r_tx.commit();
+        }
+
+        // Creating directory at root is now denied again
+        auto root_mkdir_denied = doc_service.create_directory("root_subfolder", regular_user);
+        assert(!root_mkdir_denied.has_value());
+        assert(root_mkdir_denied.error() == cme::ErrorCode::PermissionDenied);
+        std::cout << "  - Root directory permissions enforcement and EVERYONE ACL verified.\n";
     }
 
     // -------------------------------------------------------------------------

@@ -89,8 +89,8 @@ export interface PrincipalInfo {
 
 export interface ExplicitGrant {
   id: number;
-  grantee_type: 'USER' | 'TEAM';
-  grantee_id: string;
+  grantee_type: 'USER' | 'TEAM' | 'EVERYONE';
+  grantee_id?: string;
   grantee_name: string;
   access_level: 'READ' | 'COMMENT' | 'EDIT' | 'ADMIN';
   is_inheritable?: boolean;
@@ -98,8 +98,8 @@ export interface ExplicitGrant {
 
 export interface InheritedGrant {
   id: number;
-  grantee_type: 'USER' | 'TEAM';
-  grantee_id: string;
+  grantee_type: 'USER' | 'TEAM' | 'EVERYONE';
+  grantee_id?: string;
   grantee_name: string;
   access_level: 'READ' | 'COMMENT' | 'EDIT' | 'ADMIN';
   inherited_from: string;
