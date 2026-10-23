@@ -80,3 +80,6 @@ TEST*.xml
 tmp/
 *.tmp
 storage_data/
+
+# Local configuration overrides
+config.yaml

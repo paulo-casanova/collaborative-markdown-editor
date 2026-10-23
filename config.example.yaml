@@ -1,6 +1,8 @@
 # ==============================================================================
-# Collaborative Markdown Editor (CME) - Master Production Configuration
+# Collaborative Markdown Editor (CME) - Example Configuration
 # ==============================================================================
+# Copy this file to config.yaml and adjust for your environment.
+# Precedence waterfall: CLI Flags > Environment Variables > YAML File > Defaults.
 
 server:
   bind: "0.0.0.0"
@@ -8,22 +10,36 @@ server:
   reactor_threads: 2
   worker_threads: 8
   max_payload_bytes: 33554432 # 32 MB
+  keepalive_timeout_seconds: 120
+  # cors_allowed_origins:
+  #   - "http://localhost:5173"
+  #   - "https://editor.example.com"
 
 storage:
-  backend: "posix"
+  backend: "posix" # "posix" or "s3"
   root_path: "/var/lib/cme/storage"
   trash_retention_days: 30
   snapshot_interval_seconds: 300
   # Optional explicit directory mounts mapping workspace virtual prefixes to host folders:
+  # List format:
   # mounts:
   #   - prefix: "notes"
-  #     path: "/home/pasc/paulo.casanova@gmail.com/Diary/Obsidian/Threads"
+  #     path: "/mnt/storage/notes"
   #   - prefix: "specs"
   #     path: "/var/data/specs"
   # Or key-value mapping format:
   # mounts:
-  #   notes: "/home/pasc/paulo.casanova@gmail.com/Diary/Obsidian/Threads"
+  #   notes: "/mnt/storage/notes"
   #   specs: "/var/data/specs"
+
+  # S3 / Object Storage configuration (used when backend: "s3")
+  # s3_bucket: "cme-documents"
+  # s3_region: "us-east-1"
+  # s3_endpoint: "https://s3.amazonaws.com" # Or custom endpoint for MinIO / Ceph / Cloudflare R2
+  # s3_prefix: ""
+  # s3_access_key: ""
+  # s3_secret_key: ""
+  # s3_force_path_style: true
 
 database:
   url: "postgresql://cme:secret@localhost:5432/cme_test"
@@ -38,13 +54,18 @@ database:
   lease_acquire_timeout_seconds: 0 # 0 = wait indefinitely until acquired or stopped
 
 authn:
-  provider: "delegated"
+  provider: "delegated" # "delegated" or "challenge"
   delegated_header: "X-Remote-User"
   delegated_email_header: "X-Remote-Email"
   session_ttl_hours: 72
+  # Reverse-proxy verification headers for delegated authentication
+  # proxy_secret_header: "X-Proxy-Secret"
+  # proxy_secret_value: "shared-secret-token"
+  # required_headers:
+  #   X-Forwarded-Host: "editor.example.com"
 
 authz:
-  admin_provider: "file"
+  admin_provider: "file" # "file" or "command"
   admin_file_path: "/etc/cme/admins.txt"
   admin_command: "/usr/local/bin/check_admin.sh %USER%"
 
@@ -61,8 +82,8 @@ backup:
   retention_weekly: 4
 
 logging:
-  level: "info"
-  format: "json"
+  level: "info" # "trace", "debug", "info", "warn", "error"
+  format: "json" # "json" or "text"
 
 snippets:
   allowed_hosts:
@@ -72,6 +93,6 @@ snippets:
     - "bitbucket.org"
   default_curl_args: "-H 'User-Agent: CME-Snippet-Fetcher/1.0'"
   endpoints:
-    mg:
-      url: "https://www.mygit.com/${PATH}?token=${TOKEN}"
+    example_git:
+      url: "https://git.example.com/${PATH}?token=${TOKEN}"
       curl_args: "-H 'Accept: text/plain'"

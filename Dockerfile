@@ -79,7 +79,7 @@ RUN chmod +x /usr/local/bin/cme-backup.sh
 # Install entrypoint script and default config
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
-COPY config.yaml /etc/cme/config.yaml
+COPY config.example.yaml /etc/cme/config.yaml
 
 # Create storage hierarchy
 RUN mkdir -p /var/lib/cme/storage /var/lib/cme/storage/backups /etc/cme
