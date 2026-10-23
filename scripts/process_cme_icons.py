@@ -3,10 +3,12 @@
 Process CME light and dark theme icons:
 1. Remove solid background cleanly with smooth anti-aliased alpha matting
    and color de-contamination (unmultiplying background color).
-2. Generate transparent full horizontal logos (cme-light.png, cme-dark.png).
-3. Generate transparent square icon marks (cme-icon-light.png, cme-icon-dark.png).
-4. Generate favicons (favicon.png, favicon.ico).
-5. Output to both frontend/public/ and ~/Downloads/.
+2. Preserve high-resolution master originals (cme-light-original.png, etc.).
+3. Generate web-optimized small versions (cme-light.png ~35KB, cme-dark.png ~31KB)
+   sized at 3x retina resolution for fast download and crisp rendering.
+4. Generate square icon marks (128x128 ~18KB and 512x512 original).
+5. Generate favicons (favicon.png, favicon.ico).
+6. Output to both frontend/public/ and ~/Downloads/.
 """
 
 import os
@@ -73,6 +75,12 @@ def extract_square_icon(full_logo: Image.Image, size=512, padding_pct=0.08) -> I
     canvas.paste(resized, (paste_x, paste_y), mask=resized)
     return canvas
 
+def make_web_logo(im: Image.Image, target_height: int = 84) -> Image.Image:
+    """Resize full logo to 3x retina height (84px for a 28px UI display) for fast download."""
+    w, h = im.size
+    target_width = int(round(w * (target_height / h)))
+    return im.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
 def main():
     home = Path.home()
     downloads_dir = home / 'Downloads'
@@ -98,42 +106,73 @@ def main():
     bg_dark = np.array([58.3, 58.4, 58.2])
 
     print("Removing background for light theme...")
-    logo_light = remove_background(im_light, bg_light, low_tol=6.5, high_tol=13.0, crop_box=crop_box)
-    print(f"  Cropped logo light size: {logo_light.size}")
+    logo_light_orig = remove_background(im_light, bg_light, low_tol=6.5, high_tol=13.0, crop_box=crop_box)
+    print(f"  Original logo light size: {logo_light_orig.size}")
 
     print("Removing background for dark theme...")
-    logo_dark = remove_background(im_dark, bg_dark, low_tol=8.0, high_tol=18.0, crop_box=crop_box)
-    print(f"  Cropped logo dark size: {logo_dark.size}")
+    logo_dark_orig = remove_background(im_dark, bg_dark, low_tol=8.0, high_tol=18.0, crop_box=crop_box)
+    print(f"  Original logo dark size: {logo_dark_orig.size}")
 
-    print("Extracting square icon marks...")
-    icon_light = extract_square_icon(logo_light, size=512)
-    icon_dark = extract_square_icon(logo_dark, size=512)
+    print("Generating square icon marks (original 512x512)...")
+    icon_light_orig = extract_square_icon(logo_light_orig, size=512)
+    icon_dark_orig = extract_square_icon(logo_dark_orig, size=512)
+
+    print("Generating web-optimized small versions...")
+    # 84px height is 3x retina for a 28px UI display in navigation header
+    logo_light_web = make_web_logo(logo_light_orig, target_height=84)
+    logo_dark_web = make_web_logo(logo_dark_orig, target_height=84)
+    # 128x128 is 4x retina for a 28-32px icon
+    icon_light_web = icon_light_orig.resize((128, 128), Image.Resampling.LANCZOS)
+    icon_dark_web = icon_dark_orig.resize((128, 128), Image.Resampling.LANCZOS)
 
     # Output targets
     targets = [
-        # Frontend public directory (serviced by Vite / CME server)
-        (frontend_public / 'cme-light.png', logo_light),
-        (frontend_public / 'cme-dark.png', logo_dark),
-        (frontend_public / 'cme-logo-light.png', logo_light),
-        (frontend_public / 'cme-logo-dark.png', logo_dark),
-        (frontend_public / 'cme-icon-light.png', icon_light),
-        (frontend_public / 'cme-icon-dark.png', icon_dark),
-        (frontend_public / 'favicon.png', icon_light.resize((64, 64), Image.Resampling.LANCZOS)),
-        # Downloads folder for user reference
-        (downloads_dir / 'cme-light.png', logo_light),
-        (downloads_dir / 'cme-dark.png', logo_dark),
-        (downloads_dir / 'cme-icon-light.png', icon_light),
-        (downloads_dir / 'cme-icon-dark.png', icon_dark),
+        # --- High-Resolution Originals Preserved ---
+        (frontend_public / 'cme-light-original.png', logo_light_orig),
+        (frontend_public / 'cme-dark-original.png', logo_dark_orig),
+        (frontend_public / 'cme-logo-light-original.png', logo_light_orig),
+        (frontend_public / 'cme-logo-dark-original.png', logo_dark_orig),
+        (frontend_public / 'cme-icon-light-original.png', icon_light_orig),
+        (frontend_public / 'cme-icon-dark-original.png', icon_dark_orig),
+
+        # --- Web-Optimized Small Versions (Default for UI fast downloads) ---
+        (frontend_public / 'cme-light.png', logo_light_web),
+        (frontend_public / 'cme-dark.png', logo_dark_web),
+        (frontend_public / 'cme-light-sm.png', logo_light_web),
+        (frontend_public / 'cme-dark-sm.png', logo_dark_web),
+        (frontend_public / 'cme-logo-light.png', logo_light_web),
+        (frontend_public / 'cme-logo-dark.png', logo_dark_web),
+        (frontend_public / 'cme-icon-light.png', icon_light_web),
+        (frontend_public / 'cme-icon-dark.png', icon_dark_web),
+        (frontend_public / 'cme-icon-light-sm.png', icon_light_web),
+        (frontend_public / 'cme-icon-dark-sm.png', icon_dark_web),
+
+        # --- Favicons ---
+        (frontend_public / 'favicon.png', icon_light_orig.resize((64, 64), Image.Resampling.LANCZOS)),
+
+        # --- Downloads Folder ---
+        (downloads_dir / 'cme-light-original.png', logo_light_orig),
+        (downloads_dir / 'cme-dark-original.png', logo_dark_orig),
+        (downloads_dir / 'cme-icon-light-original.png', icon_light_orig),
+        (downloads_dir / 'cme-icon-dark-original.png', icon_dark_orig),
+        (downloads_dir / 'cme-light.png', logo_light_orig),
+        (downloads_dir / 'cme-dark.png', logo_dark_orig),
+        (downloads_dir / 'cme-light-sm.png', logo_light_web),
+        (downloads_dir / 'cme-dark-sm.png', logo_dark_web),
+        (downloads_dir / 'cme-icon-light.png', icon_light_orig),
+        (downloads_dir / 'cme-icon-dark.png', icon_dark_orig),
+        (downloads_dir / 'cme-icon-light-sm.png', icon_light_web),
+        (downloads_dir / 'cme-icon-dark-sm.png', icon_dark_web),
     ]
 
     for path, img in targets:
-        print(f"Saving {path}...")
+        print(f"Saving {path} ({img.size[0]}x{img.size[1]})...")
         img.save(path, 'PNG', optimize=True)
 
     # Save multi-size favicon.ico
     fav_ico_path = frontend_public / 'favicon.ico'
     print(f"Saving {fav_ico_path}...")
-    icon_light.save(fav_ico_path, format='ICO', sizes=[(16, 16), (32, 32), (48, 48), (64, 64)])
+    icon_light_orig.save(fav_ico_path, format='ICO', sizes=[(16, 16), (32, 32), (48, 48), (64, 64)])
 
     print("\nIcon and logo generation complete!")
 
