@@ -249,37 +249,124 @@ export class CodeMirrorEditorAdapter {
     const sel = this.view.state.selection.main;
     const from = sel.from;
     const to = sel.to;
-    const selected = this.view.state.doc.sliceString(from, to);
+    const doc = this.view.state.doc;
+    const docStr = doc.toString();
 
     const altPrefix = prefix === '*' ? '_' : prefix === '_' ? '*' : prefix === '**' ? '__' : prefix === '__' ? '**' : '';
     const altSuffix = suffix === '*' ? '_' : suffix === '_' ? '*' : suffix === '**' ? '__' : suffix === '__' ? '**' : '';
 
-    const pLen = prefix.length;
-    const sLen = suffix.length;
-    if (selected.startsWith(prefix) && selected.endsWith(suffix) && selected.length >= pLen + sLen) {
-      const unwrapped = selected.slice(pLen, selected.length - sLen);
-      this.view.dispatch({
-        changes: { from, to, insert: unwrapped },
-        selection: { anchor: from, head: from + unwrapped.length },
-      });
-      return;
+    const isWrappedBy = (text: string, p: string, s: string) => {
+      if (!text.startsWith(p) || !text.endsWith(s) || text.length < p.length + s.length) return false;
+      if (p === '*' && text.startsWith('**') && !text.startsWith('***')) return false;
+      if (p === '_' && text.startsWith('__') && !text.startsWith('___')) return false;
+      if (s === '*' && text.endsWith('**') && !text.endsWith('***')) return false;
+      if (s === '_' && text.endsWith('__') && !text.endsWith('___')) return false;
+      return true;
+    };
+
+    const hasOuterMarkers = (f: number, t: number, p: string, s: string) => {
+      if (f < p.length || t + s.length > docStr.length) return false;
+      const before = docStr.slice(f - p.length, f);
+      const after = docStr.slice(t, t + s.length);
+      if (before !== p || after !== s) return false;
+
+      if (p === '*') {
+        const charBefore = f > 1 ? docStr[f - 2] : '';
+        const charAfter = t + 1 < docStr.length ? docStr[t + 1] : '';
+        if (charBefore === '*' && (f <= 2 || docStr[f - 3] !== '*')) return false;
+        if (charAfter === '*' && (t + 2 >= docStr.length || docStr[t + 2] !== '*')) return false;
+      }
+      if (p === '_') {
+        const charBefore = f > 1 ? docStr[f - 2] : '';
+        const charAfter = t + 1 < docStr.length ? docStr[t + 1] : '';
+        if (charBefore === '_' && (f <= 2 || docStr[f - 3] !== '_')) return false;
+        if (charAfter === '_' && (t + 2 >= docStr.length || docStr[t + 2] !== '_')) return false;
+      }
+      return true;
+    };
+
+    // 1. Direct outer unwrap for current selection (or cursor between markers like **|**)
+    for (const [p, s] of [[prefix, suffix], [altPrefix, altSuffix]]) {
+      if (p && s && hasOuterMarkers(from, to, p, s)) {
+        this.view.dispatch({
+          changes: [
+            { from: from - p.length, to: from, insert: '' },
+            { from: to, to: to + s.length, insert: '' },
+          ],
+          selection: { anchor: from - p.length, head: to - p.length },
+        });
+        this.view.focus();
+        this.notifySelectionUpdate();
+        return;
+      }
     }
 
-    if (altPrefix && altSuffix && selected.startsWith(altPrefix) && selected.endsWith(altSuffix) && selected.length >= altPrefix.length + altSuffix.length) {
-      const unwrapped = selected.slice(altPrefix.length, selected.length - altSuffix.length);
-      this.view.dispatch({
-        changes: { from, to, insert: unwrapped },
-        selection: { anchor: from, head: from + unwrapped.length },
-      });
-      return;
+    // 2. Direct inner unwrap for current selection
+    const selected = docStr.slice(from, to);
+    for (const [p, s] of [[prefix, suffix], [altPrefix, altSuffix]]) {
+      if (p && s && isWrappedBy(selected, p, s)) {
+        const unwrapped = selected.slice(p.length, selected.length - s.length);
+        this.view.dispatch({
+          changes: { from, to, insert: unwrapped },
+          selection: { anchor: from, head: from + unwrapped.length },
+        });
+        this.view.focus();
+        this.notifySelectionUpdate();
+        return;
+      }
     }
 
-    const inserted = `${prefix}${selected || 'text'}${suffix}`;
+    // 3. If empty selection, check for word at cursor
+    let targetFrom = from;
+    let targetTo = to;
+    if (from === to) {
+      const word = this.view.state.wordAt(from);
+      if (word && word.from < word.to) {
+        targetFrom = word.from;
+        targetTo = word.to;
+
+        // Check outer markers on expanded word (e.g. **hel|lo**)
+        for (const [p, s] of [[prefix, suffix], [altPrefix, altSuffix]]) {
+          if (p && s && hasOuterMarkers(targetFrom, targetTo, p, s)) {
+            this.view.dispatch({
+              changes: [
+                { from: targetFrom - p.length, to: targetFrom, insert: '' },
+                { from: targetTo, to: targetTo + s.length, insert: '' },
+              ],
+              selection: { anchor: targetFrom - p.length, head: targetTo - p.length },
+            });
+            this.view.focus();
+            this.notifySelectionUpdate();
+            return;
+          }
+        }
+
+        // Check inner markers on expanded word
+        const wordText = docStr.slice(targetFrom, targetTo);
+        for (const [p, s] of [[prefix, suffix], [altPrefix, altSuffix]]) {
+          if (p && s && isWrappedBy(wordText, p, s)) {
+            const unwrapped = wordText.slice(p.length, wordText.length - s.length);
+            this.view.dispatch({
+              changes: { from: targetFrom, to: targetTo, insert: unwrapped },
+              selection: { anchor: targetFrom, head: targetFrom + unwrapped.length },
+            });
+            this.view.focus();
+            this.notifySelectionUpdate();
+            return;
+          }
+        }
+      }
+    }
+
+    // 4. Wrap target range or insert empty markers with cursor positioned in middle
+    const targetText = docStr.slice(targetFrom, targetTo);
+    const inserted = `${prefix}${targetText}${suffix}`;
     this.view.dispatch({
-      changes: { from, to, insert: inserted },
-      selection: { anchor: from + pLen, head: to + pLen },
+      changes: { from: targetFrom, to: targetTo, insert: inserted },
+      selection: { anchor: targetFrom + prefix.length, head: targetTo + prefix.length },
     });
     this.view.focus();
+    this.notifySelectionUpdate();
   }
 
   toggleHeading(level: number) {

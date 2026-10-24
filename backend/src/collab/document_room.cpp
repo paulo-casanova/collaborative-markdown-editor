@@ -32,6 +32,7 @@ DocumentRoom::DocumentRoom(
     std::span<const uint8_t> initial_crdt_state
 ) : document_id_(std::move(document_id)),
     fs_path_(std::move(fs_path)),
+    created_at_(std::chrono::system_clock::now()),
     last_edit_time_(std::chrono::system_clock::now()),
     last_flush_time_(std::chrono::system_clock::now()) {
     if (!initial_crdt_state.empty()) {
@@ -147,6 +148,8 @@ void DocumentRoom::add_peer(
     const std::string& avatar_color
 ) {
     std::lock_guard lock(mutex_);
+    has_had_peers_.store(true);
+    pending_connection_.store(false);
     peers_[client_id] = PeerInfo{
         .client_id = client_id,
         .username = username,

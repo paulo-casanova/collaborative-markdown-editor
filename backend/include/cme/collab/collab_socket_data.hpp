@@ -25,6 +25,7 @@ struct CollabSocketData {
     bool is_authenticated{false};
     bool is_admin{false};
     db::AccessLevel access_level{db::AccessLevel::Read};
+    std::string fs_path;
 };
 
 } // namespace cme::collab

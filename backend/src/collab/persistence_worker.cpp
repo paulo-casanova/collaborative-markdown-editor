@@ -37,13 +37,59 @@ void PersistenceWorker::stop() {
     }
 }
 
+void PersistenceWorker::track_flush_failure(const std::string& doc_id) {
+    if (doc_id.empty()) return;
+    std::lock_guard lock(failed_mutex_);
+    failed_flush_rooms_.insert(doc_id);
+}
+
+void PersistenceWorker::track_flush_success(const std::string& doc_id) {
+    if (doc_id.empty()) return;
+    std::lock_guard lock(failed_mutex_);
+    failed_flush_rooms_.erase(doc_id);
+}
+
+std::vector<std::string> PersistenceWorker::failed_flush_rooms() const {
+    std::lock_guard lock(failed_mutex_);
+    return {failed_flush_rooms_.begin(), failed_flush_rooms_.end()};
+}
+
 Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     if (!storage_) {
+        track_flush_failure(room.document_id());
         return std::unexpected(ErrorCode::IoError);
     }
 
     std::string fs_path = room.fs_path();
+    if (fs_path.empty() && db_pool_ && !room.document_id().empty()) {
+        try {
+            auto conn_res = db_pool_->acquire();
+            if (conn_res.has_value()) {
+                pqxx::work tx(conn_res->get());
+                auto r = tx.exec_params(
+                    "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+                    room.document_id()
+                );
+                if (!r.empty() && !r[0][0].is_null()) {
+                    std::string recovered = r[0][0].as<std::string>();
+                    if (!recovered.empty()) {
+                        room.set_fs_path(recovered);
+                        fs_path = recovered;
+                        std::cout << "[INFO] PersistenceWorker recovered fs_path '" << fs_path
+                                  << "' for room " << room.document_id() << " from database.\n";
+                    }
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] PersistenceWorker failed to query DB for fs_path of room "
+                      << room.document_id() << ": " << e.what() << "\n";
+        }
+    }
+
     if (fs_path.empty()) {
+        std::cerr << "[ERROR] PersistenceWorker cannot flush room " << room.document_id()
+                  << ": fs_path is empty and cannot be resolved.\n";
+        track_flush_failure(room.document_id());
         return std::unexpected(ErrorCode::InvalidArgument);
     }
 
@@ -57,6 +103,7 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     auto write_res = storage_->write_file(content_file, content, true);
     if (!write_res.has_value()) {
         std::cerr << "[ERROR] PersistenceWorker failed to write file: " << content_file << "\n";
+        track_flush_failure(room.document_id());
         return write_res;
     }
 
@@ -92,8 +139,9 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
         }
     }
 
-    // 4. Mark room clean
+    // 4. Mark room clean and clear flush failure
     room.mark_clean();
+    track_flush_success(room.document_id());
     total_flushes_++;
     return {};
 }
@@ -145,6 +193,30 @@ void PersistenceWorker::worker_loop() {
 
             // 2. Check room eviction conditions
             if (config_.auto_evict_idle_rooms && room->peer_count() == 0) {
+                // If a client connection is currently pending, skip eviction
+                if (room->has_pending_connection()) {
+                    auto pending_dur = std::chrono::duration_cast<std::chrono::seconds>(now - room->created_at());
+                    if (pending_dur < std::chrono::seconds(60)) {
+                        continue;
+                    }
+                }
+
+                // If room has never had any connected peers, grant a grace period of 60 seconds
+                if (!room->has_had_peers()) {
+                    auto age = std::chrono::duration_cast<std::chrono::seconds>(now - room->created_at());
+                    if (age < std::chrono::seconds(60)) {
+                        continue;
+                    }
+                }
+
+                // If room has had peers, ensure idle delay has passed
+                if (room->has_had_peers()) {
+                    auto idle_dur = std::chrono::duration_cast<std::chrono::milliseconds>(now - room->last_edit_time());
+                    if (idle_dur < config_.idle_delay) {
+                        continue;
+                    }
+                }
+
                 // If still dirty after idle window, flush it before eviction
                 if (room->is_dirty()) {
                     auto idle_dur = std::chrono::duration_cast<std::chrono::milliseconds>(now - room->last_edit_time());

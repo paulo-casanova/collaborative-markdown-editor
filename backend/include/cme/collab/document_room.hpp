@@ -102,6 +102,10 @@ public:
     }
     [[nodiscard]] std::chrono::system_clock::time_point last_edit_time() const noexcept { return last_edit_time_; }
     [[nodiscard]] std::chrono::system_clock::time_point last_flush_time() const noexcept { return last_flush_time_; }
+    [[nodiscard]] std::chrono::system_clock::time_point created_at() const noexcept { return created_at_; }
+    [[nodiscard]] bool has_had_peers() const noexcept { return has_had_peers_.load(); }
+    [[nodiscard]] bool has_pending_connection() const noexcept { return pending_connection_.load(); }
+    void set_pending_connection(bool pending) noexcept { pending_connection_.store(pending); }
 
     // Peer presence
     void add_peer(const std::string& client_id, const std::string& username, const std::string& display_name, const std::string& avatar_color);
@@ -119,6 +123,9 @@ private:
     CrdtDoc doc_;
 
     std::atomic<bool> is_dirty_{false};
+    std::chrono::system_clock::time_point created_at_{std::chrono::system_clock::now()};
+    std::atomic<bool> has_had_peers_{false};
+    std::atomic<bool> pending_connection_{false};
     std::chrono::system_clock::time_point last_edit_time_;
     std::chrono::system_clock::time_point last_flush_time_;
 

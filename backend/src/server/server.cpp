@@ -159,6 +159,11 @@ nlohmann::json Server::get_health_status() {
         persistence_status["total_flushes"] = persistence_worker_->total_flushes();
         persistence_status["total_snapshots"] = persistence_worker_->total_snapshots();
         persistence_status["total_evictions"] = persistence_worker_->total_evictions();
+        auto failed_rooms = persistence_worker_->failed_flush_rooms();
+        persistence_status["dirty_rooms_failed_flush"] = failed_rooms;
+        if (!failed_rooms.empty()) {
+            overall_healthy = false;
+        }
     } else {
         persistence_status["status"] = "unconfigured";
     }
@@ -4029,6 +4034,8 @@ Result<void> Server::start() {
                 fs_path = room->fs_path();
             }
 
+            room->set_pending_connection(true);
+
             // Check permissions
             auto access_res = evaluate_access(user, doc_id, fs_path);
             if (!access_res.has_value() || access_res.value() == db::AccessLevel::None) {
@@ -4053,7 +4060,8 @@ Result<void> Server::start() {
                 .avatar_color = user.avatar_color.empty() ? "#3b82f6" : user.avatar_color,
                 .is_authenticated = true,
                 .is_admin = user.is_system_admin,
-                .access_level = access_lvl
+                .access_level = access_lvl,
+                .fs_path = fs_path
             };
 
             res->template upgrade<collab::CollabSocketData>(
@@ -4072,6 +4080,40 @@ Result<void> Server::start() {
 
             auto room = room_manager_->get_room(data->document_id);
             if (!room) {
+                std::string resolved_path = data->fs_path;
+                if (resolved_path.empty() && db_pool_) {
+                    try {
+                        auto conn_res = db_pool_->acquire();
+                        if (conn_res.has_value()) {
+                            pqxx::work tx(conn_res->get());
+                            auto r = tx.exec_params(
+                                "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+                                data->document_id
+                            );
+                            if (!r.empty() && !r[0][0].is_null()) {
+                                resolved_path = std::string(r[0][0].c_str());
+                            }
+                        }
+                    } catch (...) {}
+                }
+
+                if (resolved_path.empty()) {
+                    std::cerr << "[ERROR] Cannot open collaborative room " << data->document_id
+                              << ": missing fs_path. Closing socket.\n";
+                    ws->close();
+                    return;
+                }
+
+                std::string initial_content;
+                if (storage_) {
+                    bool is_bundle = storage_->is_bundle(resolved_path).value_or(false);
+                    std::string content_file = is_bundle ? (resolved_path + "/index.md") : resolved_path;
+                    auto read_res = storage_->read_file(content_file);
+                    if (read_res.has_value()) {
+                        initial_content = std::move(*read_res);
+                    }
+                }
+
                 std::vector<uint8_t> crdt_state;
                 if (storage_) {
                     auto crdt_res = storage_->load_crdt_state(data->document_id);
@@ -4079,7 +4121,9 @@ Result<void> Server::start() {
                         crdt_state = std::move(*crdt_res);
                     }
                 }
-                room = room_manager_->get_or_create_room(data->document_id, "", "", crdt_state);
+                room = room_manager_->get_or_create_room(data->document_id, initial_content, resolved_path, crdt_state);
+            } else if (room->fs_path().empty() && !data->fs_path.empty()) {
+                room->set_fs_path(data->fs_path);
             }
 
             room->add_peer(data->client_id, data->username, data->display_name, data->avatar_color);
@@ -4104,6 +4148,40 @@ Result<void> Server::start() {
 
             auto room = room_manager_->get_room(data->document_id);
             if (!room) {
+                std::string resolved_path = data->fs_path;
+                if (resolved_path.empty() && db_pool_) {
+                    try {
+                        auto conn_res = db_pool_->acquire();
+                        if (conn_res.has_value()) {
+                            pqxx::work tx(conn_res->get());
+                            auto r = tx.exec_params(
+                                "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+                                data->document_id
+                            );
+                            if (!r.empty() && !r[0][0].is_null()) {
+                                resolved_path = std::string(r[0][0].c_str());
+                            }
+                        }
+                    } catch (...) {}
+                }
+
+                if (resolved_path.empty()) {
+                    std::cerr << "[ERROR] Cannot process message for room " << data->document_id
+                              << ": missing fs_path. Closing socket.\n";
+                    ws->close();
+                    return;
+                }
+
+                std::string initial_content;
+                if (storage_) {
+                    bool is_bundle = storage_->is_bundle(resolved_path).value_or(false);
+                    std::string content_file = is_bundle ? (resolved_path + "/index.md") : resolved_path;
+                    auto read_res = storage_->read_file(content_file);
+                    if (read_res.has_value()) {
+                        initial_content = std::move(*read_res);
+                    }
+                }
+
                 std::vector<uint8_t> crdt_state;
                 if (storage_) {
                     auto crdt_res = storage_->load_crdt_state(data->document_id);
@@ -4111,7 +4189,9 @@ Result<void> Server::start() {
                         crdt_state = std::move(*crdt_res);
                     }
                 }
-                room = room_manager_->get_or_create_room(data->document_id, "", "", crdt_state);
+                room = room_manager_->get_or_create_room(data->document_id, initial_content, resolved_path, crdt_state);
+            } else if (room->fs_path().empty() && !data->fs_path.empty()) {
+                room->set_fs_path(data->fs_path);
             }
 
             switch (opcode) {

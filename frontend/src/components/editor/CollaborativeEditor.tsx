@@ -315,6 +315,20 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
     const customKeymap = keymap.of([
       {
+        key: 'Mod-b',
+        run: () => {
+          adapterRef.current?.wrapSelection('**');
+          return true;
+        },
+      },
+      {
+        key: 'Mod-i',
+        run: () => {
+          adapterRef.current?.wrapSelection('*');
+          return true;
+        },
+      },
+      {
         key: 'Enter',
         run: (view) => {
           if (insertNewlineContinueMarkup(view)) {

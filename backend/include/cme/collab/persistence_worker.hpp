@@ -14,6 +14,9 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
+#include <unordered_set>
+#include <vector>
+#include <string>
 
 namespace cme::collab {
 
@@ -73,9 +76,12 @@ public:
     [[nodiscard]] uint64_t total_flushes() const noexcept { return total_flushes_.load(); }
     [[nodiscard]] uint64_t total_snapshots() const noexcept { return total_snapshots_.load(); }
     [[nodiscard]] uint64_t total_evictions() const noexcept { return total_evictions_.load(); }
+    [[nodiscard]] std::vector<std::string> failed_flush_rooms() const;
 
 private:
     void worker_loop();
+    void track_flush_failure(const std::string& doc_id);
+    void track_flush_success(const std::string& doc_id);
 
     std::shared_ptr<RoomManager> room_manager_;
     std::shared_ptr<storage::IStorageBackend> storage_;
@@ -86,6 +92,9 @@ private:
     std::thread worker_thread_;
     std::condition_variable cv_;
     std::mutex cv_mutex_;
+
+    mutable std::mutex failed_mutex_;
+    std::unordered_set<std::string> failed_flush_rooms_;
 
     std::atomic<uint64_t> total_flushes_{0};
     std::atomic<uint64_t> total_snapshots_{0};

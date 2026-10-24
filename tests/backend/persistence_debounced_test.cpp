@@ -176,6 +176,30 @@ int main() {
         assert(worker.total_evictions() == 2);
         std::cout << "  - Dirty room flushed prior to eviction: zero data loss verified.\n";
 
+        // Test pending connection & grace period preventing premature eviction (Issue #17)
+        auto room3 = room_mgr->get_or_create_room("grace_room", "grace content", "notes/debounced_note.md");
+        room3->set_pending_connection(true);
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        assert(room_mgr->active_room_count() == 1); // Not evicted because pending_connection is active
+
+        // Test DB fs_path recovery & failed flush tracking (Issue #17)
+        cme::collab::DocumentRoom bad_room("bad_doc_uuid_1234", "broken content", "");
+        bad_room.insert_text(0, "bad");
+        auto bad_res = worker.flush_room(bad_room);
+        assert(!bad_res.has_value());
+        auto failed_list = worker.failed_flush_rooms();
+        assert(failed_list.size() == 1);
+        assert(failed_list[0] == "bad_doc_uuid_1234");
+
+        // Test automatic fs_path recovery from DB for known doc_id
+        cme::collab::DocumentRoom seeded_room_empty_path(doc_id, "recovered content", "");
+        seeded_room_empty_path.insert_text(0, "recovered ");
+        auto rec_res = worker.flush_room(seeded_room_empty_path);
+        assert(rec_res.has_value());
+        assert(seeded_room_empty_path.fs_path() == "notes/debounced_note.md");
+        std::cout << "  - DocumentRoom fs_path recovery and failed flush tracking verified.\n";
+
+        room_mgr->remove_room("grace_room");
         worker.stop();
         assert(!worker.is_running());
     }
@@ -273,6 +297,9 @@ int main() {
     assert(health["persistence"]["total_flushes"].get<uint64_t>() >= 1);
     assert(health["persistence"]["total_snapshots"].get<uint64_t>() >= 1);
     assert(health["persistence"]["total_evictions"].get<uint64_t>() >= 1);
+    assert(health["persistence"].contains("dirty_rooms_failed_flush"));
+    assert(health["persistence"]["dirty_rooms_failed_flush"].is_array());
+    assert(health["persistence"]["dirty_rooms_failed_flush"].empty());
     std::cout << "  - [PASS] Server health probe reports persistence worker metrics:\n"
               << "    Flushes: " << health["persistence"]["total_flushes"]
               << ", Snapshots: " << health["persistence"]["total_snapshots"]
