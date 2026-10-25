@@ -195,6 +195,18 @@ set_tests_properties(rest_put_active_room_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# CRDT Legitimate Edits Acceptance test (Issue #22)
+add_executable(crdt_legitimate_edits_test
+    backend/crdt_legitimate_edits_test.cpp
+)
+target_link_libraries(crdt_legitimate_edits_test PRIVATE cme_core)
+target_compile_features(crdt_legitimate_edits_test PRIVATE cxx_std_23)
+add_test(NAME crdt_legitimate_edits_test COMMAND crdt_legitimate_edits_test)
+set_tests_properties(crdt_legitimate_edits_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 
