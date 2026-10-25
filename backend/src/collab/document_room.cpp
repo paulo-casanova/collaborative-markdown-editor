@@ -42,6 +42,7 @@ DocumentRoom::DocumentRoom(
             if (!initial_content.empty() && converged != initial_content) {
                 doc_.set_text(initial_content);
                 is_dirty_.store(true);
+                edit_sequence_++;
             }
             return;
         }
@@ -59,6 +60,7 @@ std::string DocumentRoom::get_content() const {
 void DocumentRoom::set_content(const std::string& content) {
     std::lock_guard lock(mutex_);
     doc_.set_text(content);
+    edit_sequence_++;
     is_dirty_.store(true);
     last_edit_time_ = std::chrono::system_clock::now();
 }
@@ -66,6 +68,7 @@ void DocumentRoom::set_content(const std::string& content) {
 void DocumentRoom::insert_text(uint32_t index, const std::string& text) {
     std::lock_guard lock(mutex_);
     doc_.insert_text(index, text);
+    edit_sequence_++;
     is_dirty_.store(true);
     last_edit_time_ = std::chrono::system_clock::now();
 }
@@ -73,6 +76,7 @@ void DocumentRoom::insert_text(uint32_t index, const std::string& text) {
 void DocumentRoom::delete_text(uint32_t index, uint32_t length) {
     std::lock_guard lock(mutex_);
     doc_.delete_text(index, length);
+    edit_sequence_++;
     is_dirty_.store(true);
     last_edit_time_ = std::chrono::system_clock::now();
 }
@@ -85,6 +89,36 @@ std::vector<uint8_t> DocumentRoom::get_state_vector() const {
 std::vector<uint8_t> DocumentRoom::compute_sync_step2(std::span<const uint8_t> remote_sv) const {
     std::lock_guard lock(mutex_);
     return doc_.get_state_diff(remote_sv);
+}
+
+RoomSnapshot DocumentRoom::take_persistence_snapshot() const {
+    std::lock_guard lock(mutex_);
+    return RoomSnapshot{
+        .content = doc_.get_text(),
+        .crdt_state = doc_.get_state_diff({}),
+        .sequence = edit_sequence_
+    };
+}
+
+uint64_t DocumentRoom::edit_sequence() const noexcept {
+    std::lock_guard lock(mutex_);
+    return edit_sequence_;
+}
+
+bool DocumentRoom::mark_clean(uint64_t flushed_sequence) noexcept {
+    std::lock_guard lock(mutex_);
+    last_flush_time_ = std::chrono::system_clock::now();
+    if (edit_sequence_ <= flushed_sequence) {
+        is_dirty_.store(false);
+        return true;
+    }
+    return false;
+}
+
+void DocumentRoom::mark_clean() noexcept {
+    std::lock_guard lock(mutex_);
+    is_dirty_.store(false);
+    last_flush_time_ = std::chrono::system_clock::now();
 }
 
 Result<void> DocumentRoom::apply_client_update(std::span<const uint8_t> update_data) {
@@ -136,6 +170,7 @@ Result<void> DocumentRoom::apply_client_update(std::span<const uint8_t> update_d
         return res;
     }
 
+    edit_sequence_++;
     is_dirty_.store(true);
     last_edit_time_ = std::chrono::system_clock::now();
     return res;

@@ -93,14 +93,14 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
         return std::unexpected(ErrorCode::InvalidArgument);
     }
 
-    std::string content = room.get_content();
+    auto snapshot = room.take_persistence_snapshot();
 
     // Determine bundle path
     bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
     std::string content_file = is_bundle ? (fs_path + "/index.md") : fs_path;
 
     // 1. Atomic write to active content storage
-    auto write_res = storage_->write_file(content_file, content, true);
+    auto write_res = storage_->write_file(content_file, snapshot.content, true);
     if (!write_res.has_value()) {
         std::cerr << "[ERROR] PersistenceWorker failed to write file: " << content_file << "\n";
         track_flush_failure(room.document_id());
@@ -108,15 +108,14 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     }
 
     // 2. Persist binary CRDT state
-    auto crdt_state = room.compute_sync_step2({});
-    auto crdt_res = storage_->save_crdt_state(room.document_id(), crdt_state);
+    auto crdt_res = storage_->save_crdt_state(room.document_id(), snapshot.crdt_state);
     if (!crdt_res.has_value()) {
         std::cerr << "[WARN] PersistenceWorker failed to save CRDT state for: " << room.document_id() << "\n";
     }
 
     // 3. Create date-partitioned snapshot
     if (config_.enable_snapshots) {
-        auto snap_res = storage_->create_snapshot(content_file, content);
+        auto snap_res = storage_->create_snapshot(content_file, snapshot.content);
         if (snap_res.has_value()) {
             total_snapshots_++;
         } else {
@@ -124,7 +123,7 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
         }
     }
 
-    // 3. Update PostgreSQL updated_at timestamp
+    // 4. Update PostgreSQL updated_at timestamp
     if (db_pool_ && !room.document_id().empty()) {
         auto conn_res = db_pool_->acquire();
         if (conn_res.has_value()) {
@@ -139,8 +138,8 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
         }
     }
 
-    // 4. Mark room clean and clear flush failure
-    room.mark_clean();
+    // 5. Mark room clean up to the snapshot sequence and clear flush failure
+    room.mark_clean(snapshot.sequence);
     track_flush_success(room.document_id());
     total_flushes_++;
     return {};

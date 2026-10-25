@@ -173,5 +173,17 @@ set_tests_properties(instance_lease_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Persistence Concurrent Edit Protection test (Issue #20)
+add_executable(persistence_concurrent_edit_test
+    backend/persistence_concurrent_edit_test.cpp
+)
+target_link_libraries(persistence_concurrent_edit_test PRIVATE cme_core)
+target_compile_features(persistence_concurrent_edit_test PRIVATE cxx_std_23)
+add_test(NAME persistence_concurrent_edit_test COMMAND persistence_concurrent_edit_test)
+set_tests_properties(persistence_concurrent_edit_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 

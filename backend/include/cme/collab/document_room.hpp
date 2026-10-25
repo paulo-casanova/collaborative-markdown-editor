@@ -40,7 +40,18 @@ struct PeerInfo {
 };
 
 /**
+ * @struct RoomSnapshot
+ * @brief Thread-safe snapshot of document text, CRDT state diff, and edit sequence.
+ */
+struct RoomSnapshot {
+    std::string content;
+    std::vector<uint8_t> crdt_state;
+    uint64_t sequence{0};
+};
+
+/**
  * @class DocumentRoom
+
  * @brief Coordinates in-memory CRDT synchronization, active peers, and dirty-state persistence tracking.
  */
 class DocumentRoom {
@@ -94,12 +105,31 @@ public:
      */
     Result<void> apply_client_update(std::span<const uint8_t> update_data);
 
+    /**
+     * @brief Atomically extracts converged markdown text, binary CRDT state diff,
+     * and current monotonic edit sequence under a single mutex lock.
+     */
+    [[nodiscard]] RoomSnapshot take_persistence_snapshot() const;
+
+    /**
+     * @brief Returns the current monotonic edit sequence number.
+     */
+    [[nodiscard]] uint64_t edit_sequence() const noexcept;
+
     // Persistence & dirty lifecycle
     [[nodiscard]] bool is_dirty() const noexcept { return is_dirty_.load(); }
-    void mark_clean() noexcept {
-        is_dirty_.store(false);
-        last_flush_time_ = std::chrono::system_clock::now();
-    }
+
+    /**
+     * @brief Marks room clean only if no newer edits occurred after flushed_sequence.
+     * @return true if marked clean, false if newer edits arrived during persistence.
+     */
+    bool mark_clean(uint64_t flushed_sequence) noexcept;
+
+    /**
+     * @brief Unconditionally marks the room clean (e.g. for testing/initialization).
+     */
+    void mark_clean() noexcept;
+
     [[nodiscard]] std::chrono::system_clock::time_point last_edit_time() const noexcept { return last_edit_time_; }
     [[nodiscard]] std::chrono::system_clock::time_point last_flush_time() const noexcept { return last_flush_time_; }
     [[nodiscard]] std::chrono::system_clock::time_point created_at() const noexcept { return created_at_; }
@@ -122,6 +152,7 @@ private:
     mutable std::mutex mutex_;
     CrdtDoc doc_;
 
+    uint64_t edit_sequence_{0};
     std::atomic<bool> is_dirty_{false};
     std::chrono::system_clock::time_point created_at_{std::chrono::system_clock::now()};
     std::atomic<bool> has_had_peers_{false};
