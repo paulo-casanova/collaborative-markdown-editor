@@ -187,6 +187,37 @@ size_t Server::prepare_backup() {
 
 void Server::release_backup() {
     backup_barrier_active_.store(false);
+
+    std::vector<QueuedBarrierUpdate> pending;
+    {
+        std::lock_guard lock(barrier_queue_mutex_);
+        pending = std::move(barrier_update_queue_);
+        barrier_update_queue_.clear();
+    }
+
+    if (!pending.empty()) {
+        std::cout << "[INFO] Draining " << pending.size() << " queued collaborative updates after barrier release.\n";
+        for (const auto& item : pending) {
+            if (!room_manager_) continue;
+            auto room = room_manager_->get_room(item.document_id);
+            if (!room) continue;
+
+            std::span<const uint8_t> update_data(
+                reinterpret_cast<const uint8_t*>(item.update_data.data()),
+                item.update_data.size()
+            );
+            auto apply_res = room->apply_client_update(update_data);
+            if (apply_res.has_value()) {
+                std::string broadcast_msg;
+                broadcast_msg.reserve(2 + item.update_data.size());
+                broadcast_msg.push_back('\x00');
+                broadcast_msg.push_back('\x03'); // SyncUpdate
+                broadcast_msg.append(item.update_data);
+                broadcast_to_room(item.document_id, broadcast_msg, true);
+            }
+        }
+    }
+
     std::cout << "[INFO] Backup coordination barrier released. Normal write mutations resumed.\n";
 }
 
@@ -354,6 +385,9 @@ Result<void> Server::start() {
         db_pool_,
         persistence_config_
     );
+    persistence_worker_->set_paused_predicate([this]() {
+        return is_backup_barrier_active();
+    });
     persistence_worker_->start();
 
     // 8. Initialize Review Engine Service (Step 3.4)
@@ -4302,7 +4336,18 @@ Result<void> Server::start() {
                             break;
                         }
                         case 0x02: { // Subtype 0x02: SyncStep2 (Client returns missing document updates)
-                            if (is_backup_barrier_active()) break;
+                            if (is_backup_barrier_active()) {
+                                if (data->access_level >= db::AccessLevel::Edit || data->is_admin) {
+                                    std::lock_guard lock(barrier_queue_mutex_);
+                                    barrier_update_queue_.push_back({
+                                        .document_id = data->document_id,
+                                        .topic = data->topic,
+                                        .subtype = 0x02,
+                                        .update_data = std::string(sub_payload)
+                                    });
+                                }
+                                break;
+                            }
                             if (data->access_level >= db::AccessLevel::Edit || data->is_admin) {
                                 std::span<const uint8_t> update_data(
                                     reinterpret_cast<const uint8_t*>(sub_payload.data()),
@@ -4332,7 +4377,18 @@ Result<void> Server::start() {
                             break;
                         }
                         case 0x03: { // Subtype 0x03: SyncUpdate (Incremental document edit delta)
-                            if (is_backup_barrier_active()) break;
+                            if (is_backup_barrier_active()) {
+                                if (data->access_level >= db::AccessLevel::Edit || data->is_admin) {
+                                    std::lock_guard lock(barrier_queue_mutex_);
+                                    barrier_update_queue_.push_back({
+                                        .document_id = data->document_id,
+                                        .topic = data->topic,
+                                        .subtype = 0x03,
+                                        .update_data = std::string(sub_payload)
+                                    });
+                                }
+                                break;
+                            }
                             if (data->access_level >= db::AccessLevel::Edit || data->is_admin) {
                                 std::span<const uint8_t> update_data(
                                     reinterpret_cast<const uint8_t*>(sub_payload.data()),

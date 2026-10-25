@@ -212,6 +212,16 @@ public:
 private:
     config::AppConfig config_;
     std::atomic<bool> backup_barrier_active_{false};
+
+    struct QueuedBarrierUpdate {
+        std::string document_id;
+        std::string topic;
+        uint8_t subtype{0};
+        std::string update_data;
+    };
+    mutable std::mutex barrier_queue_mutex_;
+    std::vector<QueuedBarrierUpdate> barrier_update_queue_;
+
     collab::PersistenceConfig persistence_config_{};
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::IStorageBackend> storage_;

@@ -17,6 +17,7 @@
 #include <unordered_set>
 #include <vector>
 #include <string>
+#include <functional>
 
 namespace cme::collab {
 
@@ -70,6 +71,10 @@ public:
      */
     Result<void> flush_room(DocumentRoom& room);
 
+    void set_paused_predicate(std::function<bool()> predicate) {
+        paused_predicate_ = std::move(predicate);
+    }
+
     [[nodiscard]] const PersistenceConfig& config() const noexcept { return config_; }
     void set_config(PersistenceConfig cfg) noexcept { config_ = cfg; }
 
@@ -99,6 +104,7 @@ private:
     std::atomic<uint64_t> total_flushes_{0};
     std::atomic<uint64_t> total_snapshots_{0};
     std::atomic<uint64_t> total_evictions_{0};
+    std::function<bool()> paused_predicate_;
 };
 
 } // namespace cme::collab

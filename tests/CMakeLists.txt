@@ -206,6 +206,18 @@ set_tests_properties(crdt_legitimate_edits_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Backup Barrier Queued Edits Protection test (Issue #23)
+add_executable(backup_barrier_queued_edits_test
+    backend/backup_barrier_queued_edits_test.cpp
+)
+target_link_libraries(backup_barrier_queued_edits_test PRIVATE cme_core)
+target_compile_features(backup_barrier_queued_edits_test PRIVATE cxx_std_23)
+add_test(NAME backup_barrier_queued_edits_test COMMAND backup_barrier_queued_edits_test)
+set_tests_properties(backup_barrier_queued_edits_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 

@@ -171,6 +171,8 @@ void PersistenceWorker::worker_loop() {
 
         if (!is_running_) break;
 
+        if (paused_predicate_ && paused_predicate_()) continue;
+
         if (!room_manager_) continue;
 
         auto now = std::chrono::system_clock::now();
