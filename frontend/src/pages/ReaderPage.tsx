@@ -15,6 +15,7 @@ import {
   Trash2,
   Pencil,
   GitPullRequest,
+  RotateCw,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -84,6 +85,8 @@ export const ReaderPage: React.FC = () => {
   const [widthMode, setWidthMode] = useState<WidthMode>('standard');
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [linkValVer, setLinkValVer] = useState(0);
+  const [hasNewVersion, setHasNewVersion] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
     return subscribeLinkValidation(() => {
@@ -91,12 +94,13 @@ export const ReaderPage: React.FC = () => {
     });
   }, []);
 
-  // Document query supporting both UUID and relative path
+  // Document query supporting both UUID and relative path (manual refresh via toolbar)
   const {
     data: document,
     isLoading,
     isError,
     error,
+    refetch,
   } = useQuery({
     queryKey: ['doc-reader', rawTarget],
     queryFn: async () => {
@@ -121,6 +125,9 @@ export const ReaderPage: React.FC = () => {
     },
     enabled: Boolean(rawTarget),
     retry: 1,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: Infinity,
   });
 
   // Query reviews for the overlay
@@ -144,6 +151,53 @@ export const ReaderPage: React.FC = () => {
   });
 
   const queryClient = useQueryClient();
+
+  // Poll server every 5 seconds to check if a new version exists (Issue #19)
+  useEffect(() => {
+    if (!document?.id) return;
+
+    let isMounted = true;
+    const currentId = document.id;
+    const currentContent = document.content ?? '';
+
+    setHasNewVersion(false);
+
+    const checkServerVersion = async () => {
+      try {
+        const latest = await fetchDocument(currentId);
+        if (!isMounted) return;
+        const latestContent = latest.content ?? '';
+        if (latestContent !== currentContent) {
+          setHasNewVersion(true);
+        } else {
+          setHasNewVersion(false);
+        }
+      } catch {
+        // Silently ignore background polling errors
+      }
+    };
+
+    const intervalId = setInterval(checkServerVersion, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(intervalId);
+    };
+  }, [document?.id, document?.content]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refetch();
+      setHasNewVersion(false);
+      if (showReviews && document?.id) {
+        queryClient.invalidateQueries({ queryKey: ['reader-comments', document.id] });
+        queryClient.invalidateQueries({ queryKey: ['reader-suggestions', document.id] });
+        queryClient.invalidateQueries({ queryKey: ['reader-tasks', document.id] });
+      }
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
   const {
     setPendingCommentSelection,
     setPendingSuggestionSelection,
@@ -916,6 +970,45 @@ export const ReaderPage: React.FC = () => {
             >
               <MessageSquare className="w-3.5 h-3.5" />
               <span>Reviews: {showReviews ? 'ON' : 'OFF'}</span>
+            </button>
+
+            {/* Refresh Document Button (Issue #19) */}
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                hasNewVersion
+                  ? 'border-amber-500/60 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 shadow-xs'
+                  : 'border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base'
+              }`}
+              title={
+                hasNewVersion
+                  ? 'New version available on server — click to reload'
+                  : 'Reload document content'
+              }
+              data-testid="reader-refresh-btn"
+              data-has-update={hasNewVersion ? 'true' : 'false'}
+            >
+              <RotateCw
+                className={`w-3.5 h-3.5 ${
+                  isRefreshing
+                    ? 'animate-spin text-cme-primary'
+                    : hasNewVersion
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : ''
+                }`}
+              />
+              <span>Refresh</span>
+              {hasNewVersion && (
+                <span
+                  className="flex h-2 w-2 relative"
+                  data-testid="reader-refresh-badge"
+                  title="Update available"
+                >
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+                </span>
+              )}
             </button>
 
             {/* Copy Permalink */}

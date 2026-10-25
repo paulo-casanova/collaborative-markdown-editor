@@ -1661,7 +1661,15 @@ Result<void> Server::start() {
             .include_reviews = include_reviews
         };
 
-        std::string html = renderer::MarkdownRenderer::render_to_html(doc_res.value().content, opts, reviews);
+        std::string content = doc_res.value().content;
+        if (room_manager_) {
+            auto active_room = room_manager_->get_room(doc_res.value().id);
+            if (active_room) {
+                content = active_room->get_content();
+            }
+        }
+
+        std::string html = renderer::MarkdownRenderer::render_to_html(content, opts, reviews);
         send_html(res, "200 OK", html);
     });
 
@@ -1705,7 +1713,15 @@ Result<void> Server::start() {
             return;
         }
 
-        send_json(res, "200 OK", doc_res.value().to_json(true));
+        auto doc = doc_res.value();
+        if (room_manager_) {
+            auto active_room = room_manager_->get_room(doc.id);
+            if (active_room) {
+                doc.content = active_room->get_content();
+            }
+        }
+
+        send_json(res, "200 OK", doc.to_json(true));
     });
 
     // POST /api/v1/documents
@@ -1830,7 +1846,15 @@ Result<void> Server::start() {
             .include_reviews = include_reviews
         };
 
-        std::string html = renderer::MarkdownRenderer::render_to_html(doc_res.value().content, opts, reviews);
+        std::string content = doc_res.value().content;
+        if (room_manager_) {
+            auto active_room = room_manager_->get_room(doc_res.value().id);
+            if (active_room) {
+                content = active_room->get_content();
+            }
+        }
+
+        std::string html = renderer::MarkdownRenderer::render_to_html(content, opts, reviews);
         send_html(res, "200 OK", html);
     });
 
@@ -1864,10 +1888,18 @@ Result<void> Server::start() {
             return;
         }
 
+        std::string raw_content = raw_res.value();
+        if (room_manager_) {
+            auto active_room = room_manager_->get_room(doc_id);
+            if (active_room) {
+                raw_content = active_room->get_content();
+            }
+        }
+
         res->writeStatus("200 OK");
         write_cors_headers(res, req->getHeader("origin"));
         res->writeHeader("Content-Type", "text/markdown; charset=utf-8");
-        res->end(raw_res.value());
+        res->end(raw_content);
     });
 
     // PATCH /api/v1/documents/:id/move
@@ -2270,7 +2302,15 @@ Result<void> Server::start() {
             return;
         }
 
-        send_json(res, "200 OK", doc_res.value().to_json(true));
+        auto doc = doc_res.value();
+        if (room_manager_) {
+            auto active_room = room_manager_->get_room(doc.id);
+            if (active_room) {
+                doc.content = active_room->get_content();
+            }
+        }
+
+        send_json(res, "200 OK", doc.to_json(true));
     });
 
     // PUT /api/v1/documents/:id
@@ -2333,7 +2373,15 @@ Result<void> Server::start() {
                 return;
             }
 
-            send_json(res, "200 OK", doc_res.value().to_json(true));
+            auto doc = doc_res.value();
+            if (room_manager_) {
+                auto active_room = room_manager_->get_room(doc.id);
+                if (active_room) {
+                    doc.content = active_room->get_content();
+                }
+            }
+
+            send_json(res, "200 OK", doc.to_json(true));
         });
     });
 
@@ -2396,7 +2444,15 @@ Result<void> Server::start() {
                 return;
             }
 
-            send_json(res, "200 OK", doc_res.value().to_json(true));
+            auto doc = doc_res.value();
+            if (room_manager_) {
+                auto active_room = room_manager_->get_room(doc.id);
+                if (active_room) {
+                    doc.content = active_room->get_content();
+                }
+            }
+
+            send_json(res, "200 OK", doc.to_json(true));
         });
     });
 
