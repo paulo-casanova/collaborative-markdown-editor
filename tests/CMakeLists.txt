@@ -184,6 +184,18 @@ set_tests_properties(persistence_concurrent_edit_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# REST PUT/PATCH Active Room Synchronization test (Issue #21)
+add_executable(rest_put_active_room_test
+    backend/rest_put_active_room_test.cpp
+)
+target_link_libraries(rest_put_active_room_test PRIVATE cme_core)
+target_compile_features(rest_put_active_room_test PRIVATE cxx_std_23)
+add_test(NAME rest_put_active_room_test COMMAND rest_put_active_room_test)
+set_tests_properties(rest_put_active_room_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 

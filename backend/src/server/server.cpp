@@ -2377,6 +2377,21 @@ Result<void> Server::start() {
             if (room_manager_) {
                 auto active_room = room_manager_->get_room(doc.id);
                 if (active_room) {
+                    if (opt_content.has_value()) {
+                        active_room->set_content(*opt_content);
+                        auto diff = active_room->compute_sync_step2({});
+                        if (!diff.empty()) {
+                            std::string sync_msg;
+                            sync_msg.reserve(2 + diff.size());
+                            sync_msg.push_back('\x00');
+                            sync_msg.push_back('\x02'); // Subtype 0x02: SyncStep2
+                            sync_msg.append(reinterpret_cast<const char*>(diff.data()), diff.size());
+                            broadcast_to_room(doc.id, sync_msg, true);
+                            if (storage_) {
+                                storage_->save_crdt_state(doc.id, diff);
+                            }
+                        }
+                    }
                     doc.content = active_room->get_content();
                 }
             }
@@ -2448,6 +2463,21 @@ Result<void> Server::start() {
             if (room_manager_) {
                 auto active_room = room_manager_->get_room(doc.id);
                 if (active_room) {
+                    if (opt_content.has_value()) {
+                        active_room->set_content(*opt_content);
+                        auto diff = active_room->compute_sync_step2({});
+                        if (!diff.empty()) {
+                            std::string sync_msg;
+                            sync_msg.reserve(2 + diff.size());
+                            sync_msg.push_back('\x00');
+                            sync_msg.push_back('\x02'); // Subtype 0x02: SyncStep2
+                            sync_msg.append(reinterpret_cast<const char*>(diff.data()), diff.size());
+                            broadcast_to_room(doc.id, sync_msg, true);
+                            if (storage_) {
+                                storage_->save_crdt_state(doc.id, diff);
+                            }
+                        }
+                    }
                     doc.content = active_room->get_content();
                 }
             }
