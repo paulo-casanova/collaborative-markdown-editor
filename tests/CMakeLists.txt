@@ -228,6 +228,18 @@ set_tests_properties(shutdown_lease_save_order_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Folder Wildcard Safety Regression test (Issue #25)
+add_executable(folder_wildcard_safety_test
+    backend/folder_wildcard_safety_test.cpp
+)
+target_link_libraries(folder_wildcard_safety_test PRIVATE cme_core)
+target_compile_features(folder_wildcard_safety_test PRIVATE cxx_std_23)
+add_test(NAME folder_wildcard_safety_test COMMAND folder_wildcard_safety_test)
+set_tests_properties(folder_wildcard_safety_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 

@@ -491,7 +491,7 @@ Result<std::string> DocumentService::rename_directory(
             UPDATE documents
             SET fs_path = $2 || SUBSTRING(fs_path FROM LENGTH($1) + 1),
                 updated_at = NOW()
-            WHERE fs_path = $1 OR fs_path LIKE $1 || '/%';
+            WHERE fs_path = $1 OR starts_with(fs_path, $1 || '/');
             )",
             norm_old,
             norm_new
@@ -503,7 +503,7 @@ Result<std::string> DocumentService::rename_directory(
             UPDATE permissions
             SET directory_path = $2 || SUBSTRING(directory_path FROM LENGTH($1) + 1)
             WHERE target_type = 'DIRECTORY'
-              AND (directory_path = $1 OR directory_path LIKE $1 || '/%');
+              AND (directory_path = $1 OR starts_with(directory_path, $1 || '/'));
             )",
             norm_old,
             norm_new
@@ -515,7 +515,7 @@ Result<std::string> DocumentService::rename_directory(
             UPDATE directory_metadata
             SET directory_path = $2 || SUBSTRING(directory_path FROM LENGTH($1) + 1),
                 updated_at = NOW()
-            WHERE directory_path = $1 OR directory_path LIKE $1 || '/%';
+            WHERE directory_path = $1 OR starts_with(directory_path, $1 || '/');
             )",
             norm_old,
             norm_new
@@ -576,7 +576,7 @@ Result<std::string> DocumentService::delete_directory(
 
             // Find all documents inside directory
             auto doc_rows = tx.exec_params(
-                "SELECT id::text FROM documents WHERE fs_path = $1 OR fs_path LIKE $1 || '/%';",
+                "SELECT id::text FROM documents WHERE fs_path = $1 OR starts_with(fs_path, $1 || '/');",
                 norm_path
             );
 
@@ -587,19 +587,19 @@ Result<std::string> DocumentService::delete_directory(
 
             // Delete documents (cascades to permissions, comments, tasks, suggestions)
             tx.exec_params(
-                "DELETE FROM documents WHERE fs_path = $1 OR fs_path LIKE $1 || '/%';",
+                "DELETE FROM documents WHERE fs_path = $1 OR starts_with(fs_path, $1 || '/');",
                 norm_path
             );
 
             // Delete directory permissions
             tx.exec_params(
-                "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND (directory_path = $1 OR directory_path LIKE $1 || '/%');",
+                "DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND (directory_path = $1 OR starts_with(directory_path, $1 || '/'));",
                 norm_path
             );
 
             // Delete directory metadata
             tx.exec_params(
-                "DELETE FROM directory_metadata WHERE directory_path = $1 OR directory_path LIKE $1 || '/%';",
+                "DELETE FROM directory_metadata WHERE directory_path = $1 OR starts_with(directory_path, $1 || '/');",
                 norm_path
             );
 
@@ -2025,7 +2025,7 @@ Result<nlohmann::json> DocumentService::search_documents(
             "SELECT id, fs_path, title, "
             "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
             "FROM documents "
-            "WHERE ($1 = '' OR fs_path LIKE $1 || '%') "
+            "WHERE ($1 = '' OR starts_with(fs_path, $1)) "
             "ORDER BY updated_at DESC;",
             path_prefix
         );
@@ -2651,7 +2651,7 @@ Result<nlohmann::json> DocumentService::get_directory_dashboard(
                    (SELECT COUNT(*) FROM tasks t WHERE t.document_id = d.id AND t.is_completed = FALSE)
             FROM documents d
             LEFT JOIN users u ON d.owner_user_id = u.id
-            WHERE ($1 = '' AND d.fs_path NOT LIKE '%/%') OR ($1 <> '' AND d.fs_path LIKE $1 || '/%');
+            WHERE ($1 = '' AND strpos(d.fs_path, '/') = 0) OR ($1 <> '' AND starts_with(d.fs_path, $1 || '/'));
             )",
             clean_path
         );
@@ -2676,7 +2676,7 @@ Result<nlohmann::json> DocumentService::get_directory_dashboard(
                    COALESCE(u.display_name, u.username, '')
             FROM directory_metadata dm
             LEFT JOIN users u ON dm.owner_user_id = u.id
-            WHERE ($1 = '' AND dm.directory_path NOT LIKE '%/%') OR ($1 <> '' AND dm.directory_path LIKE $1 || '/%');
+            WHERE ($1 = '' AND strpos(dm.directory_path, '/') = 0) OR ($1 <> '' AND starts_with(dm.directory_path, $1 || '/'));
             )",
             clean_path
         );
