@@ -14,6 +14,7 @@
 #include <vector>
 #include <span>
 #include <utility>
+#include <future>
 
 namespace cme::server {
 
@@ -400,6 +401,7 @@ Result<void> Server::start() {
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
     uws_app_ = &app;
+    loop_thread_id_ = std::this_thread::get_id();
 
     // CORS Preflight handler
     app.options("/*", [this](auto *res, auto *req) {
@@ -4040,6 +4042,15 @@ Result<void> Server::start() {
         .sendPingsAutomatically = true,
         .maxLifetime = 0,
         .upgrade = [this](auto *res, auto *req, auto *context) {
+            if (!is_running_.load()) {
+                res->writeStatus("503 Service Unavailable");
+                res->writeHeader("Content-Type", "application/json");
+                res->end(nlohmann::json{
+                    {"error", "ShuttingDown"},
+                    {"message", "Server is shutting down"}
+                }.dump());
+                return;
+            }
             std::string doc_id = url_decode(req->getParameter(0));
             if (doc_id.empty() || doc_id == "by-path") {
                 res->writeStatus("404 Not Found");
@@ -4259,6 +4270,10 @@ Result<void> Server::start() {
         },
         .message = [this](auto *ws, std::string_view msg, uWS::OpCode opCode) {
             (void)opCode;
+            if (!is_running_.load()) {
+                ws->close();
+                return;
+            }
             if (msg.empty()) return;
             auto *data = ws->getUserData();
             if (!data) return;
@@ -4578,15 +4593,50 @@ Result<void> Server::start() {
 
 void Server::stop() {
     if (is_running_.exchange(false)) {
-        if (lease_manager_) {
-            lease_manager_->stop();
+        // 1. Drain & apply any remaining queued barrier updates before shutting down
+        {
+            backup_barrier_active_.store(false);
+            std::vector<QueuedBarrierUpdate> pending;
+            {
+                std::lock_guard lock(barrier_queue_mutex_);
+                pending = std::move(barrier_update_queue_);
+                barrier_update_queue_.clear();
+            }
+            for (const auto& item : pending) {
+                if (!room_manager_) continue;
+                auto room = room_manager_->get_room(item.document_id);
+                if (!room) continue;
+
+                std::span<const uint8_t> update_data(
+                    reinterpret_cast<const uint8_t*>(item.update_data.data()),
+                    item.update_data.size()
+                );
+                room->apply_client_update(update_data);
+            }
         }
-        if (persistence_worker_) {
-            persistence_worker_->stop();
-        }
+
+        // 2. Stop network listeners and close all client connections first
+        // so no further connections, HTTP requests, or WebSocket edits can arrive.
         if (uws_loop_) {
             auto *loop = static_cast<uWS::Loop*>(uws_loop_);
-            loop->defer([this]() {
+            if (loop_thread_id_ != std::thread::id{} && std::this_thread::get_id() != loop_thread_id_) {
+                std::promise<void> close_promise;
+                auto close_future = close_promise.get_future();
+                loop->defer([this, &close_promise]() {
+                    if (us_listen_socket_) {
+                        us_listen_socket_close(0, static_cast<struct us_listen_socket_t*>(us_listen_socket_));
+                        us_listen_socket_ = nullptr;
+                    }
+                    if (uws_app_) {
+                        auto *app = static_cast<uWS::App*>(uws_app_);
+                        app->close();
+                    }
+                    close_promise.set_value();
+                });
+                if (close_future.wait_for(std::chrono::seconds(5)) == std::future_status::timeout) {
+                    std::cerr << "[WARN] Timed out waiting for uWS loop to close sockets on shutdown.\n";
+                }
+            } else {
                 if (us_listen_socket_) {
                     us_listen_socket_close(0, static_cast<struct us_listen_socket_t*>(us_listen_socket_));
                     us_listen_socket_ = nullptr;
@@ -4595,7 +4645,19 @@ void Server::stop() {
                     auto *app = static_cast<uWS::App*>(uws_app_);
                     app->close();
                 }
-            });
+            }
+        }
+
+        // 3. Stop persistence worker and flush all dirty documents to disk and DB.
+        // With network closed, no more edits can arrive, ensuring complete data consistency.
+        if (persistence_worker_) {
+            persistence_worker_->stop();
+        }
+
+        // 4. ONLY after all dirty documents are safely persisted to storage,
+        // release the instance lease in the database so standby can take over.
+        if (lease_manager_) {
+            lease_manager_->stop();
         }
     }
 }

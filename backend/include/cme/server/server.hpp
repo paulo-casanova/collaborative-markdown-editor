@@ -243,6 +243,7 @@ private:
     void* us_listen_socket_{nullptr};
     void* uws_loop_{nullptr};
     void* uws_app_{nullptr};
+    std::thread::id loop_thread_id_{};
 
     template <typename ReqT>
     static std::function<std::string(std::string_view)> make_header_lookup(ReqT* req) {

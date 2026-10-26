@@ -286,7 +286,11 @@ void InstanceLeaseManager::stop() {
     }
     if (running_.exchange(false)) {
         if (heartbeat_thread_.joinable()) {
-            heartbeat_thread_.join();
+            if (std::this_thread::get_id() == heartbeat_thread_.get_id()) {
+                heartbeat_thread_.detach();
+            } else {
+                heartbeat_thread_.join();
+            }
         }
     }
     if (is_held_) {

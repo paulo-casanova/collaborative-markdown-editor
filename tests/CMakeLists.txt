@@ -217,6 +217,18 @@ set_tests_properties(backup_barrier_queued_edits_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Shutdown Lease & Save Ordering Regression test (Issue #24)
+add_executable(shutdown_lease_save_order_test
+    backend/shutdown_lease_save_order_test.cpp
+)
+target_link_libraries(shutdown_lease_save_order_test PRIVATE cme_core)
+target_compile_features(shutdown_lease_save_order_test PRIVATE cxx_std_23)
+add_test(NAME shutdown_lease_save_order_test COMMAND shutdown_lease_save_order_test)
+set_tests_properties(shutdown_lease_save_order_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 
