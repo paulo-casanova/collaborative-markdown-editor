@@ -261,6 +261,18 @@ set_tests_properties(deleted_document_eviction_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# POSIX Storage Durable Writes Regression test (Issue #28)
+add_executable(posix_durable_writes_test
+    backend/posix_durable_writes_test.cpp
+)
+target_link_libraries(posix_durable_writes_test PRIVATE cme_core dl)
+target_compile_features(posix_durable_writes_test PRIVATE cxx_std_23)
+add_test(NAME posix_durable_writes_test COMMAND posix_durable_writes_test)
+set_tests_properties(posix_durable_writes_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 

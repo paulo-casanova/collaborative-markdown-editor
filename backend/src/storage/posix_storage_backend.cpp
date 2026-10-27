@@ -7,6 +7,15 @@
 #include <iostream>
 #include <algorithm>
 #include <unordered_set>
+#if defined(_WIN32)
+#include <io.h>
+#define fsync _commit
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#endif
 
 namespace cme::storage {
 
@@ -39,6 +48,98 @@ std::string sanitize_path_for_id(std::string_view p) {
         }
     }
     return s;
+}
+
+Result<void> durable_atomic_write(
+    const std::filesystem::path& target_path,
+    std::span<const uint8_t> data
+) {
+    std::error_code ec;
+    auto parent_dir = target_path.parent_path();
+    if (parent_dir.empty()) {
+        parent_dir = ".";
+    }
+    std::filesystem::create_directories(parent_dir, ec);
+    if (ec) {
+        std::cerr << "[ERROR] Failed to create directories for: " << target_path << " (" << ec.message() << ")\n";
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    std::ostringstream tmp_name;
+    tmp_name << "." << target_path.filename().string()
+             << "." << get_random_nonce() << ".tmp";
+    auto tmp_path = parent_dir / tmp_name.str();
+
+    // 1. Open temporary file with O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC
+    int fd = ::open(tmp_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) {
+        std::cerr << "[ERROR] Could not open temp file for writing: " << tmp_path << "\n";
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    // 2. Write data completely
+    const char* ptr = reinterpret_cast<const char*>(data.data());
+    size_t remaining = data.size();
+    while (remaining > 0) {
+        ssize_t written = ::write(fd, ptr, remaining);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            std::cerr << "[ERROR] Failed to write data to temp file: " << tmp_path << "\n";
+            ::close(fd);
+            std::filesystem::remove(tmp_path, ec);
+            return std::unexpected(ErrorCode::IoError);
+        }
+        ptr += written;
+        remaining -= static_cast<size_t>(written);
+    }
+
+    // 3. fsync the temporary file
+    if (::fsync(fd) != 0) {
+        if (errno != EINVAL && errno != ENOTSUP) {
+            std::cerr << "[ERROR] fsync failed on temp file: " << tmp_path << "\n";
+            ::close(fd);
+            std::filesystem::remove(tmp_path, ec);
+            return std::unexpected(ErrorCode::IoError);
+        }
+    }
+
+    if (::close(fd) != 0) {
+        std::cerr << "[ERROR] close failed on temp file: " << tmp_path << "\n";
+        std::filesystem::remove(tmp_path, ec);
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    // 4. Atomic rename over target path
+    std::filesystem::rename(tmp_path, target_path, ec);
+    if (ec) {
+        std::cerr << "[ERROR] Atomic rename failed: " << tmp_path << " -> " << target_path
+                  << " (" << ec.message() << ")\n";
+        std::filesystem::remove(tmp_path, ec);
+        return std::unexpected(ErrorCode::IoError);
+    }
+
+    // 5. fsync the parent directory to commit directory entry modifications
+    int dir_fd = ::open(parent_dir.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dir_fd >= 0) {
+        if (::fsync(dir_fd) != 0) {
+            if (errno != EINVAL && errno != ENOTSUP && errno != EBADF) {
+                std::cerr << "[WARN] fsync on directory failed: " << parent_dir << "\n";
+            }
+        }
+        ::close(dir_fd);
+    }
+
+    return {};
+}
+
+Result<void> durable_atomic_write(
+    const std::filesystem::path& target_path,
+    std::string_view content
+) {
+    return durable_atomic_write(
+        target_path,
+        std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(content.data()), content.size())
+    );
 }
 
 NodeInfo build_node_info(
@@ -238,53 +339,43 @@ Result<void> PosixStorageBackend::write_file(
     if (!target_res) return std::unexpected(target_res.error());
     const auto& target_path = target_res->physical_path;
 
-    std::error_code ec;
-    std::filesystem::create_directories(target_path.parent_path(), ec);
-    if (ec) {
-        std::cerr << "[ERROR] Failed to create directories for: " << target_path << " (" << ec.message() << ")\n";
-        return std::unexpected(ErrorCode::IoError);
-    }
-
     if (!atomic) {
-        std::ofstream out(target_path, std::ios::binary | std::ios::trunc);
-        if (!out) return std::unexpected(ErrorCode::IoError);
-        out.write(content.data(), static_cast<std::streamsize>(content.size()));
-        if (!out) return std::unexpected(ErrorCode::IoError);
+        std::error_code ec;
+        auto parent_dir = target_path.parent_path();
+        if (parent_dir.empty()) parent_dir = ".";
+        std::filesystem::create_directories(parent_dir, ec);
+        if (ec) {
+            std::cerr << "[ERROR] Failed to create directories for: " << target_path << " (" << ec.message() << ")\n";
+            return std::unexpected(ErrorCode::IoError);
+        }
+        int fd = ::open(target_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (fd < 0) return std::unexpected(ErrorCode::IoError);
+
+        const char* ptr = content.data();
+        size_t remaining = content.size();
+        while (remaining > 0) {
+            ssize_t written = ::write(fd, ptr, remaining);
+            if (written < 0) {
+                if (errno == EINTR) continue;
+                ::close(fd);
+                return std::unexpected(ErrorCode::IoError);
+            }
+            ptr += written;
+            remaining -= static_cast<size_t>(written);
+        }
+
+        if (::fsync(fd) != 0) {
+            if (errno != EINVAL && errno != ENOTSUP) {
+                ::close(fd);
+                return std::unexpected(ErrorCode::IoError);
+            }
+        }
+        ::close(fd);
         return {};
     }
 
-    // Atomic write workflow: write to unique temporary file and rename
-    std::ostringstream tmp_name;
-    tmp_name << "." << target_path.filename().string()
-             << "." << get_random_nonce() << ".tmp";
-    auto tmp_path = target_path.parent_path() / tmp_name.str();
-
-    {
-        std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
-        if (!out) {
-            std::cerr << "[ERROR] Could not open temp file for writing: " << tmp_path << "\n";
-            return std::unexpected(ErrorCode::IoError);
-        }
-        out.write(content.data(), static_cast<std::streamsize>(content.size()));
-        out.flush();
-        if (!out) {
-            std::filesystem::remove(tmp_path, ec);
-            return std::unexpected(ErrorCode::IoError);
-        }
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::filesystem::rename(tmp_path, target_path, ec);
-        if (ec) {
-            std::cerr << "[ERROR] Atomic rename failed: " << tmp_path << " -> " << target_path
-                      << " (" << ec.message() << ")\n";
-            std::filesystem::remove(tmp_path, ec);
-            return std::unexpected(ErrorCode::IoError);
-        }
-    }
-
-    return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    return durable_atomic_write(target_path, content);
 }
 
 Result<std::string> PosixStorageBackend::read_file(const std::string& relative_path) {
@@ -642,11 +733,10 @@ Result<std::string> PosixStorageBackend::delete_to_trash(const std::string& rela
 
         // Write metadata sidecar
         auto meta_path = trash_root_ / (trash_entry_id + ".meta");
-        std::ofstream meta(meta_path);
-        if (meta) {
-            meta << "original_path=" << relative_path << "\n";
-            meta << "deleted_at=" << timestamp << "\n";
-        }
+        std::ostringstream meta_ss;
+        meta_ss << "original_path=" << relative_path << "\n";
+        meta_ss << "deleted_at=" << timestamp << "\n";
+        durable_atomic_write(meta_path, meta_ss.str());
     }
 
     return trash_entry_id;
@@ -797,30 +887,14 @@ Result<std::string> PosixStorageBackend::create_snapshot(
     }
     std::string snap_filename = std::string(ts_str) + "_" + sanitized;
     std::filesystem::path final_path = snap_dir / snap_filename;
-    std::filesystem::path tmp_path = snap_dir / ("." + snap_filename + "." + std::to_string(get_random_nonce()) + ".tmp");
-
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
-        if (!out.is_open()) {
-            return std::unexpected(ErrorCode::IoError);
-        }
-        out.write(content.data(), static_cast<std::streamsize>(content.size()));
-        out.flush();
-        if (!out.good()) {
-            std::filesystem::remove(tmp_path, ec);
-            return std::unexpected(ErrorCode::IoError);
-        }
-        out.close();
-
-        std::filesystem::rename(tmp_path, final_path, ec);
-        if (ec) {
-            std::filesystem::remove(tmp_path, ec);
-            return std::unexpected(ErrorCode::IoError);
-        }
-    }
 
     std::string rel_result = std::string(year_str) + "/" + month_str + "/" + snap_filename;
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto write_res = durable_atomic_write(final_path, content);
+    if (!write_res.has_value()) {
+        return std::unexpected(write_res.error());
+    }
+
     return rel_result;
 }
 
@@ -833,32 +907,9 @@ Result<void> PosixStorageBackend::save_crdt_state(
     }
     std::string safe_name = sanitize_path_for_id(doc_id) + ".bin";
     auto target_path = crdt_root_ / safe_name;
-    auto temp_path = crdt_root_ / (safe_name + ".tmp." + std::to_string(get_random_nonce()));
 
-    std::error_code ec;
-    {
-        std::lock_guard<std::mutex> lock(mutex_);
-        std::ofstream out(temp_path, std::ios::binary | std::ios::trunc);
-        if (!out.is_open()) {
-            return std::unexpected(ErrorCode::IoError);
-        }
-        if (!state_bytes.empty()) {
-            out.write(reinterpret_cast<const char*>(state_bytes.data()), static_cast<std::streamsize>(state_bytes.size()));
-        }
-        out.flush();
-        if (!out.good()) {
-            std::filesystem::remove(temp_path, ec);
-            return std::unexpected(ErrorCode::IoError);
-        }
-        out.close();
-
-        std::filesystem::rename(temp_path, target_path, ec);
-        if (ec) {
-            std::filesystem::remove(temp_path, ec);
-            return std::unexpected(ErrorCode::IoError);
-        }
-    }
-    return {};
+    std::lock_guard<std::mutex> lock(mutex_);
+    return durable_atomic_write(target_path, state_bytes);
 }
 
 Result<std::vector<uint8_t>> PosixStorageBackend::load_crdt_state(
