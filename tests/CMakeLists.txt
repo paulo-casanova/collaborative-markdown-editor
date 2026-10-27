@@ -283,6 +283,17 @@ set_tests_properties(workspace_tree_perf_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Persistent Audit & Server Event Logging Regression test (Issue #30)
+add_executable(audit_and_logging_test
+    backend/audit_and_logging_test.cpp
+)
+target_link_libraries(audit_and_logging_test PRIVATE cme_core)
+target_compile_features(audit_and_logging_test PRIVATE cxx_std_23)
+add_test(NAME audit_and_logging_test COMMAND audit_and_logging_test)
+set_tests_properties(audit_and_logging_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 
 

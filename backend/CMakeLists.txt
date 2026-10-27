@@ -28,6 +28,7 @@ add_library(cme_core
     src/collab/persistence_worker.cpp
     src/review/review_service.cpp
     src/snippet/snippet_fetcher.cpp
+    src/audit/audit_service.cpp
     src/server/server.cpp
 )
 

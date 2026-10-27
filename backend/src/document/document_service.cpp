@@ -1057,6 +1057,9 @@ Result<DocumentRecord> DocumentService::update_document(
             return std::unexpected(access_res.error());
         }
         if (access_res.value() < db::AccessLevel::Edit) {
+            std::cout << "[WARN] [EDIT_REJECTED] Rejected update on document " << doc_id
+                      << " for user '" << user.username << "': Access level "
+                      << db::to_string(access_res.value()) << " < Edit\n";
             return std::unexpected(ErrorCode::PermissionDenied);
         }
 
@@ -1068,6 +1071,8 @@ Result<DocumentRecord> DocumentService::update_document(
             final_content = *content;
             auto write_res = storage_->write_file(content_file, final_content, true);
             if (!write_res.has_value()) {
+                std::cerr << "[ERROR] [SAVE] Failed to save document " << doc_id
+                          << " to '" << content_file << "': " << to_string(write_res.error()) << "\n";
                 return std::unexpected(write_res.error());
             }
         } else {
@@ -1090,6 +1095,9 @@ Result<DocumentRecord> DocumentService::update_document(
         std::string created_at = up_rows[0][0].as<std::string>();
         std::string updated_at = up_rows[0][1].as<std::string>();
         tx.commit();
+
+        std::cout << "[INFO] [SAVE] Successfully saved document " << doc_id
+                  << " ('" << fs_path << "')\n";
 
         return DocumentRecord{
             .id = doc_id,

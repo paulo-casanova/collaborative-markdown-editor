@@ -57,6 +57,8 @@ std::vector<std::string> PersistenceWorker::failed_flush_rooms() const {
 
 Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     if (!storage_) {
+        std::cerr << "[ERROR] [SAVE] Failed to save document " << room.document_id()
+                  << ": storage backend unavailable\n";
         track_flush_failure(room.document_id());
         return std::unexpected(ErrorCode::IoError);
     }
@@ -74,7 +76,7 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
                         room.document_id()
                     );
                     if (r.empty()) {
-                        std::cout << "[WARN] PersistenceWorker refusing to flush deleted document "
+                        std::cout << "[WARN] [ROOM] PersistenceWorker refusing to flush deleted document "
                                   << room.document_id() << " (fs_path: '" << fs_path << "'). Evicting room.\n";
                         room.mark_clean();
                         if (room_manager_) {
@@ -106,7 +108,7 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     }
 
     if (fs_path.empty()) {
-        std::cerr << "[ERROR] PersistenceWorker cannot flush room " << room.document_id()
+        std::cerr << "[ERROR] [SAVE] Failed to save document " << room.document_id()
                   << ": fs_path is empty and cannot be resolved.\n";
         track_flush_failure(room.document_id());
         return std::unexpected(ErrorCode::InvalidArgument);
@@ -121,7 +123,8 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     // 1. Atomic write to active content storage
     auto write_res = storage_->write_file(content_file, snapshot.content, true);
     if (!write_res.has_value()) {
-        std::cerr << "[ERROR] PersistenceWorker failed to write file: " << content_file << "\n";
+        std::cerr << "[ERROR] [SAVE] Failed to save document " << room.document_id()
+                  << " to '" << content_file << "': " << to_string(write_res.error()) << "\n";
         track_flush_failure(room.document_id());
         return write_res;
     }
@@ -161,6 +164,9 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     room.mark_clean(snapshot.sequence);
     track_flush_success(room.document_id());
     total_flushes_++;
+    std::cout << "[INFO] [SAVE] Successfully saved document " << room.document_id()
+              << " to '" << content_file << "' (sequence: " << snapshot.sequence
+              << ", " << snapshot.content.size() << " bytes)\n";
     return {};
 }
 

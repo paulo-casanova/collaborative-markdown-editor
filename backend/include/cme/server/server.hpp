@@ -21,6 +21,7 @@
 #include "cme/collab/persistence_worker.hpp"
 #include "cme/review/review_service.hpp"
 #include "cme/snippet/snippet_fetcher.hpp"
+#include "cme/audit/audit_service.hpp"
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <atomic>
@@ -112,9 +113,23 @@ public:
      */
     void close_directory_sockets(const std::string& directory_path);
 
+    /**
+     * @brief Records an audit log event to the database and structured stdout.
+     */
+    void audit_change(
+        std::string_view user_agent,
+        std::string_view action,
+        std::string_view path,
+        std::string_view result,
+        const std::optional<auth::UserIdentity>& user,
+        std::optional<std::string> document_id = std::nullopt,
+        nlohmann::json details = nlohmann::json::object()
+    );
+
     [[nodiscard]] const config::AppConfig& config() const noexcept { return config_; }
     [[nodiscard]] std::shared_ptr<db::ConnectionPool> db_pool() const noexcept { return db_pool_; }
     [[nodiscard]] std::shared_ptr<storage::IStorageBackend> storage() const noexcept { return storage_; }
+    [[nodiscard]] std::shared_ptr<audit::AuditService> audit_service() const noexcept { return audit_service_; }
     [[nodiscard]] std::shared_ptr<auth::IAdminProvider> admin_provider() const noexcept { return admin_provider_; }
     [[nodiscard]] std::shared_ptr<auth::SessionManager> session_manager() const noexcept { return session_manager_; }
     [[nodiscard]] std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider() const noexcept { return delegated_provider_; }
@@ -236,6 +251,7 @@ private:
     collab::PersistenceConfig persistence_config_{};
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::IStorageBackend> storage_;
+    std::shared_ptr<audit::AuditService> audit_service_;
     std::shared_ptr<auth::IAdminProvider> admin_provider_;
     std::shared_ptr<auth::SessionManager> session_manager_;
     std::shared_ptr<auth::DelegatedAuthProvider> delegated_provider_;

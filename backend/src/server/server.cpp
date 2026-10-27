@@ -77,6 +77,29 @@ Server::~Server() {
     stop();
 }
 
+void Server::audit_change(
+    std::string_view user_agent,
+    std::string_view action,
+    std::string_view path,
+    std::string_view result,
+    const std::optional<auth::UserIdentity>& user,
+    std::optional<std::string> document_id,
+    nlohmann::json details
+) {
+    if (!audit_service_) return;
+    audit::AuditEvent ev{
+        .user_id = user ? std::optional<std::string>(user->user_id) : std::nullopt,
+        .username = user ? std::optional<std::string>(user->username) : std::nullopt,
+        .user_agent = std::string(user_agent),
+        .action = std::string(action),
+        .document_id = std::move(document_id),
+        .path = std::string(path),
+        .result = std::string(result),
+        .details = std::move(details)
+    };
+    audit_service_->record(ev);
+}
+
 nlohmann::json Server::get_health_status() {
     auto now = std::chrono::system_clock::now();
     int64_t uptime = std::chrono::duration_cast<std::chrono::seconds>(now - start_time_).count();
@@ -322,6 +345,9 @@ Result<void> Server::start() {
         std::cerr << "[WARN] Could not connect to database on startup: " << e.what()
                   << " (server will start in degraded mode)\n";
     }
+
+    // 2.0 Initialize Audit Service
+    audit_service_ = std::make_shared<audit::AuditService>(db_pool_);
 
     // 2.1 Enforce Single-Instance Lease (Issue #8 & Standby Wait)
     if (config_.database.lease_enabled && db_pool_) {
@@ -748,6 +774,7 @@ Result<void> Server::start() {
     // POST /api/v1/workspaces/directories
     app.post("/api/v1/workspaces/directories", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -762,7 +789,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -790,6 +817,8 @@ Result<void> Server::start() {
 
             auto dir_res = document_service_->create_directory(dir_path, *auth_res.value());
             if (!dir_res.has_value()) {
+                std::string res_str = (dir_res.error() == ErrorCode::PermissionDenied) ? "DENIED" : "ERROR";
+                audit_change(user_agent, "CREATE_DIRECTORY", dir_path, res_str, *auth_res.value());
                 if (dir_res.error() == ErrorCode::PermissionDenied) {
                     send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
                 } else if (dir_res.error() == ErrorCode::InvalidArgument) {
@@ -800,6 +829,7 @@ Result<void> Server::start() {
                 return;
             }
 
+            audit_change(user_agent, "CREATE_DIRECTORY", dir_res.value(), "SUCCESS", *auth_res.value());
             send_json(res, "201 Created", nlohmann::json{{"path", dir_res.value()}, {"is_directory", true}});
         });
     });
@@ -807,6 +837,7 @@ Result<void> Server::start() {
     // PATCH /api/v1/workspaces/directories (and POST /move, /rename)
     auto handle_rename_dir = [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -821,7 +852,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -855,6 +886,8 @@ Result<void> Server::start() {
 
             auto rename_res = document_service_->rename_directory(old_path, new_path, *auth_res.value());
             if (!rename_res.has_value()) {
+                std::string res_str = (rename_res.error() == ErrorCode::PermissionDenied) ? "DENIED" : "ERROR";
+                audit_change(user_agent, "RENAME_DIRECTORY", old_path, res_str, *auth_res.value(), std::nullopt, {{"new_path", new_path}});
                 if (rename_res.error() == ErrorCode::PermissionDenied) {
                     send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
                 } else if (rename_res.error() == ErrorCode::NotFound) {
@@ -868,6 +901,8 @@ Result<void> Server::start() {
                 }
                 return;
             }
+
+            audit_change(user_agent, "RENAME_DIRECTORY", old_path, "SUCCESS", *auth_res.value(), std::nullopt, {{"old_path", old_path}, {"new_path", rename_res.value()}});
 
             if (room_manager_) {
                 std::string norm_old = old_path;
@@ -927,6 +962,7 @@ Result<void> Server::start() {
     // DELETE /api/v1/workspaces/directories (and POST /delete)
     auto handle_delete_dir = [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -974,6 +1010,9 @@ Result<void> Server::start() {
 
             auto del_res = document_service_->delete_directory(query_path, *auth_res.value());
             if (!del_res.has_value()) {
+                std::string res_str = (del_res.error() == ErrorCode::PermissionDenied) ? "DENIED" :
+                                      (del_res.error() == ErrorCode::NotFound) ? "NOT_FOUND" : "ERROR";
+                audit_change(user_agent, "DELETE_DIRECTORY", query_path, res_str, *auth_res.value());
                 if (del_res.error() == ErrorCode::PermissionDenied) {
                     send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
                 } else if (del_res.error() == ErrorCode::NotFound) {
@@ -986,6 +1025,7 @@ Result<void> Server::start() {
                 return;
             }
 
+            audit_change(user_agent, "DELETE_DIRECTORY", query_path, "SUCCESS", *auth_res.value(), std::nullopt, {{"trash_id", del_res.value()}});
             cleanup_rooms(query_path);
 
             send_json(res, "200 OK", {
@@ -1000,7 +1040,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup, cleanup_rooms](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup, cleanup_rooms](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -1030,6 +1070,9 @@ Result<void> Server::start() {
 
             auto del_res = document_service_->delete_directory(dir_path, *auth_res.value());
             if (!del_res.has_value()) {
+                std::string res_str = (del_res.error() == ErrorCode::PermissionDenied) ? "DENIED" :
+                                      (del_res.error() == ErrorCode::NotFound) ? "NOT_FOUND" : "ERROR";
+                audit_change(user_agent, "DELETE_DIRECTORY", dir_path, res_str, *auth_res.value());
                 if (del_res.error() == ErrorCode::PermissionDenied) {
                     send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
                 } else if (del_res.error() == ErrorCode::NotFound) {
@@ -1042,6 +1085,7 @@ Result<void> Server::start() {
                 return;
             }
 
+            audit_change(user_agent, "DELETE_DIRECTORY", dir_path, "SUCCESS", *auth_res.value(), std::nullopt, {{"trash_id", del_res.value()}});
             cleanup_rooms(dir_path);
 
             send_json(res, "200 OK", {
@@ -1389,6 +1433,7 @@ Result<void> Server::start() {
     // POST /api/v1/workspaces/permissions
     app.post("/api/v1/workspaces/permissions", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -1403,7 +1448,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -1444,6 +1489,10 @@ Result<void> Server::start() {
                 target_type, target_id, dir_path, grantee_type, grantee_id, access_level, is_inheritable, *auth_res.value()
             );
             if (!set_res.has_value()) {
+                std::string res_str = (set_res.error() == ErrorCode::PermissionDenied) ? "DENIED" : "ERROR";
+                audit_change(user_agent, "SET_PERMISSION", dir_path, res_str, *auth_res.value(),
+                             target_id.empty() ? std::nullopt : std::optional<std::string>(target_id),
+                             {{"target_type", target_type}, {"grantee_type", grantee_type}, {"grantee_id", grantee_id}, {"access_level", access_level}});
                 if (set_res.error() == ErrorCode::PermissionDenied) {
                     send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
                 } else if (set_res.error() == ErrorCode::InvalidArgument) {
@@ -1453,6 +1502,10 @@ Result<void> Server::start() {
                 }
                 return;
             }
+
+            audit_change(user_agent, "SET_PERMISSION", dir_path, "SUCCESS", *auth_res.value(),
+                         target_id.empty() ? std::nullopt : std::optional<std::string>(target_id),
+                         {{"target_type", target_type}, {"grantee_type", grantee_type}, {"grantee_id", grantee_id}, {"access_level", access_level}});
 
             send_json(res, "200 OK", set_res.value());
         });
@@ -1579,6 +1632,7 @@ Result<void> Server::start() {
     app.del("/api/v1/workspaces/permissions/:id", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
         std::string perm_id_str = std::string(req->getParameter(0));
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -1604,6 +1658,9 @@ Result<void> Server::start() {
 
         auto del_res = document_service_->delete_node_permission(perm_id, *auth_res.value());
         if (!del_res.has_value()) {
+            std::string res_str = (del_res.error() == ErrorCode::PermissionDenied) ? "DENIED" :
+                                  (del_res.error() == ErrorCode::NotFound) ? "NOT_FOUND" : "ERROR";
+            audit_change(user_agent, "DELETE_PERMISSION", "", res_str, *auth_res.value(), std::nullopt, {{"permission_id", perm_id}});
             if (del_res.error() == ErrorCode::PermissionDenied) {
                 send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
             } else if (del_res.error() == ErrorCode::NotFound) {
@@ -1614,12 +1671,14 @@ Result<void> Server::start() {
             return;
         }
 
+        audit_change(user_agent, "DELETE_PERMISSION", "", "SUCCESS", *auth_res.value(), std::nullopt, {{"permission_id", perm_id}});
         send_json(res, "200 OK", {{"status", "deleted"}});
     });
 
     // PATCH /api/v1/workspaces/permissions/owner
     app.patch("/api/v1/workspaces/permissions/owner", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -1634,7 +1693,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -1671,6 +1730,10 @@ Result<void> Server::start() {
                 target_type, target_id, dir_path, new_owner_user_id, new_owner_team_id, *auth_res.value()
             );
             if (!trans_res.has_value()) {
+                std::string res_str = (trans_res.error() == ErrorCode::PermissionDenied) ? "DENIED" : "ERROR";
+                audit_change(user_agent, "TRANSFER_OWNERSHIP", dir_path, res_str, *auth_res.value(),
+                             target_id.empty() ? std::nullopt : std::optional<std::string>(target_id),
+                             {{"new_owner_user_id", new_owner_user_id}, {"new_owner_team_id", new_owner_team_id}});
                 if (trans_res.error() == ErrorCode::PermissionDenied) {
                     send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
                 } else {
@@ -1678,6 +1741,10 @@ Result<void> Server::start() {
                 }
                 return;
             }
+
+            audit_change(user_agent, "TRANSFER_OWNERSHIP", dir_path, "SUCCESS", *auth_res.value(),
+                         target_id.empty() ? std::nullopt : std::optional<std::string>(target_id),
+                         {{"new_owner_user_id", new_owner_user_id}, {"new_owner_team_id", new_owner_team_id}});
 
             send_json(res, "200 OK", {{"status", "transferred"}});
         });
@@ -1834,6 +1901,7 @@ Result<void> Server::start() {
     // POST /api/v1/documents
     app.post("/api/v1/documents", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -1848,7 +1916,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -1888,6 +1956,9 @@ Result<void> Server::start() {
 
             auto doc_res = document_service_->create_document(create_req, *auth_res.value());
             if (!doc_res.has_value()) {
+                audit_change(user_agent, "CREATE_DOCUMENT", create_req.path,
+                             (doc_res.error() == ErrorCode::PermissionDenied) ? "DENIED" : "ERROR",
+                             *auth_res.value(), std::nullopt, {{"error", to_string(doc_res.error())}});
                 if (doc_res.error() == ErrorCode::AlreadyExists) {
                     send_json(res, "409 Conflict", {{"error", "Document already exists at path"}});
                 } else if (doc_res.error() == ErrorCode::PermissionDenied) {
@@ -1900,7 +1971,11 @@ Result<void> Server::start() {
                 return;
             }
 
-            send_json(res, "201 Created", doc_res.value().to_json(true));
+            auto doc = doc_res.value();
+            audit_change(user_agent, "CREATE_DOCUMENT", doc.path, "SUCCESS",
+                         *auth_res.value(), doc.id, {{"title", doc.title}});
+
+            send_json(res, "201 Created", doc.to_json(true));
         });
     });
 
@@ -2013,6 +2088,7 @@ Result<void> Server::start() {
     app.patch("/api/v1/documents/:id/move", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
         std::string doc_id = std::string(req->getParameter(0));
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -2027,7 +2103,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, doc_id, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -2059,6 +2135,9 @@ Result<void> Server::start() {
 
             auto doc_res = document_service_->move_document(doc_id, new_path, *auth_res.value(), req_title);
             if (!doc_res.has_value()) {
+                std::string res_str = (doc_res.error() == ErrorCode::PermissionDenied) ? "DENIED" :
+                                      (doc_res.error() == ErrorCode::NotFound) ? "NOT_FOUND" : "ERROR";
+                audit_change(user_agent, "MOVE_DOCUMENT", new_path, res_str, *auth_res.value(), doc_id);
                 if (doc_res.error() == ErrorCode::NotFound) {
                     send_json(res, "404 Not Found", {{"error", "Document not found"}});
                 } else if (doc_res.error() == ErrorCode::PermissionDenied) {
@@ -2070,6 +2149,8 @@ Result<void> Server::start() {
                 }
                 return;
             }
+
+            audit_change(user_agent, "MOVE_DOCUMENT", doc_res.value().path, "SUCCESS", *auth_res.value(), doc_id, {{"new_path", doc_res.value().path}});
 
             if (room_manager_) {
                 auto active_room = room_manager_->get_room(doc_id);
@@ -2424,6 +2505,7 @@ Result<void> Server::start() {
     app.put("/api/v1/documents/:id", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
         std::string doc_id = std::string(req->getParameter(0));
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -2438,7 +2520,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, doc_id, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -2470,17 +2552,25 @@ Result<void> Server::start() {
 
             auto doc_res = document_service_->update_document(doc_id, opt_content, title, *auth_res.value(), number_headers);
             if (!doc_res.has_value()) {
-                if (doc_res.error() == ErrorCode::NotFound) {
-                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
-                } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                if (doc_res.error() == ErrorCode::PermissionDenied) {
+                    std::cout << "[WARN] [EDIT_REJECTED] Rejected REST edit from user '"
+                              << auth_res.value()->username << "' on document " << doc_id << ": Permission denied\n";
+                    audit_change(user_agent, "UPDATE_DOCUMENT", "", "DENIED", *auth_res.value(), doc_id);
                     send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (doc_res.error() == ErrorCode::NotFound) {
+                    audit_change(user_agent, "UPDATE_DOCUMENT", "", "NOT_FOUND", *auth_res.value(), doc_id);
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
                 } else {
+                    std::cerr << "[ERROR] [SAVE] Failed to save document " << doc_id << ": " << to_string(doc_res.error()) << "\n";
+                    audit_change(user_agent, "UPDATE_DOCUMENT", "", "ERROR", *auth_res.value(), doc_id, {{"error", to_string(doc_res.error())}});
                     send_json(res, "500 Internal Server Error", {{"error", "Failed to update document"}});
                 }
                 return;
             }
 
             auto doc = doc_res.value();
+            audit_change(user_agent, "UPDATE_DOCUMENT", doc.path, "SUCCESS", *auth_res.value(), doc.id);
+
             if (room_manager_) {
                 auto active_room = room_manager_->get_room(doc.id);
                 if (active_room) {
@@ -2511,6 +2601,7 @@ Result<void> Server::start() {
     app.patch("/api/v1/documents/:id", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
         std::string doc_id = std::string(req->getParameter(0));
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -2525,7 +2616,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, doc_id, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, doc_id, user_agent, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -2556,17 +2647,24 @@ Result<void> Server::start() {
 
             auto doc_res = document_service_->update_document(doc_id, opt_content, title, *auth_res.value(), number_headers);
             if (!doc_res.has_value()) {
-                if (doc_res.error() == ErrorCode::NotFound) {
-                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
-                } else if (doc_res.error() == ErrorCode::PermissionDenied) {
+                if (doc_res.error() == ErrorCode::PermissionDenied) {
+                    std::cout << "[WARN] [EDIT_REJECTED] Rejected REST edit from user '"
+                              << auth_res.value()->username << "' on document " << doc_id << ": Permission denied\n";
+                    audit_change(user_agent, "UPDATE_DOCUMENT", "", "DENIED", *auth_res.value(), doc_id);
                     send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else if (doc_res.error() == ErrorCode::NotFound) {
+                    audit_change(user_agent, "UPDATE_DOCUMENT", "", "NOT_FOUND", *auth_res.value(), doc_id);
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
                 } else {
+                    std::cerr << "[ERROR] [SAVE] Failed to save document " << doc_id << ": " << to_string(doc_res.error()) << "\n";
+                    audit_change(user_agent, "UPDATE_DOCUMENT", "", "ERROR", *auth_res.value(), doc_id, {{"error", to_string(doc_res.error())}});
                     send_json(res, "500 Internal Server Error", {{"error", "Failed to update document"}});
                 }
                 return;
             }
 
             auto doc = doc_res.value();
+            audit_change(user_agent, "UPDATE_DOCUMENT", doc.path, "SUCCESS", *auth_res.value(), doc.id);
             if (room_manager_) {
                 auto active_room = room_manager_->get_room(doc.id);
                 if (active_room) {
@@ -2597,6 +2695,7 @@ Result<void> Server::start() {
     app.del("/api/v1/documents/:id", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
         std::string doc_id = std::string(req->getParameter(0));
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -2614,6 +2713,9 @@ Result<void> Server::start() {
 
         auto del_res = document_service_->delete_document(doc_id, *auth_res.value());
         if (!del_res.has_value()) {
+            std::string res_str = (del_res.error() == ErrorCode::PermissionDenied) ? "DENIED" :
+                                  (del_res.error() == ErrorCode::NotFound) ? "NOT_FOUND" : "ERROR";
+            audit_change(user_agent, "DELETE_DOCUMENT", "", res_str, *auth_res.value(), doc_id);
             if (del_res.error() == ErrorCode::NotFound) {
                 send_json(res, "404 Not Found", {{"error", "Document not found"}});
             } else if (del_res.error() == ErrorCode::PermissionDenied) {
@@ -2623,6 +2725,8 @@ Result<void> Server::start() {
             }
             return;
         }
+
+        audit_change(user_agent, "DELETE_DOCUMENT", "", "SUCCESS", *auth_res.value(), doc_id, {{"trash_id", del_res.value()}});
 
         if (room_manager_) {
             auto room = room_manager_->get_room(doc_id);
@@ -2864,6 +2968,7 @@ Result<void> Server::start() {
     app.post("/api/v1/trash/:id/restore", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
         std::string trash_id = url_decode(req->getParameter(0));
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -2881,6 +2986,7 @@ Result<void> Server::start() {
 
         auto rest_res = document_service_->restore_trash_item(trash_id, "", *auth_res.value());
         if (!rest_res.has_value()) {
+            audit_change(user_agent, "RESTORE_DOCUMENT", "", "ERROR", *auth_res.value(), std::nullopt, {{"trash_id", trash_id}});
             if (rest_res.error() == ErrorCode::NotFound) {
                 send_json(res, "404 Not Found", {{"error", "Trash entry not found"}});
             } else {
@@ -2889,6 +2995,7 @@ Result<void> Server::start() {
             return;
         }
 
+        audit_change(user_agent, "RESTORE_DOCUMENT", rest_res.value().path, "SUCCESS", *auth_res.value(), rest_res.value().id, {{"trash_id", trash_id}});
         send_json(res, "200 OK", rest_res.value().to_json());
     });
 
@@ -2896,6 +3003,7 @@ Result<void> Server::start() {
     app.del("/api/v1/trash/:id", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
         std::string trash_id = url_decode(req->getParameter(0));
+        std::string user_agent = std::string(req->getHeader("user-agent"));
         std::string auth_hdr = std::string(req->getHeader("authorization"));
         std::string cookie_hdr = std::string(req->getHeader("cookie"));
         std::string del_header_name = config_.authn.delegated_header;
@@ -2913,6 +3021,7 @@ Result<void> Server::start() {
 
         auto purge_res = document_service_->purge_trash_item(trash_id, *auth_res.value());
         if (!purge_res.has_value()) {
+            audit_change(user_agent, "PURGE_TRASH", "", "ERROR", *auth_res.value(), std::nullopt, {{"trash_id", trash_id}});
             if (purge_res.error() == ErrorCode::NotFound) {
                 send_json(res, "404 Not Found", {{"error", "Trash entry not found"}});
             } else {
@@ -2920,6 +3029,8 @@ Result<void> Server::start() {
             }
             return;
         }
+
+        audit_change(user_agent, "PURGE_TRASH", "", "SUCCESS", *auth_res.value(), std::nullopt, {{"trash_id", trash_id}});
 
         send_json(res, "200 OK", {{"status", "purged"}, {"id", trash_id}});
     });
@@ -3473,6 +3584,55 @@ Result<void> Server::start() {
         send_json(res, "200 OK", {
             {"barrier_active", is_backup_barrier_active()}
         });
+    });
+
+    // =========================================================================
+    // Admin Audit Logs Endpoint (Issue #30)
+    // =========================================================================
+
+    // GET /api/v1/admin/audit-logs
+    app.get("/api/v1/admin/audit-logs", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto user_opt = verify_admin_access(ctx, res);
+        if (!user_opt) return;
+
+        if (!audit_service_) {
+            send_json(res, "500 Internal Server Error", {{"error", "Audit service unavailable"}});
+            return;
+        }
+
+        audit::AuditQuery q;
+        std::string limit_str = std::string(req->getQuery("limit"));
+        if (!limit_str.empty()) {
+            try { q.limit = std::stoul(limit_str); } catch (...) {}
+        }
+        std::string offset_str = std::string(req->getQuery("offset"));
+        if (!offset_str.empty()) {
+            try { q.offset = std::stoul(offset_str); } catch (...) {}
+        }
+        std::string action_param = url_decode(req->getQuery("action"));
+        if (!action_param.empty()) q.action = action_param;
+
+        std::string doc_id_param = url_decode(req->getQuery("document_id"));
+        if (!doc_id_param.empty()) q.document_id = doc_id_param;
+
+        std::string user_id_param = url_decode(req->getQuery("user_id"));
+        if (!user_id_param.empty()) q.user_id = user_id_param;
+
+        std::string result_param = url_decode(req->getQuery("result"));
+        if (!result_param.empty()) q.result = result_param;
+
+        auto logs_res = audit_service_->query(q);
+        if (!logs_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to query audit logs"}});
+            return;
+        }
+
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& entry : logs_res.value()) {
+            arr.push_back(entry.to_json());
+        }
+        send_json(res, "200 OK", arr);
     });
 
     // =========================================================================
@@ -4345,6 +4505,8 @@ Result<void> Server::start() {
             }
 
             room->add_peer(data->client_id, data->username, data->display_name, data->avatar_color);
+            std::cout << "[INFO] [ROOM] Client " << data->client_id << " (user '" << data->username
+                      << "') joined room for document " << data->document_id << "\n";
 
             // Phase 1 (Sync Handshake): Server sends its current state vector (SyncStep1) to client
             auto sv = room->get_state_vector();
@@ -4449,6 +4611,10 @@ Result<void> Server::start() {
                                         .subtype = 0x02,
                                         .update_data = std::string(sub_payload)
                                     });
+                                } else {
+                                    std::cout << "[WARN] [EDIT_REJECTED] Rejected SyncStep2 from user '"
+                                              << data->username << "' (client " << data->client_id
+                                              << ") on document " << data->document_id << ": insufficient permissions\n";
                                 }
                                 break;
                             }
@@ -4476,7 +4642,15 @@ Result<void> Server::start() {
                                         reply.append(reinterpret_cast<const char*>(diff.data()), diff.size());
                                         ws->send(reply, uWS::OpCode::BINARY);
                                     }
+                                } else {
+                                    std::cout << "[WARN] [EDIT_REJECTED] Failed to apply SyncStep2 update from user '"
+                                              << data->username << "' (client " << data->client_id
+                                              << ") on document " << data->document_id << ": " << to_string(apply_res.error()) << "\n";
                                 }
+                            } else {
+                                std::cout << "[WARN] [EDIT_REJECTED] Rejected SyncStep2 from user '"
+                                          << data->username << "' (client " << data->client_id
+                                          << ") on document " << data->document_id << ": insufficient permissions\n";
                             }
                             break;
                         }
@@ -4490,6 +4664,10 @@ Result<void> Server::start() {
                                         .subtype = 0x03,
                                         .update_data = std::string(sub_payload)
                                     });
+                                } else {
+                                    std::cout << "[WARN] [EDIT_REJECTED] Rejected SyncUpdate from user '"
+                                              << data->username << "' (client " << data->client_id
+                                              << ") on document " << data->document_id << ": insufficient permissions\n";
                                 }
                                 break;
                             }
@@ -4511,7 +4689,15 @@ Result<void> Server::start() {
                                         reply.append(reinterpret_cast<const char*>(diff.data()), diff.size());
                                         ws->send(reply, uWS::OpCode::BINARY);
                                     }
+                                } else {
+                                    std::cout << "[WARN] [EDIT_REJECTED] Failed to apply SyncUpdate from user '"
+                                              << data->username << "' (client " << data->client_id
+                                              << ") on document " << data->document_id << ": " << to_string(apply_res.error()) << "\n";
                                 }
+                            } else {
+                                std::cout << "[WARN] [EDIT_REJECTED] Rejected SyncUpdate from user '"
+                                          << data->username << "' (client " << data->client_id
+                                          << ") on document " << data->document_id << ": insufficient permissions\n";
                             }
                             break;
                         }
@@ -4564,6 +4750,8 @@ Result<void> Server::start() {
             if (room) {
                 room->remove_peer(data->client_id);
             }
+            std::cout << "[INFO] [ROOM] Client " << data->client_id << " (user '" << data->username
+                      << "') left room for document " << data->document_id << "\n";
 
             nlohmann::json departure_payload = {
                 {"type", "departure"},
