@@ -1,4 +1,5 @@
 #include "cme/server/server.hpp"
+#include "cme/common.hpp"
 #include "cme/version.hpp"
 #include "cme/auth/crypto_utils.hpp"
 #include "cme/renderer/markdown_renderer.hpp"
@@ -891,6 +892,24 @@ Result<void> Server::start() {
                         room->set_fs_path(std::move(updated_path));
                     }
                 }
+
+                std::lock_guard lock(sockets_mutex_);
+                for (auto& [doc_id, sockets] : active_sockets_) {
+                    for (void* ptr : sockets) {
+                        auto* ws = static_cast<uWS::WebSocket<false, true, collab::CollabSocketData>*>(ptr);
+                        auto* data = ws->getUserData();
+                        if (data) {
+                            std::string cur_path = data->fs_path;
+                            while (!cur_path.empty() && cur_path.front() == '/') cur_path.erase(0, 1);
+                            while (!cur_path.empty() && cur_path.back() == '/') cur_path.pop_back();
+                            if (cur_path == norm_old) {
+                                data->fs_path = norm_new;
+                            } else if (cur_path.starts_with(old_prefix)) {
+                                data->fs_path = norm_new + cur_path.substr(norm_old.length());
+                            }
+                        }
+                    }
+                }
             }
 
             send_json(res, "200 OK", {
@@ -919,21 +938,26 @@ Result<void> Server::start() {
         auto header_lookup = make_header_lookup(req);
 
         auto cleanup_rooms = [this](const std::string& path) {
-            if (!room_manager_) return;
             std::string norm_del = path;
             while (!norm_del.empty() && norm_del.front() == '/') norm_del.erase(0, 1);
             while (!norm_del.empty() && norm_del.back() == '/') norm_del.pop_back();
             std::string del_prefix = norm_del + "/";
-            for (auto& room : room_manager_->get_all_rooms()) {
-                if (!room) continue;
-                std::string cur_path = room->fs_path();
-                while (!cur_path.empty() && cur_path.front() == '/') cur_path.erase(0, 1);
-                while (!cur_path.empty() && cur_path.back() == '/') cur_path.pop_back();
-                if (cur_path == norm_del || cur_path.starts_with(del_prefix)) {
-                    room->mark_clean();
-                    room_manager_->remove_room(room->document_id());
+
+            if (room_manager_) {
+                for (auto& room : room_manager_->get_all_rooms()) {
+                    if (!room) continue;
+                    std::string cur_path = room->fs_path();
+                    while (!cur_path.empty() && cur_path.front() == '/') cur_path.erase(0, 1);
+                    while (!cur_path.empty() && cur_path.back() == '/') cur_path.pop_back();
+                    if (cur_path == norm_del || cur_path.starts_with(del_prefix)) {
+                        std::string doc_id = room->document_id();
+                        room->mark_clean();
+                        room_manager_->remove_room(doc_id);
+                        close_document_sockets(doc_id);
+                    }
                 }
             }
+            close_directory_sockets(norm_del);
         };
 
         std::string query_path = url_decode(req->getQuery("path"));
@@ -2600,6 +2624,15 @@ Result<void> Server::start() {
             return;
         }
 
+        if (room_manager_) {
+            auto room = room_manager_->get_room(doc_id);
+            if (room) {
+                room->mark_clean();
+                room_manager_->remove_room(doc_id);
+            }
+        }
+        close_document_sockets(doc_id);
+
         send_json(res, "200 OK", {{"status", "deleted"}, {"trash_id", del_res.value()}});
     });
 
@@ -4254,12 +4287,17 @@ Result<void> Server::start() {
             auto *data = ws->getUserData();
             if (!data) return;
 
+            {
+                std::lock_guard lock(sockets_mutex_);
+                active_sockets_[data->document_id].insert(static_cast<void*>(ws));
+            }
+
             ws->subscribe(data->topic);
 
             auto room = room_manager_->get_room(data->document_id);
             if (!room) {
-                std::string resolved_path = data->fs_path;
-                if (resolved_path.empty() && db_pool_) {
+                std::string resolved_path;
+                if (db_pool_ && is_valid_uuid(data->document_id)) {
                     try {
                         auto conn_res = db_pool_->acquire();
                         if (conn_res.has_value()) {
@@ -4273,11 +4311,13 @@ Result<void> Server::start() {
                             }
                         }
                     } catch (...) {}
+                } else {
+                    resolved_path = data->fs_path;
                 }
 
                 if (resolved_path.empty()) {
                     std::cerr << "[ERROR] Cannot open collaborative room " << data->document_id
-                              << ": missing fs_path. Closing socket.\n";
+                              << ": missing fs_path or deleted document. Closing socket.\n";
                     ws->close();
                     return;
                 }
@@ -4330,8 +4370,8 @@ Result<void> Server::start() {
 
             auto room = room_manager_->get_room(data->document_id);
             if (!room) {
-                std::string resolved_path = data->fs_path;
-                if (resolved_path.empty() && db_pool_) {
+                std::string resolved_path;
+                if (db_pool_ && is_valid_uuid(data->document_id)) {
                     try {
                         auto conn_res = db_pool_->acquire();
                         if (conn_res.has_value()) {
@@ -4345,11 +4385,13 @@ Result<void> Server::start() {
                             }
                         }
                     } catch (...) {}
+                } else {
+                    resolved_path = data->fs_path;
                 }
 
                 if (resolved_path.empty()) {
-                    std::cerr << "[ERROR] Cannot process message for room " << data->document_id
-                              << ": missing fs_path. Closing socket.\n";
+                    std::cerr << "[WARN] Cannot process message for room " << data->document_id
+                              << ": document no longer exists or missing fs_path. Closing socket.\n";
                     ws->close();
                     return;
                 }
@@ -4506,6 +4548,17 @@ Result<void> Server::start() {
             (void)message;
             auto *data = ws->getUserData();
             if (!data) return;
+
+            {
+                std::lock_guard lock(sockets_mutex_);
+                auto it = active_sockets_.find(data->document_id);
+                if (it != active_sockets_.end()) {
+                    it->second.erase(static_cast<void*>(ws));
+                    if (it->second.empty()) {
+                        active_sockets_.erase(it);
+                    }
+                }
+            }
 
             auto room = room_manager_->get_room(data->document_id);
             if (room) {
@@ -4725,6 +4778,82 @@ void Server::broadcast_to_room(const std::string& document_id, std::string_view 
     loop->defer([app, topic = std::move(topic), msg = std::move(msg_copy), binary]() {
         app->publish(topic, msg, binary ? uWS::OpCode::BINARY : uWS::OpCode::TEXT);
     });
+}
+
+void Server::close_document_sockets(const std::string& document_id) {
+    if (!uws_loop_) return;
+    auto* loop = static_cast<uWS::Loop*>(uws_loop_);
+
+    auto do_close = [this, document_id]() {
+        std::vector<void*> sockets_to_close;
+        {
+            std::lock_guard lock(sockets_mutex_);
+            auto it = active_sockets_.find(document_id);
+            if (it != active_sockets_.end()) {
+                sockets_to_close.assign(it->second.begin(), it->second.end());
+                active_sockets_.erase(it);
+            }
+        }
+        for (void* ptr : sockets_to_close) {
+            auto* ws = static_cast<uWS::WebSocket<false, true, collab::CollabSocketData>*>(ptr);
+            ws->close();
+        }
+    };
+
+    if (loop_thread_id_ != std::thread::id{} && std::this_thread::get_id() == loop_thread_id_) {
+        do_close();
+    } else {
+        loop->defer(std::move(do_close));
+    }
+}
+
+void Server::close_directory_sockets(const std::string& directory_path) {
+    if (!uws_loop_) return;
+    auto* loop = static_cast<uWS::Loop*>(uws_loop_);
+
+    std::string norm_del = directory_path;
+    while (!norm_del.empty() && norm_del.front() == '/') norm_del.erase(0, 1);
+    while (!norm_del.empty() && norm_del.back() == '/') norm_del.pop_back();
+    std::string del_prefix = norm_del + "/";
+
+    auto do_close = [this, norm_del, del_prefix]() {
+        std::vector<void*> sockets_to_close;
+        {
+            std::lock_guard lock(sockets_mutex_);
+            for (auto it = active_sockets_.begin(); it != active_sockets_.end(); ) {
+                bool match = false;
+                for (void* ptr : it->second) {
+                    auto* ws = static_cast<uWS::WebSocket<false, true, collab::CollabSocketData>*>(ptr);
+                    auto* data = ws->getUserData();
+                    if (data) {
+                        std::string cur_path = data->fs_path;
+                        while (!cur_path.empty() && cur_path.front() == '/') cur_path.erase(0, 1);
+                        while (!cur_path.empty() && cur_path.back() == '/') cur_path.pop_back();
+                        if (cur_path == norm_del || cur_path.starts_with(del_prefix)) {
+                            match = true;
+                            break;
+                        }
+                    }
+                }
+                if (match) {
+                    sockets_to_close.insert(sockets_to_close.end(), it->second.begin(), it->second.end());
+                    it = active_sockets_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (void* ptr : sockets_to_close) {
+            auto* ws = static_cast<uWS::WebSocket<false, true, collab::CollabSocketData>*>(ptr);
+            ws->close();
+        }
+    };
+
+    if (loop_thread_id_ != std::thread::id{} && std::this_thread::get_id() == loop_thread_id_) {
+        do_close();
+    } else {
+        loop->defer(std::move(do_close));
+    }
 }
 
 } // namespace cme::server

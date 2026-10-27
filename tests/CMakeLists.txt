@@ -250,6 +250,18 @@ set_tests_properties(folder_rename_live_rooms_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Deleted Document Room Eviction Regression test (Issue #27)
+add_executable(deleted_document_eviction_test
+    backend/deleted_document_eviction_test.cpp
+)
+target_link_libraries(deleted_document_eviction_test PRIVATE cme_core)
+target_compile_features(deleted_document_eviction_test PRIVATE cxx_std_23)
+add_test(NAME deleted_document_eviction_test COMMAND deleted_document_eviction_test)
+set_tests_properties(deleted_document_eviction_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 

@@ -29,6 +29,7 @@
 #include <optional>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 #include <cctype>
 
 namespace usockets {
@@ -100,6 +101,16 @@ public:
      * @brief Broadcasts an arbitrary binary or text message to all peers connected to a document room.
      */
     void broadcast_to_room(const std::string& document_id, std::string_view message, bool binary = true);
+
+    /**
+     * @brief Closes all active WebSocket connections for a given document.
+     */
+    void close_document_sockets(const std::string& document_id);
+
+    /**
+     * @brief Closes all active WebSocket connections for documents under a directory.
+     */
+    void close_directory_sockets(const std::string& directory_path);
 
     [[nodiscard]] const config::AppConfig& config() const noexcept { return config_; }
     [[nodiscard]] std::shared_ptr<db::ConnectionPool> db_pool() const noexcept { return db_pool_; }
@@ -237,6 +248,9 @@ private:
     std::shared_ptr<review::ReviewService> review_service_;
     std::shared_ptr<snippet::SnippetFetcher> snippet_fetcher_;
     std::shared_ptr<db::InstanceLeaseManager> lease_manager_;
+
+    mutable std::mutex sockets_mutex_;
+    std::unordered_map<std::string, std::unordered_set<void*>> active_sockets_;
 
     std::chrono::system_clock::time_point start_time_;
     std::atomic<bool> is_running_{false};

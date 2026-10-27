@@ -1,4 +1,5 @@
 #include "cme/collab/persistence_worker.hpp"
+#include "cme/common.hpp"
 #include <iostream>
 
 namespace cme::collab {
@@ -61,16 +62,34 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     }
 
     std::string fs_path = room.fs_path();
-    if (fs_path.empty() && db_pool_ && !room.document_id().empty()) {
+    if (db_pool_ && !room.document_id().empty()) {
         try {
             auto conn_res = db_pool_->acquire();
             if (conn_res.has_value()) {
                 pqxx::work tx(conn_res->get());
-                auto r = tx.exec_params(
-                    "SELECT fs_path FROM documents WHERE id = $1::uuid;",
-                    room.document_id()
-                );
-                if (!r.empty() && !r[0][0].is_null()) {
+                pqxx::result r;
+                if (is_valid_uuid(room.document_id())) {
+                    r = tx.exec_params(
+                        "SELECT fs_path FROM documents WHERE id = $1::uuid;",
+                        room.document_id()
+                    );
+                    if (r.empty()) {
+                        std::cout << "[WARN] PersistenceWorker refusing to flush deleted document "
+                                  << room.document_id() << " (fs_path: '" << fs_path << "'). Evicting room.\n";
+                        room.mark_clean();
+                        if (room_manager_) {
+                            room_manager_->remove_room(room.document_id());
+                        }
+                        return {};
+                    }
+                } else if (fs_path.empty()) {
+                    r = tx.exec_params(
+                        "SELECT fs_path FROM documents WHERE fs_path = $1 LIMIT 1;",
+                        room.document_id()
+                    );
+                }
+
+                if (!r.empty() && fs_path.empty() && !r[0][0].is_null()) {
                     std::string recovered = r[0][0].as<std::string>();
                     if (!recovered.empty()) {
                         room.set_fs_path(recovered);
@@ -124,7 +143,7 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
     }
 
     // 4. Update PostgreSQL updated_at timestamp
-    if (db_pool_ && !room.document_id().empty()) {
+    if (db_pool_ && !room.document_id().empty() && is_valid_uuid(room.document_id())) {
         auto conn_res = db_pool_->acquire();
         if (conn_res.has_value()) {
             try {
