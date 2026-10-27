@@ -7,6 +7,8 @@
 #include <chrono>
 #include <iomanip>
 #include <map>
+#include <unordered_set>
+#include <unordered_map>
 #include <zlib.h>
 
 namespace cme::document {
@@ -1683,6 +1685,7 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
         std::string title;
         std::string owner_id;
         std::string updated_at;
+        std::string owner_team_id;
     };
 
     std::map<std::string, DocMeta> indexed_docs;
@@ -1693,103 +1696,189 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
         return std::unexpected(list_res.error());
     }
 
-    {
-        auto conn_res = db_pool_->acquire();
-        if (!conn_res.has_value()) {
-            return std::unexpected(conn_res.error());
-        }
-
-        std::vector<std::string> stale_ids;
-        try {
-            pqxx::read_transaction tx(conn_res->get());
-            auto rows = tx.exec(
-                "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
-                "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
-                "FROM documents;"
-            );
-            for (const auto& r : rows) {
-                std::string p = r[1].as<std::string>();
-                bool is_bundle_path = p.ends_with(".bundle");
-                auto n_info = storage_->get_node_info(p);
-                if (n_info.has_value() && n_info->is_directory && !is_bundle_path) {
-                    stale_ids.push_back(r[0].as<std::string>());
-                    continue;
-                }
-                indexed_docs[p] = DocMeta{
-                    .id = r[0].as<std::string>(),
-                    .title = r[2].as<std::string>(),
-                    .owner_id = r[3].as<std::string>(),
-                    .updated_at = r[4].as<std::string>()
-                };
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "[ERROR] get_workspace_tree DB fetch failed: " << e.what() << "\n";
-        }
-
-        if (!stale_ids.empty()) {
-            try {
-                pqxx::work wtx(conn_res->get());
-                for (const auto& sid : stale_ids) {
-                    wtx.exec_params("DELETE FROM documents WHERE id = $1::uuid;", sid);
-                }
-                wtx.commit();
-            } catch (const std::exception& e) {
-                std::cerr << "[WARN] Purging stale directory records in get_workspace_tree failed: " << e.what() << "\n";
-            }
-        }
-
-        // Auto-reconcile unindexed documents & files found on disk
-        std::vector<std::string> unindexed_paths;
-        for (const auto& node : list_res.value()) {
-            if (!node.is_directory || (node.is_bundle && node.relative_path.ends_with(".bundle"))) {
-                if (node.relative_path.find(".bundle/") == std::string::npos &&
-                    !indexed_docs.contains(node.relative_path)) {
-                    unindexed_paths.push_back(node.relative_path);
-                }
-            }
-        }
-
-        if (!unindexed_paths.empty()) {
-            try {
-                pqxx::work wtx(conn_res->get());
-                for (const auto& path : unindexed_paths) {
-                    bool is_bundle = path.ends_with(".bundle") && storage_->is_bundle(path).value_or(false);
-                    std::string lower_path = to_lower_string(path);
-                    bool is_md = is_bundle || lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
-                    std::string title;
-                    if (is_md) {
-                        std::string content_file = is_bundle ? (path + "/index.md") : path;
-                        auto content_res = storage_->read_file(content_file);
-                        std::string disk_content = content_res.has_value() ? content_res.value() : "";
-                        title = derive_title(disk_content, path);
-                    } else {
-                        title = std::filesystem::path(path).filename().string();
-                    }
-
-                    auto ins_rows = wtx.exec_params(
-                        "INSERT INTO documents (fs_path, title, owner_user_id) "
-                        "VALUES ($1, $2, NULLIF($3, '')::uuid) "
-                        "ON CONFLICT (fs_path) DO UPDATE SET updated_at = NOW() "
-                        "RETURNING id, TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
-                        path,
-                        title,
-                        user.user_id
-                    );
-                    if (!ins_rows.empty()) {
-                        indexed_docs[path] = DocMeta{
-                            .id = ins_rows[0][0].as<std::string>(),
-                            .title = title,
-                            .owner_id = user.user_id,
-                            .updated_at = ins_rows[0][1].as<std::string>()
-                        };
-                    }
-                }
-                wtx.commit();
-            } catch (const std::exception& e) {
-                std::cerr << "[WARN] Auto-reconciliation in get_workspace_tree failed: " << e.what() << "\n";
-            }
-        }
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
     }
+
+    // Batched in-memory permission maps
+    std::unordered_set<std::string> effective_teams;
+    std::unordered_map<std::string, db::AccessLevel> dir_direct_grants;
+    std::unordered_map<std::string, db::AccessLevel> dir_inheritable_grants;
+    std::unordered_map<std::string, db::AccessLevel> doc_direct_grants;
+
+    auto merge_level = [](db::AccessLevel& target, db::AccessLevel incoming) {
+        if (static_cast<uint8_t>(incoming) > static_cast<uint8_t>(target)) {
+            target = incoming;
+        }
+    };
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+
+        // 1. Fetch all documents in one query (pure read)
+        auto doc_rows = tx.exec(
+            "SELECT id::text, fs_path, title, COALESCE(owner_user_id::text, ''), "
+            "       TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "       COALESCE(owner_team_id::text, '') "
+            "FROM documents;"
+        );
+        for (const auto& r : doc_rows) {
+            std::string p = r[1].as<std::string>();
+            indexed_docs[p] = DocMeta{
+                .id = r[0].as<std::string>(),
+                .title = r[2].as<std::string>(),
+                .owner_id = r[3].as<std::string>(),
+                .updated_at = r[4].as<std::string>(),
+                .owner_team_id = r[5].as<std::string>()
+            };
+        }
+
+        if (!user.is_system_admin) {
+            // 2. Fetch effective teams for non-admin user
+            auto team_rows = tx.exec_params(
+                R"(
+                WITH RECURSIVE effective_teams AS (
+                    SELECT team_id FROM team_members WHERE user_id = $1::uuid
+                    UNION
+                    SELECT tp.parent_team_id
+                    FROM team_parents tp
+                    JOIN effective_teams et ON tp.child_team_id = et.team_id
+                )
+                SELECT team_id::text FROM effective_teams;
+                )",
+                user.user_id
+            );
+            for (const auto& r : team_rows) {
+                effective_teams.insert(r[0].as<std::string>());
+            }
+
+            // 3. Document ownership grants
+            for (const auto& [path, doc] : indexed_docs) {
+                if (!doc.owner_id.empty() && doc.owner_id == user.user_id) {
+                    merge_level(doc_direct_grants[doc.id], db::AccessLevel::Edit);
+                } else if (!doc.owner_team_id.empty() && effective_teams.contains(doc.owner_team_id)) {
+                    merge_level(doc_direct_grants[doc.id], db::AccessLevel::Edit);
+                }
+            }
+
+            // 4. Directory ownership from directory_metadata
+            auto dir_meta_rows = tx.exec(
+                "SELECT directory_path, COALESCE(owner_user_id::text, ''), COALESCE(owner_team_id::text, '') "
+                "FROM directory_metadata;"
+            );
+            for (const auto& r : dir_meta_rows) {
+                std::string d_path = r[0].as<std::string>();
+                while (!d_path.empty() && (d_path.front() == '/' || d_path.front() == '\\')) d_path.erase(0, 1);
+                while (!d_path.empty() && (d_path.back() == '/' || d_path.back() == '\\')) d_path.pop_back();
+
+                std::string owner_u = r[1].as<std::string>();
+                std::string owner_t = r[2].as<std::string>();
+                if (!owner_u.empty() && owner_u == user.user_id) {
+                    merge_level(dir_direct_grants[d_path], db::AccessLevel::Edit);
+                    merge_level(dir_inheritable_grants[d_path], db::AccessLevel::Edit);
+                } else if (!owner_t.empty() && effective_teams.contains(owner_t)) {
+                    merge_level(dir_direct_grants[d_path], db::AccessLevel::Edit);
+                    merge_level(dir_inheritable_grants[d_path], db::AccessLevel::Edit);
+                }
+            }
+
+            // 5. Explicit ACL permissions
+            auto perm_rows = tx.exec(
+                "SELECT target_type, COALESCE(target_id::text, ''), COALESCE(directory_path, ''), "
+                "       grantee_type, COALESCE(grantee_id::text, ''), access_level, is_inheritable "
+                "FROM permissions;"
+            );
+            for (const auto& r : perm_rows) {
+                std::string target_type = r[0].as<std::string>();
+                std::string target_id = r[1].as<std::string>();
+                std::string dir_path = r[2].as<std::string>();
+                while (!dir_path.empty() && (dir_path.front() == '/' || dir_path.front() == '\\')) dir_path.erase(0, 1);
+                while (!dir_path.empty() && (dir_path.back() == '/' || dir_path.back() == '\\')) dir_path.pop_back();
+
+                std::string grantee_type = r[3].as<std::string>();
+                std::string grantee_id = r[4].as<std::string>();
+                db::AccessLevel lvl = db::parse_access_level(r[5].as<std::string>());
+                bool is_inheritable = r[6].as<bool>();
+
+                bool applies = false;
+                if (grantee_type == "USER" && grantee_id == user.user_id) {
+                    applies = true;
+                } else if (grantee_type == "TEAM" && effective_teams.contains(grantee_id)) {
+                    applies = true;
+                } else if (grantee_type == "EVERYONE") {
+                    applies = true;
+                }
+
+                if (!applies) continue;
+
+                if (target_type == "DOCUMENT" && !target_id.empty()) {
+                    merge_level(doc_direct_grants[target_id], lvl);
+                } else if (target_type == "DIRECTORY") {
+                    merge_level(dir_direct_grants[dir_path], lvl);
+                    if (is_inheritable) {
+                        merge_level(dir_inheritable_grants[dir_path], lvl);
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] get_workspace_tree DB fetch failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto resolve_node_permission = [&](const std::string& doc_id, const std::string& rel_path, bool is_dir) -> db::AccessLevel {
+        if (user.is_system_admin) {
+            return db::AccessLevel::Admin;
+        }
+
+        db::AccessLevel effective = db::AccessLevel::None;
+
+        if (!doc_id.empty()) {
+            auto it = doc_direct_grants.find(doc_id);
+            if (it != doc_direct_grants.end()) {
+                merge_level(effective, it->second);
+            }
+        }
+
+        // Walk directory hierarchy from current down to root
+        std::filesystem::path current;
+        bool is_direct = false;
+        if (is_dir) {
+            current = std::filesystem::path(rel_path);
+            is_direct = true;
+        } else {
+            current = std::filesystem::path(rel_path).parent_path();
+            is_direct = false;
+        }
+
+        while (true) {
+            std::string d_str = current.string();
+            if (d_str == "." || d_str == "/") d_str = "";
+            while (!d_str.empty() && (d_str.front() == '/' || d_str.front() == '\\')) d_str.erase(0, 1);
+            while (!d_str.empty() && (d_str.back() == '/' || d_str.back() == '\\')) d_str.pop_back();
+
+            if (is_direct) {
+                auto direct_it = dir_direct_grants.find(d_str);
+                if (direct_it != dir_direct_grants.end()) {
+                    merge_level(effective, direct_it->second);
+                }
+            } else {
+                auto inheritable_it = dir_inheritable_grants.find(d_str);
+                if (inheritable_it != dir_inheritable_grants.end()) {
+                    merge_level(effective, inheritable_it->second);
+                }
+            }
+
+            is_direct = false;
+            if (d_str.empty() || current == "/" || current == ".") {
+                break;
+            }
+            current = current.parent_path();
+        }
+
+        return effective;
+    };
 
     nlohmann::json items = nlohmann::json::array();
     for (const auto& node : list_res.value()) {
@@ -1798,14 +1887,14 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
             continue;
         }
 
-        // Check read permission
         std::string doc_id = indexed_docs.contains(node.relative_path) ? indexed_docs[node.relative_path].id : "";
-        auto access_res = check_access(user, doc_id, node.relative_path);
-        if (access_res.has_value() && access_res.value() < db::AccessLevel::Read) {
+        bool is_bundle_node = node.is_bundle && node.relative_path.ends_with(".bundle");
+
+        auto access = resolve_node_permission(doc_id, node.relative_path, node.is_directory && !is_bundle_node);
+        if (access < db::AccessLevel::Read) {
             continue; // Exclude node user is not permitted to see
         }
 
-        bool is_bundle_node = node.is_bundle && node.relative_path.ends_with(".bundle");
         nlohmann::json item;
         item["name"] = node.name;
         item["path"] = node.relative_path;

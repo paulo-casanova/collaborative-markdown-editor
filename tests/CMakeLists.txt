@@ -272,6 +272,18 @@ set_tests_properties(posix_durable_writes_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Workspace Tree Performance & Zero Side-Effects Regression test (Issue #29)
+add_executable(workspace_tree_perf_test
+    backend/workspace_tree_perf_test.cpp
+)
+target_link_libraries(workspace_tree_perf_test PRIVATE cme_core)
+target_compile_features(workspace_tree_perf_test PRIVATE cxx_std_23)
+add_test(NAME workspace_tree_perf_test COMMAND workspace_tree_perf_test)
+set_tests_properties(workspace_tree_perf_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 
