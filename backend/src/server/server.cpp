@@ -868,6 +868,31 @@ Result<void> Server::start() {
                 return;
             }
 
+            if (room_manager_) {
+                std::string norm_old = old_path;
+                while (!norm_old.empty() && norm_old.front() == '/') norm_old.erase(0, 1);
+                while (!norm_old.empty() && norm_old.back() == '/') norm_old.pop_back();
+
+                std::string norm_new = rename_res.value();
+                while (!norm_new.empty() && norm_new.front() == '/') norm_new.erase(0, 1);
+                while (!norm_new.empty() && norm_new.back() == '/') norm_new.pop_back();
+
+                std::string old_prefix = norm_old + "/";
+                for (auto& room : room_manager_->get_all_rooms()) {
+                    if (!room) continue;
+                    std::string cur_path = room->fs_path();
+                    while (!cur_path.empty() && cur_path.front() == '/') cur_path.erase(0, 1);
+                    while (!cur_path.empty() && cur_path.back() == '/') cur_path.pop_back();
+
+                    if (cur_path == norm_old) {
+                        room->set_fs_path(norm_new);
+                    } else if (cur_path.starts_with(old_prefix)) {
+                        std::string updated_path = norm_new + cur_path.substr(norm_old.length());
+                        room->set_fs_path(std::move(updated_path));
+                    }
+                }
+            }
+
             send_json(res, "200 OK", {
                 {"status", "success"},
                 {"old_path", old_path},
@@ -892,6 +917,24 @@ Result<void> Server::start() {
         std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
         std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
         auto header_lookup = make_header_lookup(req);
+
+        auto cleanup_rooms = [this](const std::string& path) {
+            if (!room_manager_) return;
+            std::string norm_del = path;
+            while (!norm_del.empty() && norm_del.front() == '/') norm_del.erase(0, 1);
+            while (!norm_del.empty() && norm_del.back() == '/') norm_del.pop_back();
+            std::string del_prefix = norm_del + "/";
+            for (auto& room : room_manager_->get_all_rooms()) {
+                if (!room) continue;
+                std::string cur_path = room->fs_path();
+                while (!cur_path.empty() && cur_path.front() == '/') cur_path.erase(0, 1);
+                while (!cur_path.empty() && cur_path.back() == '/') cur_path.pop_back();
+                if (cur_path == norm_del || cur_path.starts_with(del_prefix)) {
+                    room->mark_clean();
+                    room_manager_->remove_room(room->document_id());
+                }
+            }
+        };
 
         std::string query_path = url_decode(req->getQuery("path"));
         if (query_path.empty()) {
@@ -919,6 +962,8 @@ Result<void> Server::start() {
                 return;
             }
 
+            cleanup_rooms(query_path);
+
             send_json(res, "200 OK", {
                 {"status", "success"},
                 {"path", query_path},
@@ -931,7 +976,7 @@ Result<void> Server::start() {
         auto aborted = std::make_shared<bool>(false);
         res->onAborted([aborted]() { *aborted = true; });
 
-        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+        res->onData([this, res, body, aborted, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup, cleanup_rooms](std::string_view chunk, bool is_last) {
             body->append(chunk.data(), chunk.length());
             if (!is_last || *aborted) return;
 
@@ -972,6 +1017,8 @@ Result<void> Server::start() {
                 }
                 return;
             }
+
+            cleanup_rooms(dir_path);
 
             send_json(res, "200 OK", {
                 {"status", "success"},

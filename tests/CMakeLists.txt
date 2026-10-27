@@ -239,6 +239,18 @@ set_tests_properties(folder_wildcard_safety_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Folder Rename Live Room Regression test (Issue #26)
+add_executable(folder_rename_live_rooms_test
+    backend/folder_rename_live_rooms_test.cpp
+)
+target_link_libraries(folder_rename_live_rooms_test PRIVATE cme_core)
+target_compile_features(folder_rename_live_rooms_test PRIVATE cxx_std_23)
+add_test(NAME folder_rename_live_rooms_test COMMAND folder_rename_live_rooms_test)
+set_tests_properties(folder_rename_live_rooms_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 
