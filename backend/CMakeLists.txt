@@ -29,6 +29,7 @@ add_library(cme_core
     src/review/review_service.cpp
     src/snippet/snippet_fetcher.cpp
     src/audit/audit_service.cpp
+    src/dialog/dialog_service.cpp
     src/server/server.cpp
 )
 

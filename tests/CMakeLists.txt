@@ -294,6 +294,17 @@ set_tests_properties(audit_and_logging_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Dialogs & Local Agent Gateway API Test
+add_executable(dialog_and_agent_api_test
+    backend/dialog_and_agent_api_test.cpp
+)
+target_link_libraries(dialog_and_agent_api_test PRIVATE cme_core)
+target_compile_features(dialog_and_agent_api_test PRIVATE cxx_std_23)
+add_test(NAME dialog_and_agent_api_test COMMAND dialog_and_agent_api_test)
+set_tests_properties(dialog_and_agent_api_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 
 

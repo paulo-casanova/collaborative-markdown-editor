@@ -424,6 +424,9 @@ Result<void> Server::start() {
     // 8.5 Initialize Snippet Fetcher
     snippet_fetcher_ = std::make_shared<snippet::SnippetFetcher>(config_.snippets);
 
+    // 8.6 Initialize Dialog & Agent Service
+    dialog_service_ = std::make_shared<dialog::DialogService>(db_pool_);
+
     // 9. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
@@ -4280,6 +4283,374 @@ Result<void> Server::start() {
             return;
         }
         send_json(res, "200 OK", {{"status", "deleted"}});
+    });
+
+    // =========================================================================
+    // Dialog & Local Agent Management REST Endpoints
+    // =========================================================================
+
+    auto handle_list_dialogs = [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        auto list_res = dialog_service_->list_dialogs(user->user_id);
+        if (!list_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list dialogs"}});
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& d : list_res.value()) {
+            out.push_back(d.to_json());
+        }
+        send_json(res, "200 OK", out);
+    };
+
+    app.get("/api/v1/dialogs", handle_list_dialogs);
+    app.get("/api/v1/workspaces/dialogs", handle_list_dialogs);
+
+    auto handle_create_dialog = [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            const auto& user = auth_res.value().value();
+            std::string title = "New Dialog";
+            if (!body->empty()) {
+                try {
+                    auto j = nlohmann::json::parse(*body);
+                    if (j.contains("title") && j["title"].is_string()) {
+                        title = j["title"].get<std::string>();
+                    }
+                } catch (...) {}
+            }
+            auto create_res = dialog_service_->create_dialog(user.user_id, title);
+            if (!create_res.has_value()) {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to create dialog"}});
+                return;
+            }
+            send_json(res, "201 Created", create_res.value().to_json());
+        });
+    };
+
+    app.post("/api/v1/dialogs", handle_create_dialog);
+    app.post("/api/v1/workspaces/dialogs", handle_create_dialog);
+
+    app.get("/api/v1/dialogs/:id", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string dialog_id = url_decode(req->getParameter(0));
+        auto get_res = dialog_service_->get_dialog(user->user_id, dialog_id);
+        if (!get_res.has_value()) {
+            if (get_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Dialog not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to fetch dialog"}});
+            }
+            return;
+        }
+        send_json(res, "200 OK", get_res.value().to_json());
+    });
+
+    app.patch("/api/v1/dialogs/:id", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        std::string dialog_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, dialog_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            const auto& user = auth_res.value().value();
+            std::string title;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                if (j.contains("title") && j["title"].is_string()) {
+                    title = j["title"].get<std::string>();
+                }
+            } catch (...) {}
+            if (title.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Title cannot be empty"}});
+                return;
+            }
+            auto upd_res = dialog_service_->update_dialog(user.user_id, dialog_id, title);
+            if (!upd_res.has_value()) {
+                if (upd_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Dialog not found"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to update dialog"}});
+                }
+                return;
+            }
+            send_json(res, "200 OK", upd_res.value().to_json());
+        });
+    });
+
+    app.del("/api/v1/dialogs/:id", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string dialog_id = url_decode(req->getParameter(0));
+        auto del_res = dialog_service_->delete_dialog(user->user_id, dialog_id);
+        if (!del_res.has_value()) {
+            if (del_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Dialog not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to delete dialog"}});
+            }
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "deleted"}});
+    });
+
+    // --- Dialog Message History ---
+
+    app.get("/api/v1/dialogs/:id/messages", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string dialog_id = url_decode(req->getParameter(0));
+        size_t limit = 200;
+        std::string limit_str = std::string(req->getQuery("limit"));
+        if (!limit_str.empty()) {
+            try {
+                limit = std::stoul(limit_str);
+            } catch (...) {}
+        }
+        auto list_res = dialog_service_->list_messages(user->user_id, dialog_id, limit);
+        if (!list_res.has_value()) {
+            if (list_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Dialog not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list messages"}});
+            }
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& m : list_res.value()) {
+            out.push_back(m.to_json());
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    app.post("/api/v1/dialogs/:id/messages", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        std::string dialog_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, dialog_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            const auto& user = auth_res.value().value();
+            std::string role = "user";
+            std::string content;
+            nlohmann::json context_snapshot = nlohmann::json::object();
+            try {
+                auto j = nlohmann::json::parse(*body);
+                if (j.contains("role") && j["role"].is_string()) {
+                    role = j["role"].get<std::string>();
+                }
+                if (j.contains("content") && j["content"].is_string()) {
+                    content = j["content"].get<std::string>();
+                }
+                if (j.contains("context_snapshot") && j["context_snapshot"].is_object()) {
+                    context_snapshot = j["context_snapshot"];
+                }
+            } catch (...) {}
+
+            if (content.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Message content cannot be empty"}});
+                return;
+            }
+
+            auto add_res = dialog_service_->add_message(user.user_id, dialog_id, role, content, context_snapshot);
+            if (!add_res.has_value()) {
+                if (add_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Dialog not found"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to add message"}});
+                }
+                return;
+            }
+            send_json(res, "201 Created", add_res.value().to_json());
+        });
+    });
+
+    // --- Document Association Preferences ---
+
+    app.get("/api/v1/documents/:id/dialog", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string doc_id = url_decode(req->getParameter(0));
+
+        // Evaluate read access to document
+        auto access_res = evaluate_access(*user, doc_id, "");
+        if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+            send_json(res, "403 Forbidden", {{"error", "Forbidden: Read access required"}});
+            return;
+        }
+
+        auto pref_res = dialog_service_->get_document_dialog(user->user_id, doc_id);
+        if (!pref_res.has_value()) {
+            if (pref_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to get document dialog"}});
+            }
+            return;
+        }
+
+        nlohmann::json out = {
+            {"document_id", doc_id},
+            {"last_dialog_id", pref_res.value().has_value() ? nlohmann::json(*pref_res.value()) : nlohmann::json(nullptr)}
+        };
+        send_json(res, "200 OK", out);
+    });
+
+    app.put("/api/v1/documents/:id/dialog", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        std::string doc_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, doc_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            const auto& user = auth_res.value().value();
+
+            auto access_res = evaluate_access(user, doc_id, "");
+            if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+                send_json(res, "403 Forbidden", {{"error", "Forbidden: Read access required"}});
+                return;
+            }
+
+            std::string dialog_id;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                if (j.contains("dialog_id") && j["dialog_id"].is_string()) {
+                    dialog_id = j["dialog_id"].get<std::string>();
+                }
+            } catch (...) {}
+
+            auto set_res = dialog_service_->set_document_dialog(user.user_id, doc_id, dialog_id);
+            if (!set_res.has_value()) {
+                if (set_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document or dialog not found"}});
+                } else if (set_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid dialog ID"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to update document dialog"}});
+                }
+                return;
+            }
+
+            nlohmann::json out = {
+                {"status", "updated"},
+                {"document_id", doc_id},
+                {"last_dialog_id", dialog_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(dialog_id)}
+            };
+            send_json(res, "200 OK", out);
+        });
+    });
+
+    // --- Local Agent Token Management ---
+
+    app.get("/api/v1/user/agent-tokens", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        auto tokens_res = dialog_service_->list_agent_tokens(user->user_id);
+        if (!tokens_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list agent tokens"}});
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& t : tokens_res.value()) {
+            out.push_back(t.to_json());
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    app.post("/api/v1/user/agent-tokens", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            const auto& user = auth_res.value().value();
+            std::string name = "Default Local Agent";
+            if (!body->empty()) {
+                try {
+                    auto j = nlohmann::json::parse(*body);
+                    if (j.contains("name") && j["name"].is_string()) {
+                        name = j["name"].get<std::string>();
+                    }
+                } catch (...) {}
+            }
+
+            auto create_res = dialog_service_->create_agent_token(user.user_id, name);
+            if (!create_res.has_value()) {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to create agent token"}});
+                return;
+            }
+            send_json(res, "201 Created", create_res.value().to_json());
+        });
+    });
+
+    app.del("/api/v1/user/agent-tokens/:id", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string token_id = url_decode(req->getParameter(0));
+        auto del_res = dialog_service_->revoke_agent_token(user->user_id, token_id);
+        if (!del_res.has_value()) {
+            if (del_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Token not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to revoke token"}});
+            }
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "revoked"}});
+    });
+
+    app.get("/api/v1/user/agent/status", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        // In Phase 1, report offline; wired to AgentManager in Phase 2
+        send_json(res, "200 OK", {{"online", false}, {"user_id", user->user_id}});
     });
 
     // =========================================================================

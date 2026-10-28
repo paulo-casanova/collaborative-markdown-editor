@@ -22,6 +22,7 @@
 #include "cme/review/review_service.hpp"
 #include "cme/snippet/snippet_fetcher.hpp"
 #include "cme/audit/audit_service.hpp"
+#include "cme/dialog/dialog_service.hpp"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <memory>
@@ -143,6 +144,7 @@ public:
     [[nodiscard]] std::shared_ptr<collab::PersistenceWorker> persistence_worker() const noexcept { return persistence_worker_; }
     [[nodiscard]] std::shared_ptr<review::ReviewService> review_service() const noexcept { return review_service_; }
     [[nodiscard]] std::shared_ptr<snippet::SnippetFetcher> snippet_fetcher() const noexcept { return snippet_fetcher_; }
+    [[nodiscard]] std::shared_ptr<dialog::DialogService> dialog_service() const noexcept { return dialog_service_; }
     void set_persistence_config(collab::PersistenceConfig config) noexcept { persistence_config_ = config; }
     [[nodiscard]] const collab::PersistenceConfig& persistence_config() const noexcept { return persistence_config_; }
 
@@ -272,6 +274,7 @@ private:
     std::shared_ptr<collab::PersistenceWorker> persistence_worker_;
     std::shared_ptr<review::ReviewService> review_service_;
     std::shared_ptr<snippet::SnippetFetcher> snippet_fetcher_;
+    std::shared_ptr<dialog::DialogService> dialog_service_;
     std::shared_ptr<db::InstanceLeaseManager> lease_manager_;
 
     mutable std::mutex sockets_mutex_;
