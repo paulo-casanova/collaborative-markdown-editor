@@ -16,6 +16,7 @@ interface UIState {
   loginModalOpen: boolean;
   tokensModalOpen: boolean;
   searchModalOpen: boolean;
+  searchTitleOnly: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -26,8 +27,9 @@ interface UIState {
   setSyncStatus: (status: SyncStatus) => void;
   setLoginModalOpen: (open: boolean) => void;
   setTokensModalOpen: (open: boolean) => void;
-  setSearchModalOpen: (open: boolean) => void;
-  toggleSearchModal: () => void;
+  setSearchModalOpen: (open: boolean, titleOnly?: boolean) => void;
+  setSearchTitleOnly: (titleOnly: boolean) => void;
+  toggleSearchModal: (titleOnly?: boolean) => void;
   numberHeaders: boolean;
   setNumberHeaders: (enabled: boolean) => void;
   toggleNumberHeaders: () => void;
@@ -90,6 +92,7 @@ export const useUIStore = create<UIState>((set) => ({
   loginModalOpen: false,
   tokensModalOpen: false,
   searchModalOpen: false,
+  searchTitleOnly: false,
   numberHeaders: getInitialNumberHeaders(),
   lineNumbers: getInitialLineNumbers(),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
@@ -112,8 +115,17 @@ export const useUIStore = create<UIState>((set) => ({
   setSyncStatus: (syncStatus) => set({ syncStatus }),
   setLoginModalOpen: (loginModalOpen) => set({ loginModalOpen }),
   setTokensModalOpen: (tokensModalOpen) => set({ tokensModalOpen }),
-  setSearchModalOpen: (searchModalOpen) => set({ searchModalOpen }),
-  toggleSearchModal: () => set((state) => ({ searchModalOpen: !state.searchModalOpen })),
+  setSearchModalOpen: (searchModalOpen, titleOnly) =>
+    set((state) => ({
+      searchModalOpen,
+      searchTitleOnly: titleOnly !== undefined ? titleOnly : state.searchTitleOnly,
+    })),
+  setSearchTitleOnly: (searchTitleOnly) => set({ searchTitleOnly }),
+  toggleSearchModal: (titleOnly) =>
+    set((state) => ({
+      searchModalOpen: !state.searchModalOpen,
+      searchTitleOnly: titleOnly !== undefined ? titleOnly : state.searchTitleOnly,
+    })),
   setNumberHeaders: (enabled) => {
     set({ numberHeaders: enabled });
   },

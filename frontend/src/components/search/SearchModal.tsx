@@ -9,7 +9,13 @@ import { SearchResult } from '../../types/document';
 export const SearchModal: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { searchModalOpen, setSearchModalOpen, viewMode } = useUIStore();
+  const {
+    searchModalOpen,
+    setSearchModalOpen,
+    searchTitleOnly,
+    setSearchTitleOnly,
+    viewMode,
+  } = useUIStore();
   const { openTab } = useWorkspaceStore();
 
   const [query, setQuery] = useState('');
@@ -19,12 +25,22 @@ export const SearchModal: React.FC = () => {
 
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Global Cmd+K / Ctrl+K keyboard shortcut listener
+  // Global Cmd+K / Ctrl+K and Cmd+Shift+K / Ctrl+Shift+K keyboard shortcut listener
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setSearchModalOpen(!searchModalOpen);
+        const wantsTitleOnly = e.shiftKey;
+        if (!searchModalOpen) {
+          setSearchModalOpen(true, wantsTitleOnly);
+        } else {
+          // If modal is open and user presses the other shortcut, switch mode
+          if (wantsTitleOnly !== searchTitleOnly) {
+            setSearchTitleOnly(wantsTitleOnly);
+          } else {
+            setSearchModalOpen(false);
+          }
+        }
       } else if (e.key === 'Escape' && searchModalOpen) {
         setSearchModalOpen(false);
       }
@@ -32,7 +48,7 @@ export const SearchModal: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [searchModalOpen, setSearchModalOpen]);
+  }, [searchModalOpen, searchTitleOnly, setSearchModalOpen, setSearchTitleOnly]);
 
   // Focus input whenever modal opens
   useEffect(() => {
@@ -56,7 +72,7 @@ export const SearchModal: React.FC = () => {
     setLoading(true);
     const timer = setTimeout(async () => {
       try {
-        const data = await searchDocuments(query.trim(), '', 20);
+        const data = await searchDocuments(query.trim(), '', 20, searchTitleOnly);
         setResults(data);
         setSelectedIndex(0);
       } catch (err) {
@@ -67,7 +83,7 @@ export const SearchModal: React.FC = () => {
     }, 200);
 
     return () => clearTimeout(timer);
-  }, [query]);
+  }, [query, searchTitleOnly]);
 
   // Keyboard navigation within results
   const handleInputKeyDown = (e: React.KeyboardEvent) => {
@@ -134,7 +150,11 @@ export const SearchModal: React.FC = () => {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleInputKeyDown}
-            placeholder="Search documents by title, path, or content..."
+            placeholder={
+              searchTitleOnly
+                ? 'Search documents by title...'
+                : 'Search documents by title, path, or content...'
+            }
             className="flex-1 bg-transparent text-sm text-cme-text-base placeholder-cme-text-muted focus:outline-none"
             data-testid="search-modal-input"
           />
@@ -150,6 +170,45 @@ export const SearchModal: React.FC = () => {
           <div className="hidden sm:flex items-center gap-1 text-[11px] text-cme-text-muted bg-cme-bg-subtle px-2 py-0.5 rounded border border-cme-border-base">
             <kbd className="font-mono">ESC</kbd> to close
           </div>
+        </div>
+
+        {/* Search Mode Toggle Tabs */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-cme-border-base bg-cme-bg-subtle/50 text-xs">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSearchTitleOnly(false)}
+              data-testid="search-mode-all"
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                !searchTitleOnly
+                  ? 'bg-cme-bg-surface text-cme-primary shadow-sm border border-cme-border-base font-semibold'
+                  : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-subtle'
+              }`}
+            >
+              <span>All Content</span>
+              <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-cme-bg-subtle border border-cme-border-base text-cme-text-subtle">
+                ⌘K
+              </kbd>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSearchTitleOnly(true)}
+              data-testid="search-mode-title-only"
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+                searchTitleOnly
+                  ? 'bg-cme-bg-surface text-cme-primary shadow-sm border border-cme-border-base font-semibold'
+                  : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-subtle'
+              }`}
+            >
+              <span>Title Only</span>
+              <kbd className="text-[10px] font-mono px-1 py-0.2 rounded bg-cme-bg-subtle border border-cme-border-base text-cme-text-subtle">
+                ⌘⇧K
+              </kbd>
+            </button>
+          </div>
+          <span className="text-[11px] text-cme-text-muted hidden sm:inline">
+            {searchTitleOnly ? 'Searching document titles' : 'Searching full text index'}
+          </span>
         </div>
 
         {/* Results List */}
@@ -201,7 +260,11 @@ export const SearchModal: React.FC = () => {
             </div>
           ) : (
             <div className="py-12 text-center text-xs text-cme-text-muted space-y-2">
-              <p>Type to search across all workspace markdown files and bundles.</p>
+              <p>
+                {searchTitleOnly
+                  ? 'Type to search documents by title.'
+                  : 'Type to search across all workspace markdown files and bundles.'}
+              </p>
               <div className="flex justify-center gap-3 text-[11px] text-cme-text-subtle">
                 <span>Navigate: <kbd className="font-mono">↑</kbd> <kbd className="font-mono">↓</kbd></span>
                 <span>Select: <kbd className="font-mono">↵</kbd></span>
@@ -213,7 +276,7 @@ export const SearchModal: React.FC = () => {
         {/* Footer info */}
         <div className="px-4 py-2 border-t border-cme-border-base bg-cme-bg-subtle text-[11px] text-cme-text-muted flex items-center justify-between">
           <span>{results.length} results</span>
-          <span className="font-mono">CME Full-Text Index</span>
+          <span className="font-mono">{searchTitleOnly ? 'CME Title Search' : 'CME Full-Text Index'}</span>
         </div>
       </div>
     </div>

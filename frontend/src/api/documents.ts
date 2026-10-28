@@ -252,9 +252,22 @@ export async function fetchRecentDocuments(limit: number = 20): Promise<Document
   return data.recents || [];
 }
 
-export async function searchDocuments(q: string, pathPrefix: string = '', limit: number = 20): Promise<SearchResult[]> {
+export async function searchDocuments(
+  q: string,
+  pathPrefix: string = '',
+  limit: number = 20,
+  titleOnly: boolean = false
+): Promise<SearchResult[]> {
+  const params = new URLSearchParams({
+    q,
+    path: pathPrefix,
+    limit: String(limit),
+  });
+  if (titleOnly) {
+    params.set('title_only', 'true');
+  }
   const data = await apiRequest<{ query: string; results: SearchResult[] }>(
-    `/api/v1/search?q=${encodeURIComponent(q)}&path=${encodeURIComponent(pathPrefix)}&limit=${limit}`
+    `/api/v1/search?${params.toString()}`
   );
   return data.results || [];
 }

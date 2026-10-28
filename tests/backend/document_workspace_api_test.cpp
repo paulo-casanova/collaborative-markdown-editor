@@ -491,8 +491,9 @@ int main() {
         std::cout << "  - GET /api/v1/users/me/recents retrieved recent documents.\n";
     }
 
-    // 2.13 GET /api/v1/search?q=
+    // 2.13 GET /api/v1/search?q= and title_only
     {
+        // Full text search (default) matches title or content
         auto resp = http_curl("GET", base_url + "/api/v1/search?q=Architecture", auth_header);
         assert(resp.status_code == 200);
         auto json = nlohmann::json::parse(resp.body);
@@ -500,7 +501,43 @@ int main() {
         assert(json["results"].is_array());
         assert(!json["results"].empty());
         assert(json["results"][0].contains("snippet"));
-        std::cout << "  - GET /api/v1/search returned query matches with snippets.\n";
+
+        // Create a document with title "TitleSearchDoc" and content containing unique "ContentKeywordXYZ"
+        nlohmann::json create_body = {
+            {"path", "specs/TitleSearchDoc.md"},
+            {"content", "This file contains ContentKeywordXYZ for testing search scope."},
+            {"title", "TitleSearchDoc"}
+        };
+        auto c_resp = http_curl("POST", base_url + "/api/v1/documents", auth_header, create_body.dump());
+        assert(c_resp.status_code == 201);
+        auto c_json = nlohmann::json::parse(c_resp.body);
+        std::string search_test_doc_id = c_json["id"].get<std::string>();
+
+        // Full-text search finding "ContentKeywordXYZ" in content
+        auto full_resp = http_curl("GET", base_url + "/api/v1/search?q=ContentKeywordXYZ", auth_header);
+        assert(full_resp.status_code == 200);
+        auto full_json = nlohmann::json::parse(full_resp.body);
+        assert(!full_json["results"].empty());
+        assert(full_json["results"][0]["match_type"] == "content");
+
+        // Title-only search for "ContentKeywordXYZ" should return empty results
+        auto title_resp1 = http_curl("GET", base_url + "/api/v1/search?q=ContentKeywordXYZ&title_only=true", auth_header);
+        assert(title_resp1.status_code == 200);
+        auto title_json1 = nlohmann::json::parse(title_resp1.body);
+        assert(title_json1["results"].empty());
+
+        // Title-only search for "TitleSearchDoc" should match
+        auto title_resp2 = http_curl("GET", base_url + "/api/v1/search?q=TitleSearchDoc&title_only=true", auth_header);
+        assert(title_resp2.status_code == 200);
+        auto title_json2 = nlohmann::json::parse(title_resp2.body);
+        assert(!title_json2["results"].empty());
+        assert(title_json2["results"][0]["match_type"] == "title");
+        assert(title_json2["results"][0]["title"] == "TitleSearchDoc");
+
+        // Clean up test document
+        http_curl("DELETE", base_url + "/api/v1/documents/" + search_test_doc_id, auth_header);
+
+        std::cout << "  - GET /api/v1/search returned query matches with snippets and validated title_only filtering.\n";
     }
 
     // 2.14 DELETE /api/v1/trash/{id} (Purge)

@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { useWorkspaceStore } from '../../src/stores/workspaceStore';
 import { useUIStore } from '../../src/stores/uiStore';
 import { useReviewStore } from '../../src/stores/reviewStore';
+import { searchDocuments } from '../../src/api/documents';
 
 describe('WorkspaceStore & UIStore behavior', () => {
   beforeEach(() => {
@@ -154,5 +155,66 @@ describe('WorkspaceStore & UIStore behavior', () => {
 
     useUIStore.getState().toggleLineNumbers();
     expect(useUIStore.getState().lineNumbers).toBe(false);
+  });
+
+  it('manages searchTitleOnly and searchModalOpen in UIStore', () => {
+    expect(useUIStore.getState().searchModalOpen).toBe(false);
+    expect(useUIStore.getState().searchTitleOnly).toBe(false);
+
+    // Open search modal with titleOnly = true
+    useUIStore.getState().setSearchModalOpen(true, true);
+    expect(useUIStore.getState().searchModalOpen).toBe(true);
+    expect(useUIStore.getState().searchTitleOnly).toBe(true);
+
+    // Close search modal, titleOnly should remain unchanged unless overridden
+    useUIStore.getState().setSearchModalOpen(false);
+    expect(useUIStore.getState().searchModalOpen).toBe(false);
+    expect(useUIStore.getState().searchTitleOnly).toBe(true);
+
+    // Open search modal with titleOnly = false (All content mode)
+    useUIStore.getState().setSearchModalOpen(true, false);
+    expect(useUIStore.getState().searchModalOpen).toBe(true);
+    expect(useUIStore.getState().searchTitleOnly).toBe(false);
+
+    // Toggle titleOnly directly
+    useUIStore.getState().setSearchTitleOnly(true);
+    expect(useUIStore.getState().searchTitleOnly).toBe(true);
+
+    // Toggle search modal with titleOnly argument
+    useUIStore.getState().toggleSearchModal(false);
+    expect(useUIStore.getState().searchModalOpen).toBe(false);
+    expect(useUIStore.getState().searchTitleOnly).toBe(false);
+  });
+
+  it('searchDocuments API client appends title_only=true query parameter when titleOnly is specified', async () => {
+    const originalFetch = global.fetch;
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: {
+        get: (h: string) => (h.toLowerCase() === 'content-type' ? 'application/json' : null),
+      },
+      json: async () => ({ query: 'test', title_only: true, results: [] }),
+      text: async () => JSON.stringify({ query: 'test', title_only: true, results: [] }),
+    });
+    global.fetch = fetchMock as any;
+
+    try {
+      // 1. Standard full-text search
+      await searchDocuments('quantum', 'specs', 15, false);
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/search?q=quantum&path=specs&limit=15',
+        expect.anything()
+      );
+
+      // 2. Title-only search
+      await searchDocuments('quantum', 'specs', 15, true);
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/v1/search?q=quantum&path=specs&limit=15&title_only=true',
+        expect.anything()
+      );
+    } finally {
+      global.fetch = originalFetch;
+    }
   });
 });

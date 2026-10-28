@@ -2095,7 +2095,8 @@ Result<nlohmann::json> DocumentService::search_documents(
     const std::string& query,
     const std::string& path_prefix,
     size_t limit,
-    const auth::UserIdentity& user
+    const auth::UserIdentity& user,
+    bool title_only
 ) {
     if (!db_pool_ || !storage_) {
         return std::unexpected(ErrorCode::DatabaseError);
@@ -2140,31 +2141,33 @@ Result<nlohmann::json> DocumentService::search_documents(
             }
 
             std::string ltitle = to_lower(title);
-            std::string lpath = to_lower(fs_path);
             std::string snippet;
             std::string match_type;
 
             if (ltitle.find(lq) != std::string::npos) {
                 match_type = "title";
                 snippet = "Matched title: " + title;
-            } else if (lpath.find(lq) != std::string::npos) {
-                match_type = "path";
-                snippet = "Matched path: " + fs_path;
-            } else {
-                auto raw_res = storage_->read_file(fs_path);
-                if (raw_res.has_value()) {
-                    const auto& content = raw_res.value();
-                    std::string lcontent = to_lower(content);
-                    auto pos = lcontent.find(lq);
-                    if (pos != std::string::npos) {
-                        match_type = "content";
-                        size_t start = pos > 35 ? pos - 35 : 0;
-                        size_t end = std::min(content.size(), pos + lq.size() + 35);
-                        std::string sub = content.substr(start, end - start);
-                        for (auto& ch : sub) {
-                            if (ch == '\n' || ch == '\r') ch = ' ';
+            } else if (!title_only) {
+                std::string lpath = to_lower(fs_path);
+                if (lpath.find(lq) != std::string::npos) {
+                    match_type = "path";
+                    snippet = "Matched path: " + fs_path;
+                } else {
+                    auto raw_res = storage_->read_file(fs_path);
+                    if (raw_res.has_value()) {
+                        const auto& content = raw_res.value();
+                        std::string lcontent = to_lower(content);
+                        auto pos = lcontent.find(lq);
+                        if (pos != std::string::npos) {
+                            match_type = "content";
+                            size_t start = pos > 35 ? pos - 35 : 0;
+                            size_t end = std::min(content.size(), pos + lq.size() + 35);
+                            std::string sub = content.substr(start, end - start);
+                            for (auto& ch : sub) {
+                                if (ch == '\n' || ch == '\r') ch = ' ';
+                            }
+                            snippet = (start > 0 ? "..." : "") + sub + (end < content.size() ? "..." : "");
                         }
-                        snippet = (start > 0 ? "..." : "") + sub + (end < content.size() ? "..." : "");
                     }
                 }
             }

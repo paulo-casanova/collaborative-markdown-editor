@@ -230,13 +230,14 @@ public:
     );
 
     /**
-     * @brief Full-text search querying title, path, and content snippets.
+     * @brief Search querying title, path, and content snippets (or title only).
      */
     Result<nlohmann::json> search_documents(
         const std::string& query,
         const std::string& path_prefix,
         size_t limit,
-        const auth::UserIdentity& user
+        const auth::UserIdentity& user,
+        bool title_only = false
     );
 
     /**

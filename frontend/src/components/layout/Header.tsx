@@ -137,9 +137,9 @@ export const Header: React.FC = () => {
       <div className="flex items-center gap-2.5 flex-shrink-0">
         {/* Global Search Shortcut */}
         <button
-          onClick={() => setSearchModalOpen(true)}
+          onClick={() => setSearchModalOpen(true, false)}
           className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-subtle hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-xs transition-colors"
-          title="Search documents (Ctrl+K / Cmd+K)"
+          title="Search documents (Ctrl+K: All, Ctrl+Shift+K: Title only)"
           data-testid="header-search-btn"
         >
           <Search className="w-3.5 h-3.5" />

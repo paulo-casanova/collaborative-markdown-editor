@@ -2928,14 +2928,16 @@ Result<void> Server::start() {
         std::string path_prefix = url_decode(req->getQuery("path"));
         std::string limit_str = std::string(req->getQuery("limit"));
         size_t limit = limit_str.empty() ? 20 : std::stoul(limit_str);
+        std::string title_only_str = std::string(req->getQuery("title_only"));
+        bool title_only = (title_only_str == "true" || title_only_str == "1");
 
-        auto search_res = document_service_->search_documents(query, path_prefix, limit, *auth_res.value());
+        auto search_res = document_service_->search_documents(query, path_prefix, limit, *auth_res.value(), title_only);
         if (!search_res.has_value()) {
             send_json(res, "500 Internal Server Error", {{"error", "Search operation failed"}});
             return;
         }
 
-        send_json(res, "200 OK", {{"query", query}, {"results", search_res.value()}});
+        send_json(res, "200 OK", {{"query", query}, {"title_only", title_only}, {"results", search_res.value()}});
     });
 
     // GET /api/v1/trash
