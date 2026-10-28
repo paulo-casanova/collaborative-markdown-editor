@@ -23,6 +23,7 @@
 #include "cme/snippet/snippet_fetcher.hpp"
 #include "cme/audit/audit_service.hpp"
 #include <nlohmann/json.hpp>
+#include <iostream>
 #include <memory>
 #include <atomic>
 #include <chrono>
@@ -219,7 +220,15 @@ public:
         for (const auto& [name, val] : extra_headers) {
             res->writeHeader(name, val);
         }
-        res->end(payload.dump(2));
+        try {
+            res->end(payload.dump(2, ' ', false, nlohmann::json::error_handler_t::replace));
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] send_json payload.dump failed: " << e.what() << "\n";
+            res->end("{\"error\":\"Internal Server Error\"}");
+        } catch (...) {
+            std::cerr << "[ERROR] send_json payload.dump failed with unknown error\n";
+            res->end("{\"error\":\"Internal Server Error\"}");
+        }
     }
 
     template <typename ResT>

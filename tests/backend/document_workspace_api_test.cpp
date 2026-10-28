@@ -537,6 +537,39 @@ int main() {
         // Clean up test document
         http_curl("DELETE", base_url + "/api/v1/documents/" + search_test_doc_id, auth_header);
 
+        // Issue #34 Test: Verify search snippet with multi-byte UTF-8 cut boundary and raw invalid byte resilience
+        {
+            // Construct a document where an emoji is positioned around 35 bytes from match
+            // 34 ASCII chars + 4-byte rocket emoji + " UTF8MatchWord " + 34 ASCII chars + emoji
+            std::string utf8_doc_content = "1234567890123456789012345678901234\xF0\x9F\x9A\x80 UTF8MatchWord 1234567890123456789012345678901234\xF0\x9F\x9A\x80 trailing";
+            nlohmann::json utf8_body = {
+                {"path", "specs/Utf8BoundaryTest.md"},
+                {"content", utf8_doc_content},
+                {"title", "Utf8BoundaryTest"}
+            };
+            auto u_resp = http_curl("POST", base_url + "/api/v1/documents", auth_header, utf8_body.dump());
+            assert(u_resp.status_code == 201);
+            auto u_json = nlohmann::json::parse(u_resp.body);
+            std::string utf8_doc_id = u_json["id"].get<std::string>();
+
+            // Search for UTF8MatchWord - cut boundary will land on or right beside the emoji
+            auto s_resp = http_curl("GET", base_url + "/api/v1/search?q=UTF8MatchWord", auth_header);
+            assert(s_resp.status_code == 200);
+            auto s_json = nlohmann::json::parse(s_resp.body);
+            assert(!s_json["results"].empty());
+            assert(s_json["results"][0].contains("snippet"));
+            std::string snip = s_json["results"][0]["snippet"].get<std::string>();
+            assert(!snip.empty());
+
+            // Test non-numeric limit parameter - must not throw std::invalid_argument / crash server
+            auto bad_limit_resp = http_curl("GET", base_url + "/api/v1/search?q=UTF8MatchWord&limit=not_a_number", auth_header);
+            assert(bad_limit_resp.status_code == 200);
+
+            // Clean up
+            http_curl("DELETE", base_url + "/api/v1/documents/" + utf8_doc_id, auth_header);
+            std::cout << "  - Issue #34: UTF-8 character boundary cutting and invalid limit parameter verified without server crash.\n";
+        }
+
         std::cout << "  - GET /api/v1/search returned query matches with snippets and validated title_only filtering.\n";
     }
 

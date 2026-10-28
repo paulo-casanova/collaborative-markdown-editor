@@ -2161,7 +2161,33 @@ Result<nlohmann::json> DocumentService::search_documents(
                         if (pos != std::string::npos) {
                             match_type = "content";
                             size_t start = pos > 35 ? pos - 35 : 0;
+                            while (start > 0 && (static_cast<unsigned char>(content[start]) & 0xC0) == 0x80) {
+                                start--;
+                            }
+                            while (start < pos && (static_cast<unsigned char>(content[start]) & 0xC0) == 0x80) {
+                                start++;
+                            }
+
                             size_t end = std::min(content.size(), pos + lq.size() + 35);
+                            while (end < content.size() && (static_cast<unsigned char>(content[end]) & 0xC0) == 0x80) {
+                                end++;
+                            }
+
+                            size_t back = end;
+                            while (back > start && back > (end > 4 ? end - 4 : start) && (static_cast<unsigned char>(content[back - 1]) & 0xC0) == 0x80) {
+                                back--;
+                            }
+                            if (back > start) {
+                                unsigned char lead = static_cast<unsigned char>(content[back - 1]);
+                                size_t needed = 0;
+                                if ((lead & 0xE0) == 0xC0) needed = 1;
+                                else if ((lead & 0xF0) == 0xE0) needed = 2;
+                                else if ((lead & 0xF8) == 0xF0) needed = 3;
+                                if (needed > 0 && (end - back) < needed) {
+                                    end = back - 1;
+                                }
+                            }
+
                             std::string sub = content.substr(start, end - start);
                             for (auto& ch : sub) {
                                 if (ch == '\n' || ch == '\r') ch = ' ';

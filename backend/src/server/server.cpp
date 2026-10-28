@@ -2758,7 +2758,14 @@ Result<void> Server::start() {
         }
 
         std::string limit_param = std::string(req->getQuery("limit"));
-        size_t limit = limit_param.empty() ? 20 : std::stoul(limit_param);
+        size_t limit = 20;
+        if (!limit_param.empty()) {
+            try {
+                limit = std::stoul(limit_param);
+            } catch (...) {
+                limit = 20;
+            }
+        }
 
         auto recents_res = document_service_->get_recent_documents(*auth_res.value(), limit);
         if (!recents_res.has_value()) {
@@ -2909,35 +2916,50 @@ Result<void> Server::start() {
 
     // GET /api/v1/search
     app.get("/api/v1/search", [this](auto *res, auto *req) {
-        std::string auth_hdr = std::string(req->getHeader("authorization"));
-        std::string cookie_hdr = std::string(req->getHeader("cookie"));
-        std::string del_header_name = config_.authn.delegated_header;
-        std::string del_email_name = config_.authn.delegated_email_header;
-        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
-        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        try {
+            std::string auth_hdr = std::string(req->getHeader("authorization"));
+            std::string cookie_hdr = std::string(req->getHeader("cookie"));
+            std::string del_header_name = config_.authn.delegated_header;
+            std::string del_email_name = config_.authn.delegated_email_header;
+            for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+            std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
 
-        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
-        if (!auth_res.has_value() || !auth_res.value().has_value()) {
-            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
-            return;
-        }
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
 
-        std::string query = url_decode(req->getQuery("q"));
-        std::string path_prefix = url_decode(req->getQuery("path"));
-        std::string limit_str = std::string(req->getQuery("limit"));
-        size_t limit = limit_str.empty() ? 20 : std::stoul(limit_str);
-        std::string title_only_str = std::string(req->getQuery("title_only"));
-        bool title_only = (title_only_str == "true" || title_only_str == "1");
+            std::string query = url_decode(req->getQuery("q"));
+            std::string path_prefix = url_decode(req->getQuery("path"));
+            std::string limit_str = std::string(req->getQuery("limit"));
+            size_t limit = 20;
+            if (!limit_str.empty()) {
+                try {
+                    limit = std::stoul(limit_str);
+                } catch (...) {
+                    limit = 20;
+                }
+            }
+            std::string title_only_str = std::string(req->getQuery("title_only"));
+            bool title_only = (title_only_str == "true" || title_only_str == "1");
 
-        auto search_res = document_service_->search_documents(query, path_prefix, limit, *auth_res.value(), title_only);
-        if (!search_res.has_value()) {
+            auto search_res = document_service_->search_documents(query, path_prefix, limit, *auth_res.value(), title_only);
+            if (!search_res.has_value()) {
+                send_json(res, "500 Internal Server Error", {{"error", "Search operation failed"}});
+                return;
+            }
+
+            send_json(res, "200 OK", {{"query", query}, {"title_only", title_only}, {"results", search_res.value()}});
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] /api/v1/search unhandled exception: " << e.what() << "\n";
             send_json(res, "500 Internal Server Error", {{"error", "Search operation failed"}});
-            return;
+        } catch (...) {
+            std::cerr << "[ERROR] /api/v1/search unknown unhandled exception\n";
+            send_json(res, "500 Internal Server Error", {{"error", "Search operation failed"}});
         }
-
-        send_json(res, "200 OK", {{"query", query}, {"title_only", title_only}, {"results", search_res.value()}});
     });
 
     // GET /api/v1/trash
