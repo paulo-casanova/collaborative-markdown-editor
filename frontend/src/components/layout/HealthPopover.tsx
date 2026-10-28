@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Database, HardDrive, Users, Clock, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { fetchHealthStatus } from '../../api/health';
+import { useUIStore } from '../../stores/uiStore';
 
 function formatUptime(seconds: number): string {
   if (!seconds || seconds < 0) return '0s';
@@ -32,11 +33,13 @@ export const HealthPopover: React.FC = () => {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  const isSessionExpired = useUIStore((state) => state.isSessionExpired);
+
   const { data: health, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['system-health'],
     queryFn: fetchHealthStatus,
     refetchInterval: 30000,
-    retry: 1,
+    retry: false,
   });
 
   useEffect(() => {
@@ -49,7 +52,7 @@ export const HealthPopover: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const isHealthy = !isError && health?.status === 'healthy';
+  const isHealthy = !isError && !isSessionExpired && health?.status === 'healthy';
   const version = health?.version || 'v0.1.0';
 
   return (
@@ -62,7 +65,7 @@ export const HealthPopover: React.FC = () => {
         <span className="flex h-2 w-2 items-center justify-center">
           <span
             className={`inline-flex rounded-full h-2 w-2 ${
-              isHealthy ? 'bg-emerald-500' : isError ? 'bg-rose-500' : 'bg-amber-500'
+              isHealthy ? 'bg-emerald-500' : (isError || isSessionExpired) ? 'bg-rose-500' : 'bg-amber-500'
             }`}
           ></span>
         </span>
@@ -91,6 +94,10 @@ export const HealthPopover: React.FC = () => {
 
           {isLoading ? (
             <div className="py-4 text-center text-cme-text-muted">Probing daemon status...</div>
+          ) : isSessionExpired ? (
+            <div className="py-2 text-rose-500 font-medium">
+              Authentication session expired. Please sign in again.
+            </div>
           ) : isError || !health ? (
             <div className="py-2 text-rose-500">
               Backend service unreachable at <code className="font-mono">/api/v1/health</code>

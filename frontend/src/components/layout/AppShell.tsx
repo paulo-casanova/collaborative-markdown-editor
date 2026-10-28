@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { AlertCircle } from 'lucide-react';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { LoginModal } from '../auth/LoginModal';
@@ -8,10 +9,12 @@ import { SearchModal } from '../search/SearchModal';
 import { useThemeStore } from '../../stores/themeStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
+import { RELOAD_KEY } from '../../api/client';
 
 export const AppShell: React.FC = () => {
   const { initThemeListener } = useThemeStore();
-  const { setViewMode } = useUIStore();
+  const { setViewMode, isSessionExpired } = useUIStore();
+  const hasDirtyTabs = useWorkspaceStore((state) => state.tabs.some((t) => t.isDirty));
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -102,6 +105,46 @@ export const AppShell: React.FC = () => {
   return (
     <div className="h-screen flex flex-col bg-cme-bg-base text-cme-text-base overflow-hidden">
       <Header />
+      {isSessionExpired && (
+        <div
+          data-testid="session-expired-banner"
+          className="bg-rose-600 text-white px-4 py-2 flex items-center justify-between text-xs font-medium z-50 shadow-md transition-all shrink-0"
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="w-4 h-4 shrink-0 text-white" />
+            <span className="truncate">
+              {hasDirtyTabs
+                ? 'Your authentication session has expired and you have unsaved changes. Please copy your edits before reloading.'
+                : 'Your authentication session has expired. Sign in again to restore access.'}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 ml-3">
+            <button
+              onClick={() => {
+                if (hasDirtyTabs) {
+                  if (
+                    !confirm(
+                      'You have unsaved changes that may be lost on reload. Continue to sign in?'
+                    )
+                  ) {
+                    return;
+                  }
+                }
+                if (typeof sessionStorage !== 'undefined') {
+                  sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
+                }
+                if (typeof window !== 'undefined' && window.location) {
+                  window.location.reload();
+                }
+              }}
+              className="px-2.5 py-1 bg-white text-rose-600 rounded font-semibold hover:bg-rose-50 transition-colors shadow-sm"
+              data-testid="session-reload-btn"
+            >
+              Sign in again
+            </button>
+          </div>
+        </div>
+      )}
       <div className="flex-1 flex overflow-hidden min-h-0">
         <Sidebar />
         <main className="flex-1 overflow-y-auto bg-cme-bg-base min-h-0 relative">

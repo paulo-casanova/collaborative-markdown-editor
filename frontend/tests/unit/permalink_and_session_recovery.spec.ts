@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { useUIStore } from '../../src/stores/uiStore';
+import { useWorkspaceStore } from '../../src/stores/workspaceStore';
 import { CmeCollabProvider } from '../../src/api/collabProvider';
+import {
+  apiRequest,
+  apiFetch,
+  ApiError,
+  clearSessionExpired,
+  triggerSessionExpiryCheck,
+  handleGlobalSessionExpired,
+} from '../../src/api/client';
 import * as Y from 'yjs';
 
 describe('Issue #6: Document Permalinks & Issue #7: Session Recovery', () => {
@@ -8,8 +17,13 @@ describe('Issue #6: Document Permalinks & Issue #7: Session Recovery', () => {
   let visibilityListeners: Array<() => void> = [];
 
   beforeEach(() => {
+    clearSessionExpired();
     useUIStore.setState({
       syncStatus: 'saved',
+      isSessionExpired: false,
+    });
+    useWorkspaceStore.setState({
+      tabs: [],
     });
     mockStorage = {};
     visibilityListeners = [];
@@ -184,5 +198,209 @@ describe('Issue #6: Document Permalinks & Issue #7: Session Recovery', () => {
     expect(reloadMock).toHaveBeenCalledTimes(1);
 
     provider.destroy();
+  });
+});
+
+describe('Issue #31: REST Client Auth Proxy Session Recovery', () => {
+  let mockStorage: Record<string, string> = {};
+  let visibilityListeners: Array<() => void> = [];
+
+  beforeEach(() => {
+    clearSessionExpired();
+    useUIStore.setState({
+      syncStatus: 'saved',
+      isSessionExpired: false,
+    });
+    useWorkspaceStore.setState({
+      tabs: [],
+    });
+    mockStorage = {};
+    visibilityListeners = [];
+
+    const sessionStorageMock = {
+      getItem: vi.fn((key: string) => mockStorage[key] || null),
+      setItem: vi.fn((key: string, value: string) => {
+        mockStorage[key] = value;
+      }),
+      removeItem: vi.fn((key: string) => {
+        delete mockStorage[key];
+      }),
+      clear: vi.fn(() => {
+        mockStorage = {};
+      }),
+    };
+    (global as any).sessionStorage = sessionStorageMock;
+
+    if (typeof (global as any).window === 'undefined') {
+      (global as any).window = {};
+    }
+    (global as any).window.sessionStorage = sessionStorageMock;
+    (global as any).window.location = {
+      protocol: 'https:',
+      host: 'cme.internal:8080',
+      reload: vi.fn(),
+    };
+
+    (global as any).document = {
+      hidden: false,
+      addEventListener: vi.fn((event: string, cb: () => void) => {
+        if (event === 'visibilitychange') {
+          visibilityListeners.push(cb);
+        }
+      }),
+      removeEventListener: vi.fn((event: string, cb: () => void) => {
+        if (event === 'visibilitychange') {
+          visibilityListeners = visibilityListeners.filter((l) => l !== cb);
+        }
+      }),
+    };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('marks session expired when a REST API call encounters a network error and auth probe fails', async () => {
+    (global as any).fetch = vi.fn((url: string) => {
+      if (url === '/api/v1/auth/me') {
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          redirected: false,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ error: 'Unauthorized' }),
+        });
+      }
+      return Promise.reject(new TypeError('Failed to fetch'));
+    });
+
+    await expect(apiRequest('/api/v1/health')).rejects.toThrow('Failed to fetch');
+
+    // Wait for the debounced background probe to resolve
+    await vi.waitFor(() => {
+      expect(useUIStore.getState().isSessionExpired).toBe(true);
+    });
+    expect(useUIStore.getState().syncStatus).toBe('expired');
+  });
+
+  it('marks session expired when a REST API call receives an opaqueredirect', async () => {
+    (global as any).fetch = vi.fn((url: string) => {
+      if (url === '/api/v1/auth/me') {
+        return Promise.resolve({
+          ok: false,
+          status: 0,
+          type: 'opaqueredirect',
+          headers: new Headers(),
+        });
+      }
+      return Promise.resolve({
+        ok: false,
+        status: 0,
+        type: 'opaqueredirect',
+        headers: new Headers(),
+      });
+    });
+
+    await expect(apiRequest('/api/v1/documents')).rejects.toThrow(ApiError);
+
+    await vi.waitFor(() => {
+      expect(useUIStore.getState().isSessionExpired).toBe(true);
+    });
+  });
+
+  it('marks session expired when an API endpoint receives an HTML login page instead of JSON', async () => {
+    (global as any).fetch = vi.fn((url: string) => {
+      if (url === '/api/v1/auth/me') {
+        return Promise.resolve({
+          ok: false,
+          status: 303,
+          redirected: true,
+          headers: new Headers({ 'content-type': 'text/html' }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'text/html; charset=utf-8' }),
+        text: async () => '<html>SSO Login</html>',
+      });
+    });
+
+    await expect(apiRequest('/api/v1/workspaces/tree')).rejects.toThrow(ApiError);
+
+    await vi.waitFor(() => {
+      expect(useUIStore.getState().isSessionExpired).toBe(true);
+    });
+  });
+
+  it('does not mark session expired if /api/v1/auth/me probe succeeds', async () => {
+    (global as any).fetch = vi.fn((url: string) => {
+      if (url === '/api/v1/auth/me') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          redirected: false,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({ user: { id: 'u1', username: 'bob' } }),
+        });
+      }
+      return Promise.reject(new TypeError('Temporary connection error'));
+    });
+
+    await expect(apiRequest('/api/v1/documents/custom')).rejects.toThrow('Temporary connection error');
+
+    // Wait short delay to ensure probe runs and passes
+    await new Promise((r) => setTimeout(r, 50));
+    expect(useUIStore.getState().isSessionExpired).toBe(false);
+    expect(useUIStore.getState().syncStatus).toBe('saved');
+  });
+
+  it('automatically clears session expired state when a subsequent request succeeds', async () => {
+    useUIStore.setState({
+      isSessionExpired: true,
+      syncStatus: 'expired',
+    });
+
+    (global as any).fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ status: 'healthy', version: '1.0' }),
+    });
+
+    const res = await apiRequest<{ status: string }>('/api/v1/health');
+    expect(res.status).toBe('healthy');
+
+    expect(useUIStore.getState().isSessionExpired).toBe(false);
+    expect(useUIStore.getState().syncStatus).toBe('saved');
+  });
+
+  it('prevents auto-reload when the editor has unsaved changes (dirty tabs)', () => {
+    useWorkspaceStore.setState({
+      tabs: [{ id: 'doc-unsaved', path: 'notes.md', title: 'Notes', isDirty: true }],
+    });
+
+    const reloadMock = vi.fn();
+    (global as any).window.location = { reload: reloadMock } as any;
+
+    handleGlobalSessionExpired();
+
+    // Must NOT call reload while unsaved changes exist
+    expect(reloadMock).not.toHaveBeenCalled();
+    expect(useUIStore.getState().isSessionExpired).toBe(true);
+  });
+
+  it('triggers reload when the editor has no unsaved changes and tab is visible', () => {
+    useWorkspaceStore.setState({
+      tabs: [{ id: 'doc-clean', path: 'notes.md', title: 'Notes', isDirty: false }],
+    });
+
+    const reloadMock = vi.fn();
+    (global as any).window.location = { reload: reloadMock } as any;
+
+    handleGlobalSessionExpired();
+
+    expect(reloadMock).toHaveBeenCalledTimes(1);
+    expect(useUIStore.getState().isSessionExpired).toBe(true);
   });
 });

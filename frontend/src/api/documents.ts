@@ -1,4 +1,4 @@
-import { apiRequest, TOKEN_STORAGE_KEY } from './client';
+import { apiRequest, apiFetch, TOKEN_STORAGE_KEY } from './client';
 import { DocumentRecord, WorkspaceNode, TrashNode, SearchResult, DocumentAsset, DirectoryDashboard } from '../types/document';
 
 export function isMarkdownPath(path: string, isBundle?: boolean): boolean {
@@ -153,19 +153,14 @@ export async function uploadWorkspaceFile(
   fileData: Blob | ArrayBuffer | Uint8Array | string
 ): Promise<DocumentRecord> {
   const cleanPath = path.replace(/^\/+/, '');
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
   const headers = new Headers({
     'Content-Type': 'application/octet-stream',
     'X-File-Path': cleanPath,
   });
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  const response = await fetch(`/api/v1/workspaces/files?path=${encodeURIComponent(cleanPath)}`, {
+  const response = await apiFetch(`/api/v1/workspaces/files?path=${encodeURIComponent(cleanPath)}`, {
     method: 'POST',
     headers,
     body: fileData as BodyInit,
-    credentials: 'include',
   });
   if (!response.ok) {
     throw new Error(`Failed to upload file: HTTP ${response.status}`);
@@ -367,19 +362,14 @@ export async function uploadDocumentAsset(
   filename: string,
   fileData: Blob | ArrayBuffer | Uint8Array | string
 ): Promise<{ filename: string; path: string }> {
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
   const headers = new Headers({
     'Content-Type': 'application/octet-stream',
     'X-Asset-Filename': filename,
   });
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
-  const response = await fetch(`/api/v1/documents/${docId}/assets?filename=${encodeURIComponent(filename)}`, {
+  const response = await apiFetch(`/api/v1/documents/${docId}/assets?filename=${encodeURIComponent(filename)}`, {
     method: 'POST',
     headers,
     body: fileData as BodyInit,
-    credentials: 'include',
   });
   if (!response.ok) {
     throw new Error(`Failed to upload asset: HTTP ${response.status}`);
@@ -394,13 +384,8 @@ export async function deleteDocumentAsset(docId: string, filename: string): Prom
 }
 
 export async function downloadWorkspaceFile(path: string, filename?: string): Promise<void> {
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
-  const headers: HeadersInit = {};
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
   const url = `/api/v1/workspaces/files?path=${encodeURIComponent(path)}`;
-  const response = await fetch(url, { headers, credentials: 'include' });
+  const response = await apiFetch(url);
   if (!response.ok) {
     throw new Error(`Failed to download file: HTTP ${response.status}`);
   }
@@ -416,15 +401,10 @@ export async function downloadWorkspaceFile(path: string, filename?: string): Pr
 }
 
 export async function downloadBundleZip(path: string, docId?: string, filename?: string): Promise<void> {
-  const token = typeof localStorage !== 'undefined' ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
-  const headers: HeadersInit = {};
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
   const url = docId
     ? `/api/v1/documents/${encodeURIComponent(docId)}/bundle.zip`
     : `/api/v1/workspaces/bundles/zip?path=${encodeURIComponent(path)}`;
-  const response = await fetch(url, { headers, credentials: 'include' });
+  const response = await apiFetch(url);
   if (!response.ok) {
     throw new Error(`Failed to download bundle zip: HTTP ${response.status}`);
   }

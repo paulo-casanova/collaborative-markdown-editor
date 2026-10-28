@@ -11,6 +11,8 @@ interface UIState {
   viewMode: ViewMode;
   breadcrumbs: BreadcrumbItem[];
   syncStatus: SyncStatus;
+  isSessionExpired: boolean;
+  setSessionExpired: (expired: boolean) => void;
   loginModalOpen: boolean;
   tokensModalOpen: boolean;
   searchModalOpen: boolean;
@@ -79,6 +81,12 @@ export const useUIStore = create<UIState>((set) => ({
       : 'read',
   breadcrumbs: [{ label: 'Workspaces', path: '/' }],
   syncStatus: 'saved',
+  isSessionExpired: false,
+  setSessionExpired: (expired) =>
+    set((state) => ({
+      isSessionExpired: expired,
+      syncStatus: expired ? 'expired' : state.syncStatus === 'expired' ? 'saved' : state.syncStatus,
+    })),
   loginModalOpen: false,
   tokensModalOpen: false,
   searchModalOpen: false,
