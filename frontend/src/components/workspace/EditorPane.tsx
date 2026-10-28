@@ -15,6 +15,7 @@ import {
   RefreshCw,
   Link2,
   Check,
+  Sparkles,
 } from 'lucide-react';
 import { fetchDocument, moveDocument, updateDocument, convertDocument } from '../../api/documents';
 import { DocumentRecord } from '../../types/document';
@@ -32,6 +33,8 @@ import { reconcileAnchor } from '../../review/textAnchoring';
 import { updateCachedDocumentHeadings } from '../../utils/linkValidator';
 import { BundleAssetsSidebar } from './BundleAssetsSidebar';
 import { AccessControlModal } from './AccessControlModal';
+import { DialogSidecar } from '../dialog/DialogSidecar';
+import { useDialogStore } from '../../stores/dialogStore';
 
 interface EditorPaneProps {
   documentId: string;
@@ -46,7 +49,15 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   onClosePane,
   isPrimary = true,
 }) => {
-  const { setBreadcrumbs, setSyncStatus, setViewMode, numberHeaders, setNumberHeaders } = useUIStore();
+  const {
+    setBreadcrumbs,
+    setSyncStatus,
+    setViewMode,
+    numberHeaders,
+    setNumberHeaders,
+    dialogSidecarOpen,
+    toggleDialogSidecar,
+  } = useUIStore();
   const { updateTabMetadata, closeTab, outlineWidth, setOutlineWidth } = useWorkspaceStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -281,6 +292,56 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     [editorInstance, provider]
   );
 
+  const handleApplyDiff = useCallback(
+    (diff: string) => {
+      try {
+        const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
+        if (!view || !view.state?.doc) return;
+
+        const doc = view.state.doc;
+        const docText = doc.toString();
+
+        const removed: string[] = [];
+        const added: string[] = [];
+        for (const line of diff.split('\n')) {
+          if (line.startsWith('-') && !line.startsWith('---')) {
+            removed.push(line.slice(1));
+          } else if (line.startsWith('+') && !line.startsWith('+++')) {
+            added.push(line.slice(1));
+          }
+        }
+        const origText = removed.join('\n');
+        const repText = added.join('\n');
+
+        let from = -1;
+        let to = -1;
+        if (origText) {
+          const idx = docText.indexOf(origText);
+          if (idx !== -1) {
+            from = idx;
+            to = idx + origText.length;
+          }
+        }
+
+        if (from === -1) {
+          const sel = view.state.selection.main;
+          from = sel.from;
+          to = sel.to;
+        }
+
+        view.dispatch({
+          changes: { from, to, insert: repText },
+          selection: { anchor: from + repText.length },
+          effects: EditorView.scrollIntoView(from, { y: 'center' }),
+        });
+        view.focus();
+      } catch (err) {
+        console.warn('[EditorPane] handleApplyDiff error:', err);
+      }
+    },
+    [editorInstance]
+  );
+
   useEffect(() => {
     if (isPrimary && documentId && documentId !== 'by-path') {
       initDocument(documentId);
@@ -315,6 +376,12 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
       navigator.clipboard?.writeText(`${origin}/documents/${document.id}`);
       setCopiedPermalink(true);
       setTimeout(() => setCopiedPermalink(false), 2000);
+    }
+  }, [document?.id]);
+
+  useEffect(() => {
+    if (document?.id) {
+      void useDialogStore.getState().syncDocumentDialogPreference(document.id);
     }
   }, [document?.id]);
 
@@ -598,6 +665,20 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               )}
             </button>
 
+            <button
+              onClick={() => toggleDialogSidecar()}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                dialogSidecarOpen
+                  ? 'bg-cme-primary text-white border-cme-primary'
+                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+              }`}
+              title="Toggle AI Dialog Sidecar (Ctrl+L)"
+              data-testid="toggle-dialog-sidecar-btn"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">AI Dialog</span>
+            </button>
+
             {document.is_bundle && (
               <button
                 onClick={() => setShowAssets(!showAssets)}
@@ -780,6 +861,15 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
           <ReviewSidebar
             onScrollToAnchor={handleScrollToAnchor}
             onApplyReplacement={handleApplyReplacement}
+          />
+        )}
+
+        {/* Dialog & Local Agent Sidecar */}
+        {dialogSidecarOpen && (
+          <DialogSidecar
+            documentId={document.id}
+            documentTitle={document.title}
+            onApplyDiff={handleApplyDiff}
           />
         )}
 

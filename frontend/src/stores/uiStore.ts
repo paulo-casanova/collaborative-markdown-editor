@@ -8,6 +8,7 @@ interface UIState {
   sidebarOpen: boolean;
   sidebarWidth: number;
   reviewSidebarOpen: boolean;
+  dialogSidecarOpen: boolean;
   viewMode: ViewMode;
   breadcrumbs: BreadcrumbItem[];
   syncStatus: SyncStatus;
@@ -22,6 +23,8 @@ interface UIState {
   setSidebarWidth: (width: number) => void;
   toggleReviewSidebar: () => void;
   setReviewSidebarOpen: (open: boolean) => void;
+  toggleDialogSidecar: () => void;
+  setDialogSidecarOpen: (open: boolean) => void;
   setViewMode: (mode: ViewMode) => void;
   setBreadcrumbs: (breadcrumbs: BreadcrumbItem[]) => void;
   setSyncStatus: (status: SyncStatus) => void;
@@ -74,6 +77,7 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: true,
   sidebarWidth: getInitialSidebarWidth(),
   reviewSidebarOpen: false,
+  dialogSidecarOpen: false,
   viewMode:
     typeof window !== 'undefined' &&
     (window.location.pathname.startsWith('/documents/') ||
@@ -110,6 +114,8 @@ export const useUIStore = create<UIState>((set) => ({
   },
   toggleReviewSidebar: () => set((state) => ({ reviewSidebarOpen: !state.reviewSidebarOpen })),
   setReviewSidebarOpen: (open) => set({ reviewSidebarOpen: open }),
+  toggleDialogSidecar: () => set((state) => ({ dialogSidecarOpen: !state.dialogSidecarOpen })),
+  setDialogSidecarOpen: (open) => set({ dialogSidecarOpen: open }),
   setViewMode: (viewMode) => set({ viewMode }),
   setBreadcrumbs: (breadcrumbs) => set({ breadcrumbs }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),

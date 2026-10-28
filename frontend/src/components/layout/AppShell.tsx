@@ -6,6 +6,7 @@ import { Sidebar } from './Sidebar';
 import { LoginModal } from '../auth/LoginModal';
 import { TokensModal } from '../auth/TokensModal';
 import { SearchModal } from '../search/SearchModal';
+import { AgentPairingModal } from '../dialog/AgentPairingModal';
 import { useThemeStore } from '../../stores/themeStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
@@ -71,6 +72,19 @@ export const AppShell: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [navigate]);
+
+  // Global keyboard shortcut: Ctrl+L / Cmd+L to toggle AI Dialog Sidecar
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        e.stopPropagation();
+        useUIStore.getState().toggleDialogSidecar();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
+  }, []);
 
   // Global wikilink navigation listener
   useEffect(() => {
@@ -156,6 +170,7 @@ export const AppShell: React.FC = () => {
       <LoginModal />
       <TokensModal />
       <SearchModal />
+      <AgentPairingModal />
     </div>
   );
 };
