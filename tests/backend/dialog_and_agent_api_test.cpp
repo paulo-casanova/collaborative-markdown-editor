@@ -290,6 +290,7 @@ int main() {
     cfg.server.port = 18096;
     cfg.storage.root_path = test_storage.string();
     cfg.database.url = db_url;
+    cfg.database.lease_enabled = false;
     cfg.authn.provider = "challenge";
 
     auto server = std::make_shared<server::Server>(cfg);

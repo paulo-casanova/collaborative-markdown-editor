@@ -134,6 +134,34 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(useDialogStore.getState().messages[0].content).toBe('What are the main priorities?');
   });
 
+  it('renames a dialog and updates local state', async () => {
+    useDialogStore.setState({
+      dialogs: [
+        {
+          id: 'dlg-1',
+          user_id: 'u-1',
+          title: 'Old Title',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      activeDialogId: 'dlg-1',
+    });
+
+    vi.spyOn(dialogApi, 'updateDialog').mockResolvedValue({
+      id: 'dlg-1',
+      user_id: 'u-1',
+      title: 'New Architecture Discussion',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    await useDialogStore.getState().renameDialog('dlg-1', 'New Architecture Discussion');
+
+    expect(dialogApi.updateDialog).toHaveBeenCalledWith('dlg-1', 'New Architecture Discussion');
+    expect(useDialogStore.getState().dialogs[0].title).toBe('New Architecture Discussion');
+  });
+
   it('sends a prompt message and appends it to state', async () => {
     useDialogStore.setState({ activeDialogId: 'dlg-1' });
 
@@ -181,5 +209,31 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
 
     useDialogStore.getState().setPairingModalOpen(false);
     expect(useDialogStore.getState().pairingModalOpen).toBe(false);
+  });
+
+  it('supports attaching selected text snapshots and toggling dialog sidecar for Reader Mode', () => {
+    useUIStore.getState().setDialogSidecarOpen(false);
+    expect(useUIStore.getState().dialogSidecarOpen).toBe(false);
+
+    // Simulate clicking "Ask Agent" on text selection in Reader Mode
+    useDialogStore.getState().setContextSnapshot({
+      document_id: 'doc-reader-1',
+      document_title: 'Specification Document',
+      document_path: '/docs/spec.md',
+      selected_text: '### Section 3: Agentic Architecture',
+    });
+    useUIStore.getState().setDialogSidecarOpen(true);
+
+    expect(useUIStore.getState().dialogSidecarOpen).toBe(true);
+    expect(useDialogStore.getState().contextSnapshot).toEqual({
+      document_id: 'doc-reader-1',
+      document_title: 'Specification Document',
+      document_path: '/docs/spec.md',
+      selected_text: '### Section 3: Agentic Architecture',
+    });
+
+    // Clear snapshot after dispatch
+    useDialogStore.getState().clearContextSnapshot();
+    expect(useDialogStore.getState().contextSnapshot).toBeNull();
   });
 });

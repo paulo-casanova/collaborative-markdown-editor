@@ -9,6 +9,7 @@ export const AgentPairingModal: React.FC = () => {
   const [tokens, setTokens] = useState<AgentTokenRecord[]>([]);
   const [createdToken, setCreatedToken] = useState<CreatedAgentToken | null>(null);
   const [label, setLabel] = useState('Local Workstation');
+  const [selectedProvider, setSelectedProvider] = useState<'ollama' | 'gemini' | 'anthropic' | 'openai' | 'custom'>('gemini');
   const [isCreating, setIsCreating] = useState(false);
   const [copiedToken, setCopiedToken] = useState(false);
   const [copiedCmd, setCopiedCmd] = useState(false);
@@ -41,9 +42,23 @@ export const AgentPairingModal: React.FC = () => {
   };
 
   const serverOrigin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:18080';
-  const cliCommand = createdToken
-    ? `cme-agent --server ${serverOrigin} --token ${createdToken.token}`
-    : `cme-agent --server ${serverOrigin} --token <YOUR_AGENT_TOKEN>`;
+  const tokenVal = createdToken ? createdToken.token : '<YOUR_AGENT_TOKEN>';
+
+  let cliCommand = `cme-agent --server ${serverOrigin} --token ${tokenVal}`;
+  if (selectedProvider === 'gemini') {
+    cliCommand = `export GEMINI_API_KEY="AIza..."\n` +
+      `cme-agent --server ${serverOrigin} --token ${tokenVal} --provider gemini --model gemini-1.5-flash`;
+  } else if (selectedProvider === 'ollama') {
+    cliCommand = `cme-agent --server ${serverOrigin} --token ${tokenVal} --provider ollama --model llama3.1`;
+  } else if (selectedProvider === 'anthropic') {
+    cliCommand = `export ANTHROPIC_API_KEY="sk-ant-..."\n` +
+      `cme-agent --server ${serverOrigin} --token ${tokenVal} --provider anthropic --model claude-3-5-sonnet-20241022`;
+  } else if (selectedProvider === 'openai') {
+    cliCommand = `export OPENAI_API_KEY="sk-..."\n` +
+      `cme-agent --server ${serverOrigin} --token ${tokenVal} --provider openai --model gpt-4o`;
+  } else if (selectedProvider === 'custom') {
+    cliCommand = `cme-agent --server ${serverOrigin} --token ${tokenVal} --provider custom --api-base http://localhost:8000/v1 --model my-model`;
+  }
 
   const handleCopyCmd = () => {
     if (typeof navigator !== 'undefined') {
@@ -190,8 +205,8 @@ export const AgentPairingModal: React.FC = () => {
             )}
           </div>
 
-          {/* Quickstart Command */}
-          <div className="space-y-2">
+          {/* Provider Selection & Quickstart Command */}
+          <div className="space-y-2.5">
             <div className="flex items-center justify-between text-xs font-semibold text-cme-text-base">
               <span className="flex items-center gap-1.5">
                 <Terminal className="w-3.5 h-3.5" />
@@ -205,6 +220,31 @@ export const AgentPairingModal: React.FC = () => {
                 <span>{copiedCmd ? 'Copied command' : 'Copy command'}</span>
               </button>
             </div>
+
+            {/* Provider Selector Tabs */}
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                { id: 'gemini', label: 'Google Gemini' },
+                { id: 'ollama', label: 'Ollama (Local)' },
+                { id: 'anthropic', label: 'Anthropic Claude' },
+                { id: 'openai', label: 'OpenAI' },
+                { id: 'custom', label: 'Custom / vLLM' },
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setSelectedProvider(p.id as any)}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                    selectedProvider === p.id
+                      ? 'bg-cme-primary text-white shadow-xs'
+                      : 'border border-cme-border-base bg-cme-bg-base text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+
             <pre className="font-mono text-[11px] p-3 rounded-lg bg-zinc-900 text-zinc-100 border border-zinc-800 overflow-x-auto whitespace-pre-wrap select-all">
               {cliCommand}
             </pre>

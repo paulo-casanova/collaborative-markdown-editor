@@ -33,6 +33,7 @@ interface DialogState {
   loadDialogs: () => Promise<void>;
   selectDialog: (dialogId: string, docIdToPersist?: string) => Promise<void>;
   createAndSelectDialog: (title?: string, docIdToPersist?: string) => Promise<Dialog>;
+  renameDialog: (dialogId: string, newTitle: string) => Promise<void>;
   deleteDialog: (dialogId: string) => Promise<void>;
   sendMessage: (content: string) => Promise<void>;
   setContextSnapshot: (snapshot: ContextSnapshot | null) => void;
@@ -117,6 +118,19 @@ export const useDialogStore = create<DialogState>((set, get) => ({
     }));
     await get().selectDialog(newDialog.id, docIdToPersist);
     return newDialog;
+  },
+
+  renameDialog: async (dialogId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) return;
+    try {
+      const updated = await dialogApi.updateDialog(dialogId, trimmed);
+      set((state) => ({
+        dialogs: state.dialogs.map((d) => (d.id === dialogId ? { ...d, title: updated.title } : d)),
+      }));
+    } catch (err) {
+      console.warn(`[DialogStore] Failed to rename dialog ${dialogId}:`, err);
+    }
   },
 
   deleteDialog: async (dialogId: string) => {

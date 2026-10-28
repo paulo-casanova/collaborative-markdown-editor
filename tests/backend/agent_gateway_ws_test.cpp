@@ -126,6 +126,7 @@ int main() {
     cfg.server.port = 18101;
     cfg.storage.root_path = test_storage.string();
     cfg.database.url = db_url;
+    cfg.database.lease_enabled = false;
     cfg.authn.provider = "challenge";
 
     std::cout << "\n[STEP 1] Starting CME Server daemon on port 18101...\n";

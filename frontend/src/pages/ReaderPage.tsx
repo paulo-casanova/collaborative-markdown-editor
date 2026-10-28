@@ -16,6 +16,7 @@ import {
   Pencil,
   GitPullRequest,
   RotateCw,
+  Sparkles,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -33,6 +34,7 @@ import {
   findWorkspacePath,
   getWorkspaceFileUrl,
   isMarkdownPath,
+  updateDocument,
 } from '../api/documents';
 import {
   acceptSuggestion,
@@ -48,6 +50,8 @@ import type { CommentRecord } from '../review/types';
 import { parseMarkdownToHtml } from '../utils/markdownToHtml';
 import { useUIStore } from '../stores/uiStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
+import { DialogSidecar } from '../components/dialog/DialogSidecar';
+import { useDialogStore } from '../stores/dialogStore';
 import {
   DocumentOutline,
   extractHeadingsFromMarkdown,
@@ -78,7 +82,7 @@ export const ReaderPage: React.FC = () => {
   const pathParam = searchParams.get('path');
   const rawTarget = pathParam || wildcard || (idParam !== 'by-path' ? idParam : '') || '';
 
-  const { setBreadcrumbs, setViewMode } = useUIStore();
+  const { setBreadcrumbs, setViewMode, dialogSidecarOpen, toggleDialogSidecar } = useUIStore();
   const { openTab } = useWorkspaceStore();
   const [showReviews, setShowReviews] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
@@ -234,8 +238,42 @@ export const ReaderPage: React.FC = () => {
   useEffect(() => {
     if (docId) {
       initDocument(docId);
+      void useDialogStore.getState().syncDocumentDialogPreference(docId);
     }
   }, [docId, initDocument]);
+
+  const handleApplyDiffInReader = useCallback(
+    async (diff: string) => {
+      if (!document) return;
+      try {
+        const removed: string[] = [];
+        const added: string[] = [];
+        for (const line of diff.split('\n')) {
+          if (line.startsWith('-') && !line.startsWith('---')) {
+            removed.push(line.slice(1));
+          } else if (line.startsWith('+') && !line.startsWith('+++')) {
+            added.push(line.slice(1));
+          }
+        }
+        const origText = removed.join('\n');
+        const repText = added.join('\n');
+
+        let newContent = document.content ?? '';
+        if (origText && newContent.includes(origText)) {
+          newContent = newContent.replace(origText, repText);
+        } else {
+          newContent = newContent + '\n\n' + repText;
+        }
+
+        await updateDocument(document.id, { content: newContent });
+        queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+        queryClient.invalidateQueries({ queryKey: ['document'] });
+      } catch (err) {
+        console.warn('[ReaderPage] Failed to apply diff in reader mode:', err);
+      }
+    },
+    [document, queryClient]
+  );
 
   const prevPendingComment = useRef(pendingCommentSelection);
   const prevPendingSuggestion = useRef(pendingSuggestionSelection);
@@ -885,8 +923,9 @@ export const ReaderPage: React.FC = () => {
   const widthClass = widthMode === 'full' ? 'max-w-none w-full' : 'max-w-4xl mx-auto';
 
   return (
-    <div className="min-h-full bg-cme-bg-base text-cme-text-base pb-24">
-      {/* Top Reader Controls Header */}
+    <div className="h-full flex overflow-hidden bg-cme-bg-base text-cme-text-base">
+      <div className="flex-1 overflow-y-auto min-w-0 pb-24">
+        {/* Top Reader Controls Header */}
       <header className="sticky top-0 z-20 bg-cme-bg-base/95 backdrop-blur-md border-b border-cme-border-base px-4 md:px-8 py-3 shadow-xs">
         <div className={`${containerWidthClass} flex items-center justify-between gap-4`}>
           {/* Left Metadata */}
@@ -970,6 +1009,21 @@ export const ReaderPage: React.FC = () => {
             >
               <MessageSquare className="w-3.5 h-3.5" />
               <span>Reviews: {showReviews ? 'ON' : 'OFF'}</span>
+            </button>
+
+            {/* AI Dialog Sidecar Toggle */}
+            <button
+              onClick={() => toggleDialogSidecar()}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                dialogSidecarOpen
+                  ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
+                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-base hover:bg-cme-bg-hover'
+              }`}
+              data-testid="reader-dialog-sidecar-toggle"
+              title="Toggle AI Dialog Sidecar (Ctrl+L)"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>AI Dialog</span>
             </button>
 
             {/* Refresh Document Button (Issue #19) */}
@@ -1237,6 +1291,16 @@ export const ReaderPage: React.FC = () => {
           </div>
         </aside>
       </div>
+      </div>
+
+      {/* AI Agent Dialog Sidecar */}
+      {dialogSidecarOpen && (
+        <DialogSidecar
+          documentId={document?.id}
+          documentTitle={document?.title}
+          onApplyDiff={handleApplyDiffInReader}
+        />
+      )}
 
       {/* Floating Suggest / Comment Review Popup */}
       {canComment && floatingMenuPos && (
@@ -1272,6 +1336,30 @@ export const ReaderPage: React.FC = () => {
           >
             <MessageSquare className="w-3.5 h-3.5" />
             Comment
+          </button>
+
+          <div className="w-[1px] h-3.5 bg-cme-border-base mx-0.5" />
+
+          <button
+            type="button"
+            data-testid="reader-ask-agent-btn"
+            onClick={() => {
+              if (document) {
+                useDialogStore.getState().setContextSnapshot({
+                  document_id: document.id,
+                  document_title: document.title,
+                  document_path: document.path,
+                  selected_text: readerSelectedText,
+                });
+                useUIStore.getState().setDialogSidecarOpen(true);
+                setFloatingMenuPos(null);
+              }
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 rounded-lg transition-colors cursor-pointer"
+            title="Ask your AI agent about selected text"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Ask Agent
           </button>
         </div>
       )}

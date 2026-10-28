@@ -10,6 +10,8 @@ import {
   Paperclip,
   ChevronDown,
   Trash2,
+  Pencil,
+  Check,
   Sparkles,
   AlertCircle,
 } from 'lucide-react';
@@ -44,6 +46,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     loadDialogs,
     selectDialog,
     createAndSelectDialog,
+    renameDialog,
     deleteDialog,
     sendMessage,
     setPairingModalOpen,
@@ -53,8 +56,32 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   const [inputPrompt, setInputPrompt] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [editingDialogId, setEditingDialogId] = useState<string | null>(null);
+  const [editingTitleText, setEditingTitleText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handleStartRename = (e: React.MouseEvent, id: string, currentTitle: string) => {
+    e.stopPropagation();
+    setEditingDialogId(id);
+    setEditingTitleText(currentTitle);
+  };
+
+  const handleSaveRename = async (id: string) => {
+    if (editingTitleText.trim()) {
+      await renameDialog(id, editingTitleText.trim());
+    }
+    setEditingDialogId(null);
+  };
+
+  const handleRenameKeyDown = (e: React.KeyboardEvent, id: string) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void handleSaveRename(id);
+    } else if (e.key === 'Escape') {
+      setEditingDialogId(null);
+    }
+  };
 
   useEffect(() => {
     void loadDialogs();
@@ -92,79 +119,162 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     >
       {/* Sidecar Top Bar */}
       <div className="p-3 border-b border-cme-border-base bg-cme-bg-subtle flex items-center justify-between gap-2 shrink-0">
-        {/* Dialog Selector Dropdown */}
-        <div className="relative flex-1 min-w-0">
-          <button
-            onClick={() => setDropdownOpen(!dropdownOpen)}
-            className="w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-base hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors truncate"
-            title="Switch Dialog Thread"
-            data-testid="dialog-selector-btn"
-          >
-            <div className="flex items-center gap-1.5 truncate">
-              <MessageSquare className="w-3.5 h-3.5 text-cme-primary shrink-0" />
-              <span className="truncate">{currentDialog ? currentDialog.title : 'Select Dialog...'}</span>
-            </div>
-            <ChevronDown className="w-3.5 h-3.5 text-cme-text-muted shrink-0" />
-          </button>
-
-          {/* Dialog List Dropdown Menu */}
-          {dropdownOpen && (
-            <div
-              className="absolute left-0 top-full mt-1 w-full bg-cme-bg-surface border border-cme-border-base rounded-lg shadow-xl z-50 overflow-hidden py-1 max-h-64 overflow-y-auto"
-              onMouseLeave={() => setDropdownOpen(false)}
+        {/* Dialog Selector or Active Rename Field */}
+        {editingDialogId === activeDialogId && activeDialogId ? (
+          <div className="flex-1 flex items-center gap-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="text"
+              autoFocus
+              value={editingTitleText}
+              onChange={(e) => setEditingTitleText(e.target.value)}
+              onKeyDown={(e) => handleRenameKeyDown(e, activeDialogId)}
+              onBlur={() => void handleSaveRename(activeDialogId)}
+              className="flex-1 px-2 py-1 text-xs bg-cme-bg-base border border-cme-primary rounded text-cme-text-base focus:outline-none"
+              placeholder="Dialog Title"
+              data-testid="active-dialog-rename-input"
+            />
+            <button
+              onClick={() => void handleSaveRename(activeDialogId)}
+              className="p-1 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors"
+              title="Save Title"
             >
-              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-cme-text-muted">
-                Your Dialog Threads
-              </div>
-
-              {dialogs.map((d) => (
-                <div
-                  key={d.id}
-                  onClick={async () => {
-                    await selectDialog(d.id, documentId);
-                    setDropdownOpen(false);
-                  }}
-                  className={`flex items-center justify-between px-2.5 py-1.5 text-xs cursor-pointer hover:bg-cme-bg-hover transition-colors ${
-                    d.id === activeDialogId
-                      ? 'bg-cme-primary/10 text-cme-primary font-medium'
-                      : 'text-cme-text-base'
-                  }`}
-                >
-                  <span className="truncate flex-1 mr-2">{d.title}</span>
-                  <button
-                    onClick={async (e) => {
-                      e.stopPropagation();
-                      await deleteDialog(d.id);
-                    }}
-                    className="p-1 rounded text-cme-text-muted hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
-                    title="Delete Dialog"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+              <Check className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setEditingDialogId(null)}
+              className="p-1 rounded text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover transition-colors"
+              title="Cancel"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <div className="flex-1 flex items-center gap-1.5 min-w-0">
+            {/* Dialog Selector Dropdown */}
+            <div className="relative flex-1 min-w-0">
+              <button
+                onClick={() => setDropdownOpen(!dropdownOpen)}
+                className="w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-base hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors truncate"
+                title="Switch Dialog Thread"
+                data-testid="dialog-selector-btn"
+              >
+                <div className="flex items-center gap-1.5 truncate">
+                  <MessageSquare className="w-3.5 h-3.5 text-cme-primary shrink-0" />
+                  <span className="truncate">{currentDialog ? currentDialog.title : 'Select Dialog...'}</span>
                 </div>
-              ))}
+                <ChevronDown className="w-3.5 h-3.5 text-cme-text-muted shrink-0" />
+              </button>
 
-              <div className="border-t border-cme-border-base mt-1 pt-1">
-                <button
-                  onClick={async () => {
-                    setIsCreatingNew(true);
-                    await createAndSelectDialog(
-                      documentTitle ? `Chat: ${documentTitle}` : 'New Dialog',
-                      documentId
-                    );
-                    setIsCreatingNew(false);
-                    setDropdownOpen(false);
-                  }}
-                  disabled={isCreatingNew}
-                  className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-cme-primary hover:bg-cme-bg-hover transition-colors font-medium"
+              {/* Dialog List Dropdown Menu */}
+              {dropdownOpen && (
+                <div
+                  className="absolute left-0 top-full mt-1 w-full bg-cme-bg-surface border border-cme-border-base rounded-lg shadow-xl z-50 overflow-hidden py-1 max-h-64 overflow-y-auto"
+                  onMouseLeave={() => setDropdownOpen(false)}
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{isCreatingNew ? 'Creating...' : '+ New Dialog'}</span>
-                </button>
-              </div>
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-cme-text-muted">
+                    Your Dialog Threads
+                  </div>
+
+                  {dialogs.map((d) => (
+                    <div
+                      key={d.id}
+                      onClick={async () => {
+                        if (editingDialogId === d.id) return;
+                        await selectDialog(d.id, documentId);
+                        setDropdownOpen(false);
+                      }}
+                      className={`flex items-center justify-between px-2.5 py-1.5 text-xs cursor-pointer hover:bg-cme-bg-hover transition-colors ${
+                        d.id === activeDialogId
+                          ? 'bg-cme-primary/10 text-cme-primary font-medium'
+                          : 'text-cme-text-base'
+                      }`}
+                    >
+                      {editingDialogId === d.id ? (
+                        <div
+                          className="flex-1 flex items-center gap-1 min-w-0 mr-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="text"
+                            autoFocus
+                            value={editingTitleText}
+                            onChange={(e) => setEditingTitleText(e.target.value)}
+                            onKeyDown={(e) => handleRenameKeyDown(e, d.id)}
+                            onBlur={() => void handleSaveRename(d.id)}
+                            className="flex-1 px-1.5 py-0.5 text-xs bg-cme-bg-base border border-cme-primary rounded text-cme-text-base focus:outline-none"
+                          />
+                          <button
+                            onClick={() => void handleSaveRename(d.id)}
+                            className="p-1 rounded text-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-950/30"
+                            title="Save"
+                          >
+                            <Check className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <span className="truncate flex-1 mr-2">{d.title}</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={(e) => handleStartRename(e, d.id, d.title)}
+                              className="p-1 rounded text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-subtle transition-colors"
+                              title="Rename Dialog"
+                              data-testid={`rename-dialog-btn-${d.id}`}
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                await deleteDialog(d.id);
+                              }}
+                              className="p-1 rounded text-cme-text-muted hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
+                              title="Delete Dialog"
+                              data-testid={`delete-dialog-btn-${d.id}`}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))}
+
+                  <div className="border-t border-cme-border-base mt-1 pt-1">
+                    <button
+                      onClick={async () => {
+                        setIsCreatingNew(true);
+                        await createAndSelectDialog(
+                          documentTitle ? `Chat: ${documentTitle}` : 'New Dialog',
+                          documentId
+                        );
+                        setIsCreatingNew(false);
+                        setDropdownOpen(false);
+                      }}
+                      disabled={isCreatingNew}
+                      className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-cme-primary hover:bg-cme-bg-hover transition-colors font-medium"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>{isCreatingNew ? 'Creating...' : '+ New Dialog'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
-          )}
-        </div>
+
+            {/* Quick Rename Button for Active Dialog */}
+            {activeDialogId && currentDialog && (
+              <button
+                onClick={(e) => handleStartRename(e, activeDialogId, currentDialog.title)}
+                className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors shrink-0"
+                title="Rename current dialog"
+                data-testid="rename-active-dialog-btn"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Agent Presence Pill */}
         <button
