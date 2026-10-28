@@ -172,6 +172,26 @@ public:
         const nlohmann::json& context_snapshot = nlohmann::json::object()
     );
 
+    /**
+     * @brief Truncates dialog messages after a given message ID (resetting conversation to that point).
+     */
+    Result<std::vector<DialogMessageRecord>> truncate_dialog(
+        const std::string& user_id,
+        const std::string& dialog_id,
+        const std::string& target_message_id,
+        bool inclusive = false
+    );
+
+    /**
+     * @brief Forks a dialog thread (and messages up to target_message_id) into a new dialog thread.
+     */
+    Result<DialogRecord> fork_dialog(
+        const std::string& user_id,
+        const std::string& source_dialog_id,
+        const std::optional<std::string>& up_to_message_id = std::nullopt,
+        const std::string& custom_title = ""
+    );
+
     // --- Agent Token Operations ---
 
     /**

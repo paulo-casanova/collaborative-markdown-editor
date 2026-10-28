@@ -83,3 +83,7 @@ storage_data/
 
 # Local configuration overrides
 config.yaml
+
+# Local environment
+env
+
