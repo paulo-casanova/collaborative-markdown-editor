@@ -305,6 +305,18 @@ set_tests_properties(dialog_and_agent_api_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Local Agent Gateway WebSocket Integration Test
+add_executable(agent_gateway_ws_test
+    backend/agent_gateway_ws_test.cpp
+)
+target_link_libraries(agent_gateway_ws_test PRIVATE cme_core)
+target_compile_features(agent_gateway_ws_test PRIVATE cxx_std_23)
+add_test(NAME agent_gateway_ws_test COMMAND agent_gateway_ws_test)
+set_tests_properties(agent_gateway_ws_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 

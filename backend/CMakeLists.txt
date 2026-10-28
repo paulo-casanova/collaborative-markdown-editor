@@ -30,6 +30,7 @@ add_library(cme_core
     src/snippet/snippet_fetcher.cpp
     src/audit/audit_service.cpp
     src/dialog/dialog_service.cpp
+    src/dialog/agent_manager.cpp
     src/server/server.cpp
 )
 

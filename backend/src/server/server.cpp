@@ -426,12 +426,33 @@ Result<void> Server::start() {
 
     // 8.6 Initialize Dialog & Agent Service
     dialog_service_ = std::make_shared<dialog::DialogService>(db_pool_);
+    agent_manager_ = std::make_shared<dialog::AgentManager>();
 
     // 9. Configure uWebSockets App
     uWS::App app;
     uws_loop_ = uWS::Loop::get();
     uws_app_ = &app;
     loop_thread_id_ = std::this_thread::get_id();
+
+    agent_manager_->set_publish_to_agent_fn([this](const std::string& user_id, const std::string& message) {
+        if (!uws_app_ || !uws_loop_) return;
+        auto* loop = static_cast<uWS::Loop*>(uws_loop_);
+        auto* app = static_cast<uWS::App*>(uws_app_);
+        std::string topic = "agent:" + user_id;
+        loop->defer([app, topic = std::move(topic), msg = message]() {
+            app->publish(topic, msg, uWS::OpCode::TEXT);
+        });
+    });
+
+    agent_manager_->set_publish_to_dialog_fn([this](const std::string& dialog_id, const std::string& message) {
+        if (!uws_app_ || !uws_loop_) return;
+        auto* loop = static_cast<uWS::Loop*>(uws_loop_);
+        auto* app = static_cast<uWS::App*>(uws_app_);
+        std::string topic = "dialog:" + dialog_id;
+        loop->defer([app, topic = std::move(topic), msg = message]() {
+            app->publish(topic, msg, uWS::OpCode::TEXT);
+        });
+    });
 
     // CORS Preflight handler
     app.options("/*", [this](auto *res, auto *req) {
@@ -4491,7 +4512,42 @@ Result<void> Server::start() {
                 }
                 return;
             }
-            send_json(res, "201 Created", add_res.value().to_json());
+
+            bool agent_online = agent_manager_ && agent_manager_->is_agent_online(user.user_id);
+            if (role == "user" && agent_online) {
+                auto hist_res = dialog_service_->list_messages(user.user_id, dialog_id, 20);
+                nlohmann::json hist_arr = nlohmann::json::array();
+                if (hist_res.has_value()) {
+                    for (const auto& m : hist_res.value()) {
+                        if (m.id == add_res.value().id) continue;
+                        hist_arr.push_back({
+                            {"role", m.role},
+                            {"content", m.content}
+                        });
+                    }
+                }
+                nlohmann::json prompt_req = {
+                    {"type", "prompt_request"},
+                    {"dialog_id", dialog_id},
+                    {"message_id", add_res.value().id},
+                    {"prompt", content},
+                    {"dialog_history", hist_arr},
+                    {"context", context_snapshot}
+                };
+                agent_manager_->send_to_agent(user.user_id, prompt_req.dump());
+            }
+
+            auto out = add_res.value().to_json();
+            out["agent_dispatched"] = agent_online;
+            if (agent_manager_) {
+                nlohmann::json user_event = {
+                    {"type", "user_message"},
+                    {"dialog_id", dialog_id},
+                    {"message", out}
+                };
+                agent_manager_->send_to_dialog(dialog_id, user_event.dump());
+            }
+            send_json(res, "201 Created", out);
         });
     });
 
@@ -4649,8 +4705,15 @@ Result<void> Server::start() {
     app.get("/api/v1/user/agent/status", [this, authenticate_user](auto *res, auto *req) {
         auto user = authenticate_user(req, res);
         if (!user) return;
-        // In Phase 1, report offline; wired to AgentManager in Phase 2
-        send_json(res, "200 OK", {{"online", false}, {"user_id", user->user_id}});
+        bool online = agent_manager_ ? agent_manager_->is_agent_online(user->user_id) : false;
+        nlohmann::json out = {
+            {"online", online},
+            {"user_id", user->user_id}
+        };
+        if (online && agent_manager_) {
+            out["agent_name"] = agent_manager_->get_agent_name(user->user_id);
+        }
+        send_json(res, "200 OK", out);
     });
 
     // =========================================================================
@@ -5158,6 +5221,232 @@ Result<void> Server::start() {
             dep_msg.append(departure_payload.dump());
             app.publish(data->topic, dep_msg, uWS::OpCode::BINARY);
         }
+    });
+
+    // =========================================================================
+    // Local Agent WebSocket Gateway (/api/v1/agents/ws)
+    // =========================================================================
+    app.ws<dialog::AgentSocketData>("/api/v1/agents/ws", {
+        .compression = uWS::DISABLED,
+        .maxPayloadLength = 16 * 1024 * 1024,
+        .idleTimeout = ws_idle_timeout,
+        .maxBackpressure = 1 * 1024 * 1024,
+        .closeOnBackpressureLimit = false,
+        .resetIdleTimeoutOnSend = false,
+        .sendPingsAutomatically = true,
+        .maxLifetime = 0,
+        .upgrade = [this](auto *res, auto *req, auto *context) {
+            if (!is_running_.load()) {
+                res->writeStatus("503 Service Unavailable");
+                res->writeHeader("Content-Type", "application/json");
+                res->end("{\"error\":\"ShuttingDown\"}");
+                return;
+            }
+
+            std::string sec_key = std::string(req->getHeader("sec-websocket-key"));
+            std::string sec_proto = std::string(req->getHeader("sec-websocket-protocol"));
+            std::string sec_ext = std::string(req->getHeader("sec-websocket-extensions"));
+
+            std::string auth_hdr = std::string(req->getHeader("authorization"));
+            std::string token;
+            if (!auth_hdr.empty()) {
+                auto extracted = auth::extract_bearer_token(auth_hdr);
+                if (extracted.has_value()) {
+                    token = *extracted;
+                }
+            }
+            if (token.empty()) {
+                token = std::string(req->getQuery("token"));
+            }
+            if (token.empty()) {
+                token = std::string(req->getQuery("access_token"));
+            }
+
+            if (token.empty()) {
+                res->writeStatus("401 Unauthorized");
+                res->writeHeader("Content-Type", "application/json");
+                res->end("{\"error\":\"Missing agent token\"}");
+                return;
+            }
+
+            auto val_res = dialog_service_->validate_agent_token(token);
+            if (!val_res.has_value() || !val_res.value().has_value()) {
+                res->writeStatus("401 Unauthorized");
+                res->writeHeader("Content-Type", "application/json");
+                res->end("{\"error\":\"Invalid or revoked agent token\"}");
+                return;
+            }
+
+            std::string user_id = val_res.value().value();
+            std::string agent_name = std::string(req->getHeader("x-agent-name"));
+            if (agent_name.empty()) {
+                agent_name = std::string(req->getQuery("name"));
+            }
+            if (agent_name.empty()) {
+                agent_name = "Default Local Agent";
+            }
+
+            res->template upgrade<dialog::AgentSocketData>({
+                .user_id = user_id,
+                .agent_name = agent_name,
+                .topic = "agent:" + user_id,
+                .connected_at = std::chrono::system_clock::now()
+            }, sec_key, sec_proto, sec_ext, context);
+        },
+        .open = [this](auto *ws) {
+            auto *data = ws->getUserData();
+            if (!data) return;
+            ws->subscribe(data->topic);
+            if (agent_manager_) {
+                agent_manager_->register_agent(data->user_id, static_cast<void*>(ws), data->agent_name);
+            }
+            nlohmann::json ack = {
+                {"type", "agent_ack"},
+                {"status", "connected"},
+                {"user_id", data->user_id},
+                {"agent_name", data->agent_name},
+                {"server_version", CME_VERSION_STRING}
+            };
+            ws->send(ack.dump(), uWS::OpCode::TEXT);
+        },
+        .message = [this](auto *ws, std::string_view message, uWS::OpCode opCode) {
+            auto *data = ws->getUserData();
+            if (!data) return;
+
+            if (opCode == uWS::OpCode::TEXT) {
+                try {
+                    auto j = nlohmann::json::parse(message);
+                    std::string type = j.value("type", "");
+                    if (type == "ping") {
+                        ws->send("{\"type\":\"pong\"}", uWS::OpCode::TEXT);
+                    } else if (type == "token_stream" || type == "tool_activity" || type == "diff_proposal") {
+                        std::string dialog_id = j.value("dialog_id", "");
+                        if (!dialog_id.empty() && agent_manager_) {
+                            agent_manager_->send_to_dialog(dialog_id, std::string(message));
+                        }
+                    } else if (type == "prompt_complete") {
+                        std::string dialog_id = j.value("dialog_id", "");
+                        std::string content = j.value("content", "");
+                        nlohmann::json ctx = j.value("context_snapshot", nlohmann::json::object());
+                        if (!dialog_id.empty() && !content.empty() && dialog_service_) {
+                            dialog_service_->add_message(data->user_id, dialog_id, "assistant", content, ctx);
+                        }
+                        if (!dialog_id.empty() && agent_manager_) {
+                            agent_manager_->send_to_dialog(dialog_id, std::string(message));
+                        }
+                    }
+                } catch (const std::exception& e) {
+                    std::cerr << "[WARN] Invalid JSON from agent " << data->user_id << ": " << e.what() << "\n";
+                }
+            }
+        },
+        .drain = [](auto* /*ws*/) {},
+        .ping = [](auto* /*ws*/, std::string_view /*message*/) {},
+        .pong = [](auto* /*ws*/, std::string_view /*message*/) {},
+        .close = [this](auto *ws, int /*code*/, std::string_view /*message*/) {
+            auto *data = ws->getUserData();
+            if (!data) return;
+            if (agent_manager_) {
+                agent_manager_->unregister_agent(data->user_id, static_cast<void*>(ws));
+            }
+        }
+    });
+
+    // =========================================================================
+    // Dialog Event Stream WebSocket for UI Clients (/ws/dialog/:dialog_id)
+    // =========================================================================
+    app.ws<dialog::DialogSocketData>("/ws/dialog/:dialog_id", {
+        .compression = uWS::DISABLED,
+        .maxPayloadLength = 16 * 1024 * 1024,
+        .idleTimeout = ws_idle_timeout,
+        .maxBackpressure = 1 * 1024 * 1024,
+        .closeOnBackpressureLimit = false,
+        .resetIdleTimeoutOnSend = false,
+        .sendPingsAutomatically = true,
+        .maxLifetime = 0,
+        .upgrade = [this](auto *res, auto *req, auto *context) {
+            if (!is_running_.load()) {
+                res->writeStatus("503 Service Unavailable");
+                res->writeHeader("Content-Type", "application/json");
+                res->end("{\"error\":\"ShuttingDown\"}");
+                return;
+            }
+
+            std::string dialog_id = url_decode(req->getParameter(0));
+            if (dialog_id.empty()) {
+                res->writeStatus("404 Not Found");
+                res->writeHeader("Content-Type", "application/json");
+                res->end("{\"error\":\"Invalid dialog ID\"}");
+                return;
+            }
+
+            std::string sec_key = std::string(req->getHeader("sec-websocket-key"));
+            std::string sec_proto = std::string(req->getHeader("sec-websocket-protocol"));
+            std::string sec_ext = std::string(req->getHeader("sec-websocket-extensions"));
+
+            std::string auth_hdr = std::string(req->getHeader("authorization"));
+            std::string cookie_hdr = std::string(req->getHeader("cookie"));
+
+            std::string del_header_name = config_.authn.delegated_header;
+            std::string del_email_name = config_.authn.delegated_email_header;
+            for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+            std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+            std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+            if (auth_hdr.empty()) {
+                std::string token_param = std::string(req->getQuery("token"));
+                if (token_param.empty()) token_param = std::string(req->getQuery("access_token"));
+                if (!token_param.empty()) {
+                    auth_hdr = "Bearer " + token_param;
+                }
+            }
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                res->writeStatus("401 Unauthorized");
+                res->writeHeader("Content-Type", "application/json");
+                res->end("{\"error\":\"Unauthorized\"}");
+                return;
+            }
+
+            const auto& user = auth_res.value().value();
+            auto dlg_res = dialog_service_->get_dialog(user.user_id, dialog_id);
+            if (!dlg_res.has_value()) {
+                res->writeStatus("404 Not Found");
+                res->writeHeader("Content-Type", "application/json");
+                res->end("{\"error\":\"Dialog not found\"}");
+                return;
+            }
+
+            res->template upgrade<dialog::DialogSocketData>({
+                .user_id = user.user_id,
+                .dialog_id = dialog_id,
+                .topic = "dialog:" + dialog_id
+            }, sec_key, sec_proto, sec_ext, context);
+        },
+        .open = [](auto *ws) {
+            auto *data = ws->getUserData();
+            if (!data) return;
+            ws->subscribe(data->topic);
+            nlohmann::json conn = {
+                {"type", "connected"},
+                {"dialog_id", data->dialog_id}
+            };
+            ws->send(conn.dump(), uWS::OpCode::TEXT);
+        },
+        .message = [](auto *ws, std::string_view message, uWS::OpCode opCode) {
+            if (opCode == uWS::OpCode::TEXT) {
+                if (message == "ping" || message == "{\"type\":\"ping\"}") {
+                    ws->send("{\"type\":\"pong\"}", uWS::OpCode::TEXT);
+                }
+            }
+        },
+        .drain = [](auto* /*ws*/) {},
+        .ping = [](auto* /*ws*/, std::string_view /*message*/) {},
+        .pong = [](auto* /*ws*/, std::string_view /*message*/) {},
+        .close = [](auto* /*ws*/, int /*code*/, std::string_view /*message*/) {}
     });
 
     // Embedded UI Static Asset & SPA Fallback Serving
