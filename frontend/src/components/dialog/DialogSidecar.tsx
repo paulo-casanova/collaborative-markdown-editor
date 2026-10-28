@@ -86,6 +86,13 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   useEffect(() => {
     void loadDialogs();
     void refreshAgentStatus();
+
+    // Poll periodically while sidecar is open so agent presence updates immediately
+    const interval = setInterval(() => {
+      void refreshAgentStatus();
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, []);
 
   // Auto-scroll to bottom of conversation

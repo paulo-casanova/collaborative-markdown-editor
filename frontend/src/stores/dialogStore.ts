@@ -223,7 +223,16 @@ export const useDialogStore = create<DialogState>((set, get) => ({
           const data = JSON.parse(event.data);
           const type = data.type;
 
-          if (type === 'user_message') {
+          if (type === 'agent_status') {
+            set({
+              agentStatus: {
+                online: Boolean(data.online),
+                agent_name: data.agent_name || (data.online ? 'Local Agent' : ''),
+                connected_at: data.online ? (data.connected_at || new Date().toISOString()) : null,
+                capabilities: data.capabilities || [],
+              },
+            });
+          } else if (type === 'user_message') {
             if (data.message && data.dialog_id === get().activeDialogId) {
               set((state) => {
                 const exists = state.messages.some((m) => m.id === data.message.id);

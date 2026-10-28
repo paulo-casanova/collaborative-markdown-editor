@@ -18,6 +18,13 @@ export const AgentPairingModal: React.FC = () => {
     if (pairingModalOpen) {
       void refreshAgentStatus();
       void loadTokens();
+
+      // Poll periodically while pairing modal is open to immediately detect the agent connecting
+      const interval = setInterval(() => {
+        void refreshAgentStatus();
+      }, 2000);
+
+      return () => clearInterval(interval);
     }
   }, [pairingModalOpen]);
 

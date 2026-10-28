@@ -4702,7 +4702,7 @@ Result<void> Server::start() {
         send_json(res, "200 OK", {{"status", "revoked"}});
     });
 
-    app.get("/api/v1/user/agent/status", [this, authenticate_user](auto *res, auto *req) {
+    auto handle_agent_status = [this, authenticate_user](auto *res, auto *req) {
         auto user = authenticate_user(req, res);
         if (!user) return;
         bool online = agent_manager_ ? agent_manager_->is_agent_online(user->user_id) : false;
@@ -4714,7 +4714,11 @@ Result<void> Server::start() {
             out["agent_name"] = agent_manager_->get_agent_name(user->user_id);
         }
         send_json(res, "200 OK", out);
-    });
+    };
+
+    app.get("/api/v1/user/agent/status", handle_agent_status);
+    app.get("/api/v1/user/agent-status", handle_agent_status);
+    app.get("/api/v1/agents/status", handle_agent_status);
 
     // =========================================================================
     // Real-Time Collaborative CRDT & WebSockets Engine (Step 3.2)
@@ -5293,7 +5297,7 @@ Result<void> Server::start() {
                 .connected_at = std::chrono::system_clock::now()
             }, sec_key, sec_proto, sec_ext, context);
         },
-        .open = [this](auto *ws) {
+        .open = [&app, this](auto *ws) {
             auto *data = ws->getUserData();
             if (!data) return;
             ws->subscribe(data->topic);
@@ -5308,6 +5312,15 @@ Result<void> Server::start() {
                 {"server_version", CME_VERSION_STRING}
             };
             ws->send(ack.dump(), uWS::OpCode::TEXT);
+
+            // Broadcast real-time agent presence to all active UI dialog connections for this user
+            nlohmann::json status_evt = {
+                {"type", "agent_status"},
+                {"online", true},
+                {"agent_name", data->agent_name},
+                {"user_id", data->user_id}
+            };
+            app.publish("user:" + data->user_id, status_evt.dump(), uWS::OpCode::TEXT);
         },
         .message = [this](auto *ws, std::string_view message, uWS::OpCode opCode) {
             auto *data = ws->getUserData();
@@ -5343,12 +5356,18 @@ Result<void> Server::start() {
         .drain = [](auto* /*ws*/) {},
         .ping = [](auto* /*ws*/, std::string_view /*message*/) {},
         .pong = [](auto* /*ws*/, std::string_view /*message*/) {},
-        .close = [this](auto *ws, int /*code*/, std::string_view /*message*/) {
+        .close = [&app, this](auto *ws, int /*code*/, std::string_view /*message*/) {
             auto *data = ws->getUserData();
             if (!data) return;
             if (agent_manager_) {
                 agent_manager_->unregister_agent(data->user_id, static_cast<void*>(ws));
             }
+            nlohmann::json status_evt = {
+                {"type", "agent_status"},
+                {"online", false},
+                {"user_id", data->user_id}
+            };
+            app.publish("user:" + data->user_id, status_evt.dump(), uWS::OpCode::TEXT);
         }
     });
 
@@ -5430,6 +5449,7 @@ Result<void> Server::start() {
             auto *data = ws->getUserData();
             if (!data) return;
             ws->subscribe(data->topic);
+            ws->subscribe("user:" + data->user_id);
             nlohmann::json conn = {
                 {"type", "connected"},
                 {"dialog_id", data->dialog_id}
