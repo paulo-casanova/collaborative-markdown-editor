@@ -383,7 +383,7 @@ int main() {
         std::cout << "  [PASS] PATCH /api/v1/dialogs/:id updated title.\n";
     }
 
-    // 2.7 POST & GET /api/v1/dialogs/:id/messages
+    // 2.7 POST & GET /api/v1/dialogs/:id/messages, POST fork & truncate
     {
         nlohmann::json body = {
             {"role", "user"},
@@ -397,14 +397,67 @@ int main() {
         assert(msg_json["role"] == "user");
         assert(msg_json["content"] == "Should we support JSON and SSE for LLM responses?");
         assert(msg_json["context_snapshot"]["active_doc"] == "api.md");
+        std::string msg1_id = msg_json["id"].get<std::string>();
+
+        // Post second message
+        nlohmann::json body2 = {{"role", "assistant"}, {"content", "Yes, SSE streaming is ideal."}};
+        auto resp2 = http_curl("POST", base_url + "/api/v1/dialogs/" + api_dialog_id + "/messages",
+                               {"Content-Type: application/json", "Authorization: Bearer " + alice_token}, body2.dump());
+        assert(resp2.status_code == 201);
+        auto msg2_json = nlohmann::json::parse(resp2.body);
+        std::string msg2_id = msg2_json["id"].get<std::string>();
+
+        // Post third message
+        nlohmann::json body3 = {{"role", "user"}, {"content", "What about websockets?"}};
+        auto resp3 = http_curl("POST", base_url + "/api/v1/dialogs/" + api_dialog_id + "/messages",
+                               {"Content-Type: application/json", "Authorization: Bearer " + alice_token}, body3.dump());
+        assert(resp3.status_code == 201);
 
         auto list_resp = http_curl("GET", base_url + "/api/v1/dialogs/" + api_dialog_id + "/messages",
                                    {"Authorization: Bearer " + alice_token});
         assert(list_resp.status_code == 200);
         auto list_json = nlohmann::json::parse(list_resp.body);
         assert(list_json.is_array());
-        assert(list_json.size() == 1);
+        assert(list_json.size() == 3);
         std::cout << "  [PASS] POST and GET /api/v1/dialogs/:id/messages verified.\n";
+
+        // Fork dialog up to msg2
+        nlohmann::json fork_body = {{"up_to_message_id", msg2_id}, {"title", "Forked Branch"}};
+        auto fork_resp = http_curl("POST", base_url + "/api/v1/dialogs/" + api_dialog_id + "/fork",
+                                   {"Content-Type: application/json", "Authorization: Bearer " + alice_token}, fork_body.dump());
+        assert(fork_resp.status_code == 201);
+        auto fork_json = nlohmann::json::parse(fork_resp.body);
+        assert(fork_json["title"] == "Forked Branch");
+        std::string forked_dialog_id = fork_json["id"].get<std::string>();
+
+        // Check forked messages count
+        auto forked_msgs_resp = http_curl("GET", base_url + "/api/v1/dialogs/" + forked_dialog_id + "/messages",
+                                          {"Authorization: Bearer " + alice_token});
+        assert(forked_msgs_resp.status_code == 200);
+        auto forked_msgs = nlohmann::json::parse(forked_msgs_resp.body);
+        assert(forked_msgs.size() == 2);
+        std::cout << "  [PASS] POST /api/v1/dialogs/:id/fork verified.\n";
+
+        // Delete forked dialog
+        auto del_fork = http_curl("DELETE", base_url + "/api/v1/dialogs/" + forked_dialog_id,
+                                  {"Authorization: Bearer " + alice_token});
+        assert(del_fork.status_code == 200);
+
+        // Truncate original dialog after msg1 (reset conversation to msg1)
+        nlohmann::json trunc_body = {{"message_id", msg1_id}, {"inclusive", false}};
+        auto trunc_resp = http_curl("POST", base_url + "/api/v1/dialogs/" + api_dialog_id + "/truncate",
+                                    {"Content-Type: application/json", "Authorization: Bearer " + alice_token}, trunc_body.dump());
+        assert(trunc_resp.status_code == 200);
+        auto trunc_json = nlohmann::json::parse(trunc_resp.body);
+        assert(trunc_json["remaining_count"] == 1);
+
+        auto post_trunc_list = http_curl("GET", base_url + "/api/v1/dialogs/" + api_dialog_id + "/messages",
+                                         {"Authorization: Bearer " + alice_token});
+        assert(post_trunc_list.status_code == 200);
+        auto post_trunc_json = nlohmann::json::parse(post_trunc_list.body);
+        assert(post_trunc_json.size() == 1);
+        assert(post_trunc_json[0]["id"] == msg1_id);
+        std::cout << "  [PASS] POST /api/v1/dialogs/:id/truncate verified.\n";
     }
 
     // 2.8 PUT & GET /api/v1/documents/:id/dialog

@@ -1298,6 +1298,8 @@ export const ReaderPage: React.FC = () => {
         <DialogSidecar
           documentId={document?.id}
           documentTitle={document?.title}
+          documentPath={document?.path}
+          documentContent={document?.content}
           onApplyDiff={handleApplyDiffInReader}
         />
       )}

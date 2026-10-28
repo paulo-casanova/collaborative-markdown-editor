@@ -78,6 +78,35 @@ export async function postMessage(
   });
 }
 
+export async function truncateDialog(
+  dialogId: string,
+  messageId: string,
+  inclusive: boolean = false
+): Promise<DialogMessage[]> {
+  const res = await apiRequest<{ status: string; messages: DialogMessage[] }>(
+    `/api/v1/dialogs/${dialogId}/truncate`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ message_id: messageId, inclusive }),
+    }
+  );
+  return res.messages || [];
+}
+
+export async function forkDialog(
+  dialogId: string,
+  upToMessageId?: string,
+  title?: string
+): Promise<Dialog> {
+  return await apiRequest<Dialog>(`/api/v1/dialogs/${dialogId}/fork`, {
+    method: 'POST',
+    body: JSON.stringify({
+      up_to_message_id: upToMessageId || undefined,
+      title: title || undefined,
+    }),
+  });
+}
+
 // =============================================================================
 // Document Dialog Preferences API
 // =============================================================================

@@ -4551,6 +4551,122 @@ Result<void> Server::start() {
         });
     });
 
+    app.post("/api/v1/dialogs/:id/truncate", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        std::string dialog_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, dialog_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            const auto& user = auth_res.value().value();
+            std::string message_id;
+            bool inclusive = false;
+            try {
+                auto j = nlohmann::json::parse(*body);
+                if (j.contains("message_id") && j["message_id"].is_string()) {
+                    message_id = j["message_id"].get<std::string>();
+                }
+                if (j.contains("inclusive") && j["inclusive"].is_boolean()) {
+                    inclusive = j["inclusive"].get<bool>();
+                }
+            } catch (...) {}
+
+            if (message_id.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "message_id is required"}});
+                return;
+            }
+
+            auto trunc_res = dialog_service_->truncate_dialog(user.user_id, dialog_id, message_id, inclusive);
+            if (!trunc_res.has_value()) {
+                if (trunc_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Dialog or message not found"}});
+                } else if (trunc_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid dialog or message ID"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to truncate dialog"}});
+                }
+                return;
+            }
+
+            nlohmann::json msgs_arr = nlohmann::json::array();
+            for (const auto& m : trunc_res.value()) {
+                msgs_arr.push_back(m.to_json());
+            }
+
+            if (agent_manager_) {
+                nlohmann::json trunc_event = {
+                    {"type", "dialog_truncated"},
+                    {"dialog_id", dialog_id},
+                    {"target_message_id", message_id},
+                    {"inclusive", inclusive}
+                };
+                agent_manager_->send_to_dialog(dialog_id, trunc_event.dump());
+            }
+
+            send_json(res, "200 OK", {
+                {"status", "truncated"},
+                {"dialog_id", dialog_id},
+                {"remaining_count", trunc_res.value().size()},
+                {"messages", msgs_arr}
+            });
+        });
+    });
+
+    app.post("/api/v1/dialogs/:id/fork", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        std::string source_dialog_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, source_dialog_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            const auto& user = auth_res.value().value();
+            std::optional<std::string> up_to_message_id;
+            std::string title;
+            if (!body->empty()) {
+                try {
+                    auto j = nlohmann::json::parse(*body);
+                    if (j.contains("up_to_message_id") && j["up_to_message_id"].is_string()) {
+                        std::string up_to = j["up_to_message_id"].get<std::string>();
+                        if (!up_to.empty()) up_to_message_id = up_to;
+                    }
+                    if (j.contains("title") && j["title"].is_string()) {
+                        title = j["title"].get<std::string>();
+                    }
+                } catch (...) {}
+            }
+
+            auto fork_res = dialog_service_->fork_dialog(user.user_id, source_dialog_id, up_to_message_id, title);
+            if (!fork_res.has_value()) {
+                if (fork_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Source dialog or target message not found"}});
+                } else if (fork_res.error() == ErrorCode::InvalidArgument) {
+                    send_json(res, "400 Bad Request", {{"error", "Invalid dialog or message ID"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to fork dialog"}});
+                }
+                return;
+            }
+
+            send_json(res, "201 Created", fork_res.value().to_json());
+        });
+    });
+
     // --- Document Association Preferences ---
 
     app.get("/api/v1/documents/:id/dialog", [this, authenticate_user](auto *res, auto *req) {

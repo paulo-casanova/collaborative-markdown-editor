@@ -236,4 +236,92 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     useDialogStore.getState().clearContextSnapshot();
     expect(useDialogStore.getState().contextSnapshot).toBeNull();
   });
+
+  it('supports resetting a dialog to an earlier message via resetDialogToMessage', async () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-1',
+      messages: [
+        {
+          id: 'msg-1',
+          dialog_id: 'dlg-1',
+          user_id: 'u-1',
+          role: 'user',
+          content: 'First question',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'msg-2',
+          dialog_id: 'dlg-1',
+          user_id: 'u-1',
+          role: 'assistant',
+          content: 'First answer',
+          created_at: new Date().toISOString(),
+        },
+        {
+          id: 'msg-3',
+          dialog_id: 'dlg-1',
+          user_id: 'u-1',
+          role: 'user',
+          content: 'Second question',
+          created_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    vi.spyOn(dialogApi, 'truncateDialog').mockResolvedValue([
+      {
+        id: 'msg-1',
+        dialog_id: 'dlg-1',
+        user_id: 'u-1',
+        role: 'user',
+        content: 'First question',
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: 'msg-2',
+        dialog_id: 'dlg-1',
+        user_id: 'u-1',
+        role: 'assistant',
+        content: 'First answer',
+        created_at: new Date().toISOString(),
+      },
+    ]);
+
+    await useDialogStore.getState().resetDialogToMessage('msg-2');
+    expect(dialogApi.truncateDialog).toHaveBeenCalledWith('dlg-1', 'msg-2', false);
+    expect(useDialogStore.getState().messages).toHaveLength(2);
+    expect(useDialogStore.getState().messages.map((m) => m.id)).toEqual(['msg-1', 'msg-2']);
+  });
+
+  it('supports forking a dialog into a new thread via forkDialog', async () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-1',
+      dialogs: [
+        {
+          id: 'dlg-1',
+          user_id: 'u-1',
+          title: 'Source Dialog',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+    });
+
+    const forkedDialog = {
+      id: 'dlg-forked-2',
+      user_id: 'u-1',
+      title: 'Fork of Source Dialog',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    vi.spyOn(dialogApi, 'forkDialog').mockResolvedValue(forkedDialog);
+    vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue([]);
+
+    const result = await useDialogStore.getState().forkDialog('msg-2', 'Custom Branch');
+    expect(dialogApi.forkDialog).toHaveBeenCalledWith('dlg-1', 'msg-2', 'Custom Branch');
+    expect(result?.id).toBe('dlg-forked-2');
+    expect(useDialogStore.getState().activeDialogId).toBe('dlg-forked-2');
+    expect(useDialogStore.getState().dialogs.some((d) => d.id === 'dlg-forked-2')).toBe(true);
+  });
 });

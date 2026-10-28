@@ -14,20 +14,27 @@ import {
   Check,
   Sparkles,
   AlertCircle,
+  GitFork,
+  RotateCcw,
 } from 'lucide-react';
 import { useDialogStore } from '../../stores/dialogStore';
 import { useUIStore } from '../../stores/uiStore';
 import { DiffProposalCard } from './DiffProposalCard';
+import { ContextSnapshot } from '../../types/dialog';
 
 interface DialogSidecarProps {
   documentId?: string;
   documentTitle?: string;
+  documentPath?: string;
+  documentContent?: string;
   onApplyDiff?: (diff: string) => void;
 }
 
 export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   documentId,
   documentTitle,
+  documentPath,
+  documentContent,
   onApplyDiff,
 }) => {
   const { setDialogSidecarOpen } = useUIStore();
@@ -48,6 +55,8 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     createAndSelectDialog,
     renameDialog,
     deleteDialog,
+    resetDialogToMessage,
+    forkDialog,
     sendMessage,
     setPairingModalOpen,
     refreshAgentStatus,
@@ -104,7 +113,26 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     if (!inputPrompt.trim() || isSending) return;
     const content = inputPrompt;
     setInputPrompt('');
-    await sendMessage(content);
+
+    const effectiveSnapshot: ContextSnapshot | undefined = contextSnapshot
+      ? {
+          ...contextSnapshot,
+          document_id: contextSnapshot.document_id || documentId,
+          document_title: contextSnapshot.document_title || documentTitle,
+          document_path: contextSnapshot.document_path || documentPath,
+          document_content: contextSnapshot.document_content || documentContent,
+        }
+      : (documentId || documentPath || documentTitle
+          ? {
+              document_id: documentId,
+              document_title: documentTitle,
+              document_path: documentPath,
+              document_content: documentContent,
+            }
+          : undefined);
+
+    await sendMessage(content, effectiveSnapshot);
+    clearContextSnapshot();
     if (textareaRef.current) {
       textareaRef.current.focus();
     }
@@ -271,14 +299,26 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
             {/* Quick Rename Button for Active Dialog */}
             {activeDialogId && currentDialog && (
-              <button
-                onClick={(e) => handleStartRename(e, activeDialogId, currentDialog.title)}
-                className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors shrink-0"
-                title="Rename current dialog"
-                data-testid="rename-active-dialog-btn"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-              </button>
+              <>
+                <button
+                  onClick={(e) => handleStartRename(e, activeDialogId, currentDialog.title)}
+                  className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors shrink-0"
+                  title="Rename current dialog"
+                  data-testid="rename-active-dialog-btn"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={async () => {
+                    await forkDialog();
+                  }}
+                  className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors shrink-0"
+                  title="Fork dialog into a new thread"
+                  data-testid="fork-active-dialog-btn"
+                >
+                  <GitFork className="w-3.5 h-3.5" />
+                </button>
+              </>
             )}
           </div>
         )}
@@ -349,7 +389,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           return (
             <div
               key={m.id}
-              className={`flex flex-col space-y-1.5 ${
+              className={`group flex flex-col space-y-1.5 ${
                 isUser ? 'items-end' : 'items-start'
               }`}
             >
@@ -374,19 +414,59 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                     minute: '2-digit',
                   })}
                 </span>
+
+                {/* Message Hover Actions: Fork thread from here & Reset dialog to here */}
+                <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 ml-1 transition-opacity">
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      await forkDialog(m.id);
+                    }}
+                    className="p-1 rounded text-cme-text-muted hover:text-cme-primary hover:bg-cme-bg-subtle transition-colors"
+                    title="Fork conversation thread from this message"
+                    data-testid={`fork-from-msg-${m.id}`}
+                  >
+                    <GitFork className="w-3 h-3" />
+                  </button>
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (
+                        window.confirm(
+                          'Reset conversation to this message? Subsequent messages in this dialog will be deleted.'
+                        )
+                      ) {
+                        await resetDialogToMessage(m.id);
+                      }
+                    }}
+                    className="p-1 rounded text-cme-text-muted hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+                    title="Reset conversation to this message (rewind)"
+                    data-testid={`reset-to-msg-${m.id}`}
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                  </button>
+                </div>
               </div>
 
               {/* Context Attachment Badge if message included a snapshot */}
               {m.context_snapshot &&
-                (m.context_snapshot.selected_text || m.context_snapshot.document_title) && (
+                (m.context_snapshot.selected_text ||
+                  m.context_snapshot.document_title ||
+                  m.context_snapshot.document_path) && (
                   <div className="max-w-[85%] px-2.5 py-1 rounded bg-cme-bg-subtle border border-cme-border-base text-[11px] text-cme-text-muted flex items-center gap-1.5 truncate">
                     <Paperclip className="w-3 h-3 text-cme-primary shrink-0" />
                     <span className="font-medium text-cme-text-base shrink-0">
-                      {m.context_snapshot.document_title || 'Document'}
+                      {m.context_snapshot.document_title ||
+                        m.context_snapshot.document_path ||
+                        'Document'}
                     </span>
-                    {m.context_snapshot.selected_text && (
+                    {m.context_snapshot.selected_text ? (
                       <span className="truncate italic">
                         "{m.context_snapshot.selected_text.trim()}"
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-cme-text-subtle shrink-0">
+                        (active document context)
                       </span>
                     )}
                   </div>
@@ -480,6 +560,19 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
             >
               <X className="w-3.5 h-3.5" />
             </button>
+          </div>
+        )}
+
+        {/* Active Document Context Pill when no custom snippet is selected */}
+        {!contextSnapshot && (documentTitle || documentPath) && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-cme-bg-base/70 border border-cme-border-base text-xs text-cme-text-muted truncate">
+            <Paperclip className="w-3 h-3 text-cme-primary shrink-0" />
+            <span className="font-semibold text-cme-text-base truncate">
+              {documentTitle || documentPath}
+            </span>
+            <span className="text-[10px] text-cme-text-subtle shrink-0">
+              (active document attached)
+            </span>
           </div>
         )}
 

@@ -869,6 +869,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
           <DialogSidecar
             documentId={document.id}
             documentTitle={document.title}
+            documentPath={document.path}
+            documentContent={editorInstance?.state?.doc?.toString() ?? document.content ?? ''}
             onApplyDiff={handleApplyDiff}
           />
         )}

@@ -35,7 +35,9 @@ interface DialogState {
   createAndSelectDialog: (title?: string, docIdToPersist?: string) => Promise<Dialog>;
   renameDialog: (dialogId: string, newTitle: string) => Promise<void>;
   deleteDialog: (dialogId: string) => Promise<void>;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, overrideSnapshot?: ContextSnapshot) => Promise<void>;
+  resetDialogToMessage: (messageId: string, inclusive?: boolean) => Promise<void>;
+  forkDialog: (upToMessageId?: string, customTitle?: string) => Promise<Dialog | null>;
   setContextSnapshot: (snapshot: ContextSnapshot | null) => void;
   clearContextSnapshot: () => void;
   refreshAgentStatus: () => Promise<void>;
@@ -158,11 +160,11 @@ export const useDialogStore = create<DialogState>((set, get) => ({
     }
   },
 
-  sendMessage: async (content: string) => {
+  sendMessage: async (content: string, overrideSnapshot?: ContextSnapshot) => {
     const activeId = get().activeDialogId;
     if (!activeId || !content.trim()) return;
 
-    const snapshot = get().contextSnapshot || undefined;
+    const snapshot = overrideSnapshot || get().contextSnapshot || undefined;
     set({ isSending: true, streamingContent: '', activeToolActivity: null });
 
     try {
@@ -178,6 +180,33 @@ export const useDialogStore = create<DialogState>((set, get) => ({
     } catch (err) {
       console.warn('[DialogStore] Failed to send message:', err);
       set({ isSending: false });
+    }
+  },
+
+  resetDialogToMessage: async (messageId: string, inclusive: boolean = false) => {
+    const activeId = get().activeDialogId;
+    if (!activeId) return;
+    try {
+      const remaining = await dialogApi.truncateDialog(activeId, messageId, inclusive);
+      set({ messages: remaining, streamingContent: '', activeToolActivity: null });
+    } catch (err) {
+      console.warn(`[DialogStore] Failed to reset dialog ${activeId} to message ${messageId}:`, err);
+    }
+  },
+
+  forkDialog: async (upToMessageId?: string, customTitle?: string) => {
+    const activeId = get().activeDialogId;
+    if (!activeId) return null;
+    try {
+      const newDialog = await dialogApi.forkDialog(activeId, upToMessageId, customTitle);
+      set((state) => ({
+        dialogs: [newDialog, ...state.dialogs],
+      }));
+      await get().selectDialog(newDialog.id);
+      return newDialog;
+    } catch (err) {
+      console.warn(`[DialogStore] Failed to fork dialog ${activeId}:`, err);
+      return null;
     }
   },
 
@@ -268,6 +297,13 @@ export const useDialogStore = create<DialogState>((set, get) => ({
               set((state) => ({
                 diffProposals: [...state.diffProposals, proposal],
               }));
+            }
+          } else if (type === 'dialog_truncated') {
+            if (data.dialog_id === get().activeDialogId) {
+              void (async () => {
+                const msgs = await dialogApi.fetchMessages(dialogId);
+                set({ messages: msgs, streamingContent: '', activeToolActivity: null });
+              })();
             }
           } else if (type === 'prompt_complete') {
             if (data.dialog_id === get().activeDialogId) {

@@ -14,6 +14,7 @@ export interface ContextSnapshot {
   document_id?: string;
   document_title?: string;
   document_path?: string;
+  document_content?: string;
   selected_text?: string;
   line_start?: number;
   line_end?: number;

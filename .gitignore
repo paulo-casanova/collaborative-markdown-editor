@@ -87,3 +87,7 @@ config.yaml
 # Local environment
 env
 
+# Python cache
+__pycache__/
+*.pyc
+

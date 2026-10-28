@@ -404,6 +404,186 @@ Result<DialogMessageRecord> DialogService::add_message(
     }
 }
 
+Result<std::vector<DialogMessageRecord>> DialogService::truncate_dialog(
+    const std::string& user_id,
+    const std::string& dialog_id,
+    const std::string& target_message_id,
+    bool inclusive
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    if (!is_valid_uuid(user_id) || !is_valid_uuid(dialog_id) || !is_valid_uuid(target_message_id)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        // Verify dialog belongs to user
+        auto check = tx.exec_params(
+            "SELECT 1 FROM dialogs WHERE id = $1::uuid AND user_id = $2::uuid;",
+            dialog_id, user_id
+        );
+        if (check.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        // Verify target_message_id exists in this dialog
+        auto target_rows = tx.exec_params(
+            "SELECT created_at::text FROM dialog_messages WHERE id = $1::uuid AND dialog_id = $2::uuid;",
+            target_message_id, dialog_id
+        );
+        if (target_rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        std::string target_created_at = target_rows[0][0].as<std::string>();
+
+        if (inclusive) {
+            tx.exec_params(
+                "DELETE FROM dialog_messages WHERE dialog_id = $1::uuid AND (created_at > $2::timestamptz OR id = $3::uuid);",
+                dialog_id, target_created_at, target_message_id
+            );
+        } else {
+            tx.exec_params(
+                "DELETE FROM dialog_messages WHERE dialog_id = $1::uuid AND created_at > $2::timestamptz AND id != $3::uuid;",
+                dialog_id, target_created_at, target_message_id
+            );
+        }
+
+        // Update dialog updated_at
+        tx.exec_params(
+            "UPDATE dialogs SET updated_at = NOW() WHERE id = $1::uuid;",
+            dialog_id
+        );
+
+        // Fetch remaining messages
+        auto rows = tx.exec_params(
+            "SELECT id, dialog_id, role, content, context_snapshot::text, created_at::text "
+            "FROM dialog_messages "
+            "WHERE dialog_id = $1::uuid "
+            "ORDER BY created_at ASC;",
+            dialog_id
+        );
+
+        std::vector<DialogMessageRecord> remaining;
+        remaining.reserve(rows.size());
+        for (const auto& row : rows) {
+            remaining.push_back({
+                .id = row[0].as<std::string>(),
+                .dialog_id = row[1].as<std::string>(),
+                .role = row[2].as<std::string>(),
+                .content = row[3].as<std::string>(),
+                .context_snapshot = parse_json_safe(row[4].as<std::string>()),
+                .created_at = row[5].as<std::string>()
+            });
+        }
+
+        tx.commit();
+        return remaining;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] truncate_dialog failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<DialogRecord> DialogService::fork_dialog(
+    const std::string& user_id,
+    const std::string& source_dialog_id,
+    const std::optional<std::string>& up_to_message_id,
+    const std::string& custom_title
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    if (!is_valid_uuid(user_id) || !is_valid_uuid(source_dialog_id)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+    if (up_to_message_id.has_value() && !up_to_message_id->empty() && !is_valid_uuid(*up_to_message_id)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        // Verify source dialog belongs to user and get title
+        auto src_rows = tx.exec_params(
+            "SELECT title FROM dialogs WHERE id = $1::uuid AND user_id = $2::uuid;",
+            source_dialog_id, user_id
+        );
+        if (src_rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        std::string src_title = src_rows[0][0].as<std::string>();
+        std::string effective_title = custom_title.empty() ? ("Fork of " + src_title) : custom_title;
+
+        // Insert new dialog
+        auto new_dlg_rows = tx.exec_params(
+            "INSERT INTO dialogs (user_id, title, created_at, updated_at) "
+            "VALUES ($1::uuid, $2, NOW(), NOW()) "
+            "RETURNING id, user_id, title, created_at::text, updated_at::text;",
+            user_id, effective_title
+        );
+        if (new_dlg_rows.empty()) {
+            return std::unexpected(ErrorCode::DatabaseError);
+        }
+        std::string new_dialog_id = new_dlg_rows[0][0].as<std::string>();
+
+        // Copy messages
+        if (up_to_message_id.has_value() && !up_to_message_id->empty()) {
+            auto msg_rows = tx.exec_params(
+                "SELECT created_at::text FROM dialog_messages WHERE id = $1::uuid AND dialog_id = $2::uuid;",
+                *up_to_message_id, source_dialog_id
+            );
+            if (msg_rows.empty()) {
+                return std::unexpected(ErrorCode::NotFound);
+            }
+            std::string target_created_at = msg_rows[0][0].as<std::string>();
+
+            tx.exec_params(
+                "INSERT INTO dialog_messages (dialog_id, role, content, context_snapshot, created_at) "
+                "SELECT $1::uuid, role, content, context_snapshot, created_at "
+                "FROM dialog_messages "
+                "WHERE dialog_id = $2::uuid AND (created_at < $3::timestamptz OR id = $4::uuid) "
+                "ORDER BY created_at ASC;",
+                new_dialog_id, source_dialog_id, target_created_at, *up_to_message_id
+            );
+        } else {
+            tx.exec_params(
+                "INSERT INTO dialog_messages (dialog_id, role, content, context_snapshot, created_at) "
+                "SELECT $1::uuid, role, content, context_snapshot, created_at "
+                "FROM dialog_messages "
+                "WHERE dialog_id = $2::uuid "
+                "ORDER BY created_at ASC;",
+                new_dialog_id, source_dialog_id
+            );
+        }
+
+        auto count_res = tx.exec_params(
+            "SELECT count(*) FROM dialog_messages WHERE dialog_id = $1::uuid;",
+            new_dialog_id
+        );
+        size_t msg_cnt = count_res.empty() ? 0 : count_res[0][0].as<size_t>();
+
+        DialogRecord rec{
+            .id = new_dlg_rows[0][0].as<std::string>(),
+            .user_id = new_dlg_rows[0][1].as<std::string>(),
+            .title = new_dlg_rows[0][2].as<std::string>(),
+            .created_at = new_dlg_rows[0][3].as<std::string>(),
+            .updated_at = new_dlg_rows[0][4].as<std::string>(),
+            .message_count = msg_cnt
+        };
+
+        tx.commit();
+        return rec;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] fork_dialog failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 Result<CreatedAgentTokenResult> DialogService::create_agent_token(const std::string& user_id, const std::string& name) {
     if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
     if (!is_valid_uuid(user_id)) return std::unexpected(ErrorCode::InvalidArgument);
