@@ -21,6 +21,8 @@ interface DialogState {
   messages: DialogMessage[];
   isLoading: boolean;
   isSending: boolean;
+  isGenerating: boolean;
+  generatingStartTime: number | null;
   agentStatus: AgentStatus;
   streamingContent: string;
   activeToolActivity: { tool: string; status: string } | null;
@@ -53,6 +55,8 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   messages: [],
   isLoading: false,
   isSending: false,
+  isGenerating: false,
+  generatingStartTime: null,
   agentStatus: {
     online: false,
     agent_name: '',
@@ -94,6 +98,8 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       activeToolActivity: null,
       diffProposals: [],
       isLoading: true,
+      isGenerating: false,
+      generatingStartTime: null,
     });
 
     try {
@@ -152,6 +158,8 @@ export const useDialogStore = create<DialogState>((set, get) => ({
             streamingContent: '',
             activeToolActivity: null,
             diffProposals: [],
+            isGenerating: false,
+            generatingStartTime: null,
           });
         }
       }
@@ -165,21 +173,31 @@ export const useDialogStore = create<DialogState>((set, get) => ({
     if (!activeId || !content.trim()) return;
 
     const snapshot = overrideSnapshot || get().contextSnapshot || undefined;
-    set({ isSending: true, streamingContent: '', activeToolActivity: null });
+    const isOnline = get().agentStatus.online;
+    set({
+      isSending: true,
+      isGenerating: isOnline,
+      generatingStartTime: isOnline ? Date.now() : null,
+      streamingContent: '',
+      activeToolActivity: null,
+    });
 
     try {
       const msg = await dialogApi.postMessage(activeId, content, snapshot, 'user');
       // Append user message if not already received via WS broadcast
       set((state) => {
         const exists = state.messages.some((m) => m.id === msg.id);
+        const shouldGenerate = msg.agent_dispatched ?? state.agentStatus.online;
         return {
           messages: exists ? state.messages : [...state.messages, msg],
           isSending: false,
+          isGenerating: shouldGenerate,
+          generatingStartTime: shouldGenerate ? (state.generatingStartTime || Date.now()) : null,
         };
       });
     } catch (err) {
       console.warn('[DialogStore] Failed to send message:', err);
-      set({ isSending: false });
+      set({ isSending: false, isGenerating: false, generatingStartTime: null });
     }
   },
 
@@ -311,6 +329,8 @@ export const useDialogStore = create<DialogState>((set, get) => ({
               set({
                 streamingContent: '',
                 activeToolActivity: null,
+                isGenerating: false,
+                generatingStartTime: null,
               });
               void (async () => {
                 const msgs = await dialogApi.fetchMessages(dialogId);

@@ -15,6 +15,8 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
       messages: [],
       isLoading: false,
       isSending: false,
+      isGenerating: false,
+      generatingStartTime: null,
       agentStatus: {
         online: false,
         agent_name: '',
@@ -323,5 +325,36 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(result?.id).toBe('dlg-forked-2');
     expect(useDialogStore.getState().activeDialogId).toBe('dlg-forked-2');
     expect(useDialogStore.getState().dialogs.some((d) => d.id === 'dlg-forked-2')).toBe(true);
+  });
+
+  it('tracks isGenerating state and generatingStartTime while awaiting agent response', async () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-1',
+      agentStatus: {
+        online: true,
+        agent_name: 'LocalGemini',
+        connected_at: new Date().toISOString(),
+        capabilities: ['gemini'],
+      },
+    });
+
+    expect(useDialogStore.getState().isGenerating).toBe(false);
+    expect(useDialogStore.getState().generatingStartTime).toBeNull();
+
+    vi.spyOn(dialogApi, 'postMessage').mockResolvedValue({
+      id: 'msg-gen-1',
+      dialog_id: 'dlg-1',
+      user_id: 'u-1',
+      role: 'user',
+      content: 'Hello, please review this file',
+      created_at: new Date().toISOString(),
+      agent_dispatched: true,
+    });
+
+    await useDialogStore.getState().sendMessage('Hello, please review this file');
+
+    expect(useDialogStore.getState().isGenerating).toBe(true);
+    expect(useDialogStore.getState().generatingStartTime).not.toBeNull();
+    expect(typeof useDialogStore.getState().generatingStartTime).toBe('number');
   });
 });

@@ -219,8 +219,22 @@ class CMEAgentDaemon:
         doc_id = context.get("document_id", "")
         doc_title = context.get("document_title", "")
         doc_path = context.get("document_path", "")
-        doc_content = context.get("document_content", "")
-        selected_text = context.get("selected_text", "")
+        raw_content = context.get("document_content", "")
+        raw_sel = context.get("selected_text", "")
+
+        # Sanitize doc_content: ensure it is a valid markdown string, not an AST or [object Object]
+        doc_content = ""
+        if isinstance(raw_content, str):
+            trimmed = raw_content.strip()
+            if trimmed and trimmed != "[object Object]":
+                doc_content = raw_content
+
+        # Sanitize selected_text
+        selected_text = ""
+        if isinstance(raw_sel, str):
+            trimmed = raw_sel.strip()
+            if trimmed and trimmed != "[object Object]":
+                selected_text = raw_sel
 
         # If document content is not in context snapshot, attempt reading it from local workspace
         if not doc_content and doc_path:

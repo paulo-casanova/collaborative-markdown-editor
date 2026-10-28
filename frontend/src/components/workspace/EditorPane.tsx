@@ -370,6 +370,28 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     enabled: Boolean(documentId && documentId !== 'by-path'),
   });
 
+  const getDocumentMarkdown = useCallback((): string => {
+    try {
+      if (typeof editorInstance?.getText === 'function') {
+        const txt = editorInstance.getText();
+        if (typeof txt === 'string' && txt.length > 0) return txt;
+      }
+      const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
+      if (view?.state?.doc) {
+        return view.state.doc.toString();
+      }
+      if (typeof liveContent === 'string' && liveContent.length > 0) {
+        return liveContent;
+      }
+      if (typeof document?.content === 'string') {
+        return document.content;
+      }
+    } catch {
+      // ignore
+    }
+    return typeof document?.content === 'string' ? document.content : '';
+  }, [editorInstance, liveContent, document?.content]);
+
   const handleCopyPermalink = useCallback(() => {
     if (document?.id) {
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -870,7 +892,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             documentId={document.id}
             documentTitle={document.title}
             documentPath={document.path}
-            documentContent={editorInstance?.state?.doc?.toString() ?? document.content ?? ''}
+            documentContent={getDocumentMarkdown()}
             onApplyDiff={handleApplyDiff}
           />
         )}

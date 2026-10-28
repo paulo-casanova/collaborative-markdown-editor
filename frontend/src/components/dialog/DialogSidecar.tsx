@@ -16,6 +16,8 @@ import {
   AlertCircle,
   GitFork,
   RotateCcw,
+  Loader2,
+  Clock,
 } from 'lucide-react';
 import { useDialogStore } from '../../stores/dialogStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -44,6 +46,8 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     messages,
     isLoading,
     isSending,
+    isGenerating,
+    generatingStartTime,
     agentStatus,
     streamingContent,
     activeToolActivity,
@@ -67,8 +71,23 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [editingDialogId, setEditingDialogId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Live elapsed response timer when agent is generating/responding
+  useEffect(() => {
+    if (!isGenerating || !generatingStartTime) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const update = () => {
+      setElapsedSeconds(Math.max(1, Math.round((Date.now() - generatingStartTime) / 1000)));
+    };
+    update();
+    const interval = setInterval(update, 500);
+    return () => clearInterval(interval);
+  }, [isGenerating, generatingStartTime]);
 
   const handleStartRename = (e: React.MouseEvent, id: string, currentTitle: string) => {
     e.stopPropagation();
@@ -107,12 +126,25 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   // Auto-scroll to bottom of conversation
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent, activeToolActivity]);
+  }, [messages, streamingContent, activeToolActivity, isGenerating]);
 
   const handleSend = async () => {
-    if (!inputPrompt.trim() || isSending) return;
+    if (!inputPrompt.trim() || isSending || isGenerating) return;
     const content = inputPrompt;
     setInputPrompt('');
+
+    const sanitizeContent = (val: any): string | undefined => {
+      if (typeof val === 'string') {
+        const trimmed = val.trim();
+        if (trimmed && trimmed !== '[object Object]') {
+          return val;
+        }
+      }
+      return undefined;
+    };
+
+    const cleanContent =
+      sanitizeContent(contextSnapshot?.document_content) || sanitizeContent(documentContent);
 
     const effectiveSnapshot: ContextSnapshot | undefined = contextSnapshot
       ? {
@@ -120,14 +152,14 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           document_id: contextSnapshot.document_id || documentId,
           document_title: contextSnapshot.document_title || documentTitle,
           document_path: contextSnapshot.document_path || documentPath,
-          document_content: contextSnapshot.document_content || documentContent,
+          document_content: cleanContent,
         }
       : (documentId || documentPath || documentTitle
           ? {
               document_id: documentId,
               document_title: documentTitle,
               document_path: documentPath,
-              document_content: documentContent,
+              document_content: cleanContent,
             }
           : undefined);
 
@@ -497,14 +529,46 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           </div>
         )}
 
+        {/* Waiting / Generating State with Live Timer */}
+        {isGenerating && !streamingContent && (
+          <div className="flex flex-col space-y-1.5 items-start" data-testid="agent-waiting-state">
+            <div className="flex items-center gap-1.5 text-[11px] text-cme-primary px-1">
+              <Loader2 className="w-3.5 h-3.5 text-cme-primary animate-spin shrink-0" />
+              <span className="font-medium text-cme-primary">
+                {agentStatus.agent_name || 'Agent'} is thinking...
+              </span>
+              <span className="flex items-center gap-1 text-[10px] text-cme-text-muted px-1.5 py-0.5 rounded-full bg-cme-bg-subtle border border-cme-border-base font-mono">
+                <Clock className="w-2.5 h-2.5 text-cme-primary/70" />
+                {elapsedSeconds}s
+              </span>
+            </div>
+            <div className="flex items-center gap-2.5 max-w-[90%] rounded-xl px-4 py-2.5 bg-cme-bg-base border border-cme-border-base text-cme-text-muted shadow-sm">
+              <span className="flex gap-1 items-center">
+                <span className="w-1.5 h-1.5 rounded-full bg-cme-primary animate-bounce [animation-delay:-0.3s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-cme-primary animate-bounce [animation-delay:-0.15s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-cme-primary animate-bounce" />
+              </span>
+              <span className="text-xs text-cme-text-muted">
+                Waiting for model response ({elapsedSeconds}s)
+              </span>
+            </div>
+          </div>
+        )}
+
         {/* Streaming Assistant Response Buffer */}
         {streamingContent && (
           <div className="flex flex-col space-y-1.5 items-start">
             <div className="flex items-center gap-1.5 text-[11px] text-cme-primary px-1">
               <Bot className="w-3 h-3 text-cme-primary" />
               <span className="font-medium">
-                {agentStatus.agent_name || 'Agent'} (streaming...)
+                {agentStatus.agent_name || 'Agent'} (responding...)
               </span>
+              {elapsedSeconds > 0 && (
+                <span className="flex items-center gap-1 text-[10px] text-cme-text-muted px-1.5 py-0.5 rounded-full bg-cme-bg-subtle border border-cme-border-base font-mono">
+                  <Clock className="w-2.5 h-2.5 text-cme-primary/70" />
+                  {elapsedSeconds}s
+                </span>
+              )}
             </div>
             <div className="max-w-[90%] rounded-xl px-3.5 py-2.5 bg-cme-bg-base border border-cme-border-base text-cme-text-base shadow-sm whitespace-pre-wrap leading-relaxed">
               {streamingContent}
@@ -593,12 +657,16 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           />
           <button
             onClick={handleSend}
-            disabled={!inputPrompt.trim() || isSending}
-            className="p-2 rounded-lg bg-cme-primary text-white hover:opacity-90 disabled:opacity-40 transition-all shrink-0"
-            title="Send prompt (Enter)"
+            disabled={!inputPrompt.trim() || isSending || isGenerating}
+            className="p-2 rounded-lg bg-cme-primary text-white hover:opacity-90 disabled:opacity-40 transition-all shrink-0 flex items-center justify-center"
+            title={isGenerating ? `Agent responding (${elapsedSeconds}s)` : 'Send prompt (Enter)'}
             data-testid="send-prompt-btn"
           >
-            <Send className="w-4 h-4" />
+            {isGenerating ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Send className="w-4 h-4" />
+            )}
           </button>
         </div>
       </div>

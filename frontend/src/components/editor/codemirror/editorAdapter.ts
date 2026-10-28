@@ -92,6 +92,7 @@ export class CodeMirrorEditorAdapter {
         empty: sel.empty,
       },
       doc: {
+        toString: () => docStr,
         textBetween: (from: number, to: number) => {
           return docStr.slice(Math.max(0, from), Math.min(docStr.length, to));
         },
