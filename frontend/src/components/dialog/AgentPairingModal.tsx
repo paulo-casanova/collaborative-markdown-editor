@@ -255,6 +255,12 @@ export const AgentPairingModal: React.FC = () => {
             <pre className="font-mono text-[11px] p-3 rounded-lg bg-zinc-900 text-zinc-100 border border-zinc-800 overflow-x-auto whitespace-pre-wrap select-all">
               {cliCommand}
             </pre>
+
+            {selectedProvider === 'gemini' && (
+              <p className="text-[11px] text-cme-text-subtle leading-relaxed">
+                💡 <strong>Note:</strong> Google Gemini in <code>cme-agent</code> connects via the Gemini Developer API, which requires an API key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-cme-primary underline">Google AI Studio</a> (free). Antigravity (<code>agy</code>) uses personal Google OAuth, which is separate from the developer API key.
+              </p>
+            )}
           </div>
 
           {/* Active Tokens List */}

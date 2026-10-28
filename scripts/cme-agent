@@ -93,12 +93,70 @@ class CMEAgentDaemon:
         if self.api_key:
             return self.api_key
         if provider == "gemini":
-            return os.environ.get("GEMINI_API_KEY")
+            return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if provider == "anthropic":
             return os.environ.get("ANTHROPIC_API_KEY")
         if provider == "openai":
             return os.environ.get("OPENAI_API_KEY")
+        if provider == "custom":
+            return os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
         return None
+
+    def validate_provider(self):
+        """Validates that explicitly selected provider has required credentials/connectivity before starting."""
+        prov = self.provider.lower()
+        if prov in ("auto", "echo"):
+            return
+
+        if prov == "gemini":
+            key = self._get_api_key("gemini")
+            if not key:
+                print(
+                    "\n[FATAL] Provider 'gemini' was requested, but no GEMINI_API_KEY or GOOGLE_API_KEY was found.\n\n"
+                    "  Google Antigravity (agy) uses personal Google OAuth, which is separate from the developer API key.\n"
+                    "  To use Google Gemini in cme-agent, you need an API key from Google AI Studio:\n\n"
+                    "    1. Get a free API key at: https://aistudio.google.com/app/apikey\n"
+                    "    2. Set the environment variable or pass --api-key:\n"
+                    "         export GEMINI_API_KEY=\"AIzaSy...\"\n"
+                    "         cme-agent ... --provider gemini\n"
+                    "       or:\n"
+                    "         cme-agent ... --provider gemini --api-key \"AIzaSy...\"\n",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        elif prov == "anthropic":
+            key = self._get_api_key("anthropic")
+            if not key:
+                print(
+                    "\n[FATAL] Provider 'anthropic' was requested, but no ANTHROPIC_API_KEY was found.\n"
+                    "  Set with: export ANTHROPIC_API_KEY=\"sk-ant-...\" or pass --api-key <KEY>\n",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        elif prov == "openai":
+            key = self._get_api_key("openai")
+            if not key:
+                print(
+                    "\n[FATAL] Provider 'openai' was requested, but no OPENAI_API_KEY was found.\n"
+                    "  Set with: export OPENAI_API_KEY=\"sk-...\" or pass --api-key <KEY>\n",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        elif prov == "ollama":
+            try:
+                req = urllib.request.Request(f"{self.ollama_host}/api/tags", method="GET")
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    pass
+            except Exception as e:
+                print(
+                    f"\n[FATAL] Provider 'ollama' was requested, but could not connect to {self.ollama_host}: {e}\n"
+                    "  Please ensure Ollama is installed and running (`ollama serve`).\n",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        elif prov not in ("custom",):
+            print(f"\n[FATAL] Unknown provider '{self.provider}'. Supported providers: gemini, ollama, anthropic, openai, custom, echo\n", file=sys.stderr)
+            sys.exit(1)
 
     async def run(self):
         ws_base = self.server_url.replace("http://", "ws://").replace("https://", "wss://")
@@ -266,9 +324,39 @@ class CMEAgentDaemon:
                 "content": full_content,
             }))
             print(f"[PROMPT] Completed Gemini response ({len(full_content)} chars)")
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="replace")
+                err_json = json.loads(err_body)
+                err_msg = err_json.get("error", {}).get("message", err_body)
+            except Exception:
+                err_msg = e.reason or str(e)
+            print(f"[AGENT] Gemini API Error (HTTP {e.code}): {err_msg}", file=sys.stderr)
+            error_text = f"**Google Gemini API Error (HTTP {e.code}):** {err_msg}"
+            await ws.send(json.dumps({
+                "type": "token_stream",
+                "dialog_id": dialog_id,
+                "delta": f"\n\n{error_text}\n",
+            }))
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": error_text,
+            }))
         except Exception as e:
-            print(f"[AGENT] Gemini streaming error: {e}. Falling back to local responder.", file=sys.stderr)
-            await self._stream_echo(ws, dialog_id, prompt, history, context)
+            print(f"[AGENT] Gemini streaming error: {e}", file=sys.stderr)
+            error_text = f"**Google Gemini Error:** {e}"
+            await ws.send(json.dumps({
+                "type": "token_stream",
+                "dialog_id": dialog_id,
+                "delta": f"\n\n{error_text}\n",
+            }))
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": error_text,
+            }))
 
     async def _stream_openai_compatible(self, ws, dialog_id: str, prompt: str, history: List[Any], context: Dict[str, Any]):
         api_base = self.api_base or "https://api.openai.com/v1"
@@ -341,9 +429,39 @@ class CMEAgentDaemon:
                 "dialog_id": dialog_id,
                 "content": full_content,
             }))
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="replace")
+                err_json = json.loads(err_body)
+                err_msg = err_json.get("error", {}).get("message", err_body)
+            except Exception:
+                err_msg = e.reason or str(e)
+            print(f"[AGENT] OpenAI-compatible API Error (HTTP {e.code}): {err_msg}", file=sys.stderr)
+            error_text = f"**OpenAI API Error (HTTP {e.code}):** {err_msg}"
+            await ws.send(json.dumps({
+                "type": "token_stream",
+                "dialog_id": dialog_id,
+                "delta": f"\n\n{error_text}\n",
+            }))
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": error_text,
+            }))
         except Exception as e:
-            print(f"[AGENT] OpenAI-compatible stream error: {e}. Falling back to local responder.", file=sys.stderr)
-            await self._stream_echo(ws, dialog_id, prompt, history, context)
+            print(f"[AGENT] OpenAI-compatible stream error: {e}", file=sys.stderr)
+            error_text = f"**OpenAI-Compatible Error:** {e}"
+            await ws.send(json.dumps({
+                "type": "token_stream",
+                "dialog_id": dialog_id,
+                "delta": f"\n\n{error_text}\n",
+            }))
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": error_text,
+            }))
 
     async def _stream_ollama(self, ws, dialog_id: str, prompt: str, history: List[Any], context: Dict[str, Any]):
         try:
@@ -394,8 +512,18 @@ class CMEAgentDaemon:
                 "content": full_content,
             }))
         except Exception as e:
-            print(f"[AGENT] Ollama generation failed: {e}. Falling back to local responder.", file=sys.stderr)
-            await self._stream_echo(ws, dialog_id, prompt, history, context)
+            print(f"[AGENT] Ollama generation failed: {e}", file=sys.stderr)
+            error_text = f"**Ollama Error:** {e}"
+            await ws.send(json.dumps({
+                "type": "token_stream",
+                "dialog_id": dialog_id,
+                "delta": f"\n\n{error_text}\n",
+            }))
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": error_text,
+            }))
 
     async def _stream_anthropic(self, ws, dialog_id: str, prompt: str, history: List[Any], context: Dict[str, Any]):
         api_key = self._get_api_key("anthropic")
@@ -453,9 +581,39 @@ class CMEAgentDaemon:
                 "dialog_id": dialog_id,
                 "content": full_content,
             }))
+        except urllib.error.HTTPError as e:
+            err_body = ""
+            try:
+                err_body = e.read().decode("utf-8", errors="replace")
+                err_json = json.loads(err_body)
+                err_msg = err_json.get("error", {}).get("message", err_body)
+            except Exception:
+                err_msg = e.reason or str(e)
+            print(f"[AGENT] Anthropic API Error (HTTP {e.code}): {err_msg}", file=sys.stderr)
+            error_text = f"**Anthropic API Error (HTTP {e.code}):** {err_msg}"
+            await ws.send(json.dumps({
+                "type": "token_stream",
+                "dialog_id": dialog_id,
+                "delta": f"\n\n{error_text}\n",
+            }))
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": error_text,
+            }))
         except Exception as e:
-            print(f"[AGENT] Anthropic streaming error: {e}. Falling back to local responder.", file=sys.stderr)
-            await self._stream_echo(ws, dialog_id, prompt, history, context)
+            print(f"[AGENT] Anthropic streaming error: {e}", file=sys.stderr)
+            error_text = f"**Anthropic Error:** {e}"
+            await ws.send(json.dumps({
+                "type": "token_stream",
+                "dialog_id": dialog_id,
+                "delta": f"\n\n{error_text}\n",
+            }))
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": error_text,
+            }))
 
     async def _stream_echo(self, ws, dialog_id: str, prompt: str, history: List[Any], context: Dict[str, Any]):
         doc_info = context.get("document_title") or context.get("document_id") or ""
@@ -579,6 +737,8 @@ def main():
         allowed_tools=tools,
         workspace_dir=args.workspace,
     )
+
+    agent.validate_provider()
 
     try:
         asyncio.run(agent.run())
