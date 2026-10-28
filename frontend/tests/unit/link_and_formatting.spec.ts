@@ -938,6 +938,160 @@ Deep details.`;
       }
     });
   });
+
+  describe('Issue #33: Multi-level bullets and numbered lists in Reader view', () => {
+    it('renders multi-level bullets with progressive right indentation and distinct marker styles', () => {
+      const md = [
+        '- Top level bullet',
+        '  - Second level bullet',
+        '    - Third level bullet',
+        '- Back to top level',
+      ].join('\n');
+
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(4);
+
+      // Level 1 bullet
+      const item0 = elements[0];
+      expect(item0.type).toBe('li');
+      expect(item0.props['data-level']).toBe(0);
+      expect(item0.props.style.marginLeft).toBe('1rem');
+      expect(item0.props.style.listStyleType).toBe('disc');
+
+      // Level 2 bullet: MUST be indented to the right of level 1
+      const item1 = elements[1];
+      expect(item1.type).toBe('li');
+      expect(item1.props['data-level']).toBe(1);
+      expect(parseFloat(item1.props.style.marginLeft)).toBeGreaterThan(
+        parseFloat(item0.props.style.marginLeft)
+      );
+      expect(item1.props.style.marginLeft).toBe('2.5rem');
+      expect(item1.props.style.listStyleType).toBe('circle');
+
+      // Level 3 bullet: MUST be indented to the right of level 2
+      const item2 = elements[2];
+      expect(item2.type).toBe('li');
+      expect(item2.props['data-level']).toBe(2);
+      expect(parseFloat(item2.props.style.marginLeft)).toBeGreaterThan(
+        parseFloat(item1.props.style.marginLeft)
+      );
+      expect(item2.props.style.marginLeft).toBe('4rem');
+      expect(item2.props.style.listStyleType).toBe('square');
+
+      // Return to top level
+      const item3 = elements[3];
+      expect(item3.type).toBe('li');
+      expect(item3.props['data-level']).toBe(0);
+      expect(item3.props.style.marginLeft).toBe('1rem');
+      expect(item3.props.style.listStyleType).toBe('disc');
+    });
+
+    it('renders nested numbered lists with progressive right indentation, values, and alpha markers', () => {
+      const md = [
+        '1. First item',
+        '  1. Sub-item A',
+        '  1. Sub-item B',
+        '    1. Sub-sub-item i',
+        '2. Second item',
+      ].join('\n');
+
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(5);
+
+      // Level 1 item 1
+      const ol0 = elements[0];
+      expect(ol0.type).toBe('li');
+      expect(ol0.props['data-level']).toBe(0);
+      expect(ol0.props.value).toBe(1);
+      expect(ol0.props.style.listStyleType).toBe('decimal');
+      expect(ol0.props.style.marginLeft).toBe('1.25rem');
+
+      // Level 2 sub-item A (indented to the right of level 1)
+      const ol1 = elements[1];
+      expect(ol1.type).toBe('li');
+      expect(ol1.props['data-level']).toBe(1);
+      expect(ol1.props.value).toBe(1);
+      expect(ol1.props.style.listStyleType).toBe('lower-alpha');
+      expect(parseFloat(ol1.props.style.marginLeft)).toBeGreaterThan(
+        parseFloat(ol0.props.style.marginLeft)
+      );
+      expect(ol1.props.style.marginLeft).toBe('2.75rem');
+
+      // Level 2 sub-item B (auto-incremented to 2 -> 'b.')
+      const ol2 = elements[2];
+      expect(ol2.type).toBe('li');
+      expect(ol2.props['data-level']).toBe(1);
+      expect(ol2.props.value).toBe(2);
+      expect(ol2.props.style.listStyleType).toBe('lower-alpha');
+
+      // Level 3 sub-sub-item (indented to the right of level 2)
+      const ol3 = elements[3];
+      expect(ol3.type).toBe('li');
+      expect(ol3.props['data-level']).toBe(2);
+      expect(ol3.props.value).toBe(1);
+      expect(ol3.props.style.listStyleType).toBe('lower-roman');
+      expect(parseFloat(ol3.props.style.marginLeft)).toBeGreaterThan(
+        parseFloat(ol2.props.style.marginLeft)
+      );
+      expect(ol3.props.style.marginLeft).toBe('4.25rem');
+
+      // Level 1 item 2
+      const ol4 = elements[4];
+      expect(ol4.type).toBe('li');
+      expect(ol4.props['data-level']).toBe(0);
+      expect(ol4.props.value).toBe(2);
+      expect(ol4.props.style.listStyleType).toBe('decimal');
+      expect(ol4.props.style.marginLeft).toBe('1.25rem');
+    });
+
+    it('supports 4-space indents and tabs in multi-level lists', () => {
+      const mdSpaces = [
+        '- Top',
+        '    - Indented 4 spaces',
+      ].join('\n');
+
+      const elementsSpaces = renderMarkdown(mdSpaces) as any[];
+      expect(elementsSpaces.length).toBe(2);
+      expect(elementsSpaces[0].props['data-level']).toBe(0);
+      expect(elementsSpaces[1].props['data-level']).toBe(1);
+      expect(parseFloat(elementsSpaces[1].props.style.marginLeft)).toBeGreaterThan(
+        parseFloat(elementsSpaces[0].props.style.marginLeft)
+      );
+
+      const mdTabs = [
+        '1. Top',
+        '\t1. Tab indented',
+      ].join('\n');
+
+      const elementsTabs = renderMarkdown(mdTabs) as any[];
+      expect(elementsTabs.length).toBe(2);
+      expect(elementsTabs[0].props['data-level']).toBe(0);
+      expect(elementsTabs[1].props['data-level']).toBe(1);
+      expect(parseFloat(elementsTabs[1].props.style.marginLeft)).toBeGreaterThan(
+        parseFloat(elementsTabs[0].props.style.marginLeft)
+      );
+    });
+
+    it('renders nested task list checkboxes with progressive right indentation', () => {
+      const md = [
+        '- [ ] Root task',
+        '  - [x] Sub-task done',
+        '    - [ ] Sub-sub-task',
+      ].join('\n');
+
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(3);
+
+      expect(elements[0].props['data-level']).toBe(0);
+      expect(elements[0].props.style.marginLeft).toBe('0rem');
+
+      expect(elements[1].props['data-level']).toBe(1);
+      expect(elements[1].props.style.marginLeft).toBe('1.5rem');
+
+      expect(elements[2].props['data-level']).toBe(2);
+      expect(elements[2].props.style.marginLeft).toBe('3rem');
+    });
+  });
 });
 
 

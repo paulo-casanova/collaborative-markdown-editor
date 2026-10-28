@@ -308,42 +308,50 @@ export function parseMarkdownToHtml(markdown: string): string {
       continue;
     }
 
-    // Task List item: - [ ] or - [x]
-    const taskMatch = line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
+    // Task List item: - [ ] or - [x] with optional indentation
+    const taskMatch = line.match(/^(\s*)(?:[-*+]|\d+[.)])\s+\[([ xX])\]\s+(.+)$/);
     if (taskMatch) {
       if (inList !== 'taskList') {
         closeList();
         output.push('<ul data-type="taskList">');
         inList = 'taskList';
       }
-      const checked = taskMatch[1].toLowerCase() === 'x';
+      const indentLevel = Math.max(0, Math.floor(taskMatch[1].replace(/\t/g, '  ').length / 2));
+      const checked = taskMatch[2].toLowerCase() === 'x';
+      const indentStyle = indentLevel > 0 ? ` style="margin-left: ${indentLevel * 1.5}rem;"` : '';
       output.push(
-        `<li data-type="taskItem" data-checked="${checked}"><p>${inlineFormat(taskMatch[2])}</p></li>`
+        `<li data-type="taskItem" data-checked="${checked}"${indentStyle}><p>${inlineFormat(taskMatch[3])}</p></li>`
       );
       continue;
     }
 
-    // Bullet List item: - or *
-    const bulletMatch = line.match(/^[-*]\s+(.+)$/);
+    // Bullet List item: - or * or + with optional indentation
+    const bulletMatch = line.match(/^(\s*)([-*+])\s+(.+)$/);
     if (bulletMatch) {
       if (inList !== 'ul') {
         closeList();
         output.push('<ul>');
         inList = 'ul';
       }
-      output.push(`<li><p>${inlineFormat(bulletMatch[1])}</p></li>`);
+      const indentLevel = Math.max(0, Math.floor(bulletMatch[1].replace(/\t/g, '  ').length / 2));
+      const styleType = indentLevel % 3 === 1 ? 'circle' : indentLevel % 3 === 2 ? 'square' : 'disc';
+      const indentStyle = indentLevel > 0 ? ` style="margin-left: ${indentLevel * 1.5}rem; list-style-type: ${styleType};"` : '';
+      output.push(`<li${indentStyle}><p>${inlineFormat(bulletMatch[3])}</p></li>`);
       continue;
     }
 
-    // Numbered List item: 1.
-    const numMatch = line.match(/^\d+\.\s+(.+)$/);
+    // Numbered List item: 1. or 1) with optional indentation
+    const numMatch = line.match(/^(\s*)\d+[.)]\s+(.+)$/);
     if (numMatch) {
       if (inList !== 'ol') {
         closeList();
         output.push('<ol>');
         inList = 'ol';
       }
-      output.push(`<li><p>${inlineFormat(numMatch[1])}</p></li>`);
+      const indentLevel = Math.max(0, Math.floor(numMatch[1].replace(/\t/g, '  ').length / 2));
+      const styleType = indentLevel % 3 === 1 ? 'lower-alpha' : indentLevel % 3 === 2 ? 'lower-roman' : 'decimal';
+      const indentStyle = indentLevel > 0 ? ` style="margin-left: ${indentLevel * 1.5}rem; list-style-type: ${styleType};"` : '';
+      output.push(`<li${indentStyle}><p>${inlineFormat(numMatch[2])}</p></li>`);
       continue;
     }
 

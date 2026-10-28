@@ -1339,12 +1339,46 @@ export function renderMarkdown(
   const slugCounts: Record<string, number> = {};
   const counters: [number, number, number, number, number, number] = [0, 0, 0, 0, 0, 0];
 
+  let activeListIndents: number[] = [0];
+  const olCounters = new Map<number, number>();
+
+  const getListLevel = (indentStr: string): number => {
+    const spaces = indentStr.replace(/\t/g, '  ').length;
+    if (spaces === 0) {
+      activeListIndents = [0];
+      for (const k of Array.from(olCounters.keys())) {
+        if (k > 0) olCounters.delete(k);
+      }
+      return 0;
+    }
+    if (spaces > activeListIndents[activeListIndents.length - 1]) {
+      activeListIndents.push(spaces);
+      return activeListIndents.length - 1;
+    }
+    while (
+      activeListIndents.length > 1 &&
+      activeListIndents[activeListIndents.length - 1] > spaces
+    ) {
+      activeListIndents.pop();
+    }
+    if (spaces > activeListIndents[activeListIndents.length - 1]) {
+      activeListIndents.push(spaces);
+    }
+    const level = activeListIndents.length - 1;
+    for (const k of Array.from(olCounters.keys())) {
+      if (k > level) olCounters.delete(k);
+    }
+    return level;
+  };
+
   while (i < lines.length) {
     const line = lines[i];
 
     // Fenced Code Block or Mermaid block (``` or ~~~)
     const fenceMatch = line.match(/^[ \t]{0,3}(`{3,}|~{3,})(.*)$/);
     if (fenceMatch) {
+      activeListIndents = [0];
+      olCounters.clear();
       const fenceMarker = fenceMatch[1];
       const fenceChar = fenceMarker[0];
       const fenceLen = fenceMarker.length;
@@ -1489,6 +1523,8 @@ export function renderMarkdown(
     // Headings #, ##, ###, ####, #####, ######
     const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
     if (headingMatch) {
+      activeListIndents = [0];
+      olCounters.clear();
       const level = headingMatch[1].length;
       const rawText = headingMatch[2].trim();
       const strippedText = stripHeadingNumberPrefix(rawText) || rawText;
@@ -1585,6 +1621,8 @@ export function renderMarkdown(
 
     // Blockquote >
     if (line.startsWith('>')) {
+      activeListIndents = [0];
+      olCounters.clear();
       const startBlockLine = i;
       const quoteLines: string[] = [];
       while (i < lines.length) {
@@ -1650,6 +1688,8 @@ export function renderMarkdown(
       const nextTrimmed = lines[i + 1].trim();
       const isDelimiter = /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(nextTrimmed);
       if (isDelimiter) {
+        activeListIndents = [0];
+        olCounters.clear();
         const startBlockLine = i;
         const tableLines: string[] = [curTrimmed, nextTrimmed];
         let curIdx = i + 2;
@@ -1720,6 +1760,8 @@ export function renderMarkdown(
 
     // Horizontal Rule / Divider (---, ***, ___, - - -, * * *, etc.)
     if (/^(?:(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,})$/.test(line.trim())) {
+      activeListIndents = [0];
+      olCounters.clear();
       addBlock(
         <hr
           key={`hr-${i}`}
@@ -1733,37 +1775,72 @@ export function renderMarkdown(
       continue;
     }
 
-    // Task list / Checkbox
-    if (line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/)) {
-      const match = line.match(/^[-*]\s+\[([ xX])\]\s+(.+)$/);
-      if (match) {
-        const checked = match[1].toLowerCase() === 'x';
-        addBlock(
-          <div key={`task-${i}`} className="flex items-center gap-2 my-1 text-sm">
-            <input
-              type="checkbox"
-              checked={checked}
-              readOnly
-              className="rounded text-cme-primary border-cme-border-base focus:ring-0"
-            />
-            <span className={checked ? 'line-through text-cme-text-muted' : ''}>
-              {renderInlineFormatted(match[2], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
-            </span>
-          </div>,
-          i,
-          i
-        );
-        i++;
-        continue;
-      }
+    // Task list / Checkbox (- [ ], * [ ], + [ ], 1. [ ], etc. with optional indentation)
+    const taskMatch = line.match(/^(\s*)(?:[-*+]|\d+[.)])\s+\[([ xX])\]\s+(.+)$/);
+    if (taskMatch) {
+      const level = getListLevel(taskMatch[1]);
+      const checked = taskMatch[2].toLowerCase() === 'x';
+      addBlock(
+        <div
+          key={`task-${i}`}
+          className="flex items-center gap-2 my-1 text-sm"
+          style={{ marginLeft: `${level * 1.5}rem` }}
+          data-testid="reader-task-item"
+          data-level={level}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            readOnly
+            className="rounded text-cme-primary border-cme-border-base focus:ring-0"
+          />
+          <span className={checked ? 'line-through text-cme-text-muted' : ''}>
+            {renderInlineFormatted(taskMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+          </span>
+        </div>,
+        i,
+        i
+      );
+      i++;
+      continue;
     }
 
-    // Ordered List (\d+\.)
-    const olMatch = line.match(/^(\d+)\.\s+(.+)$/);
+    // Ordered List (\d+\. or \d+\) with optional indentation)
+    const olMatch = line.match(/^(\s*)(\d+)[.)]\s+(.+)$/);
     if (olMatch) {
+      const level = getListLevel(olMatch[1]);
+      const parsedNum = parseInt(olMatch[2], 10);
+      const prevCount = olCounters.get(level) || 0;
+      let effectiveNum: number;
+      if (prevCount === 0) {
+        effectiveNum = isNaN(parsedNum) ? 1 : parsedNum;
+      } else {
+        if (!isNaN(parsedNum) && parsedNum > 1 && parsedNum !== prevCount) {
+          effectiveNum = parsedNum;
+        } else {
+          effectiveNum = prevCount + 1;
+        }
+      }
+      olCounters.set(level, effectiveNum);
+
+      const olStyleType =
+        level % 3 === 1 ? 'lower-alpha' : level % 3 === 2 ? 'lower-roman' : 'decimal';
+      const marginRem = 1.25 + level * 1.5;
+
       addBlock(
-        <li key={`ol-${i}`} className="ml-5 list-decimal text-sm my-0.5" value={parseInt(olMatch[1], 10)}>
-          {renderInlineFormatted(olMatch[2], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+        <li
+          key={`ol-${i}`}
+          className={`text-sm my-0.5 ${level === 0 ? 'ml-5 list-decimal' : ''}`}
+          style={{
+            marginLeft: `${marginRem}rem`,
+            listStyleType: olStyleType,
+          }}
+          value={effectiveNum}
+          data-testid="reader-list-item"
+          data-list-type="ordered"
+          data-level={level}
+        >
+          {renderInlineFormatted(olMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
         </li>,
         i,
         i
@@ -1772,20 +1849,33 @@ export function renderMarkdown(
       continue;
     }
 
-    // Unordered List - or *
-    if (line.match(/^[-*]\s+(.+)$/)) {
-      const match = line.match(/^[-*]\s+(.+)$/);
-      if (match) {
-        addBlock(
-          <li key={`li-${i}`} className="ml-4 list-disc text-sm my-0.5">
-            {renderInlineFormatted(match[1], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
-          </li>,
-          i,
-          i
-        );
-        i++;
-        continue;
-      }
+    // Unordered List (- or * or + with optional indentation)
+    const ulMatch = line.match(/^(\s*)([-*+])\s+(.+)$/);
+    if (ulMatch) {
+      const level = getListLevel(ulMatch[1]);
+      const ulStyleType =
+        level % 3 === 1 ? 'circle' : level % 3 === 2 ? 'square' : 'disc';
+      const marginRem = 1.0 + level * 1.5;
+
+      addBlock(
+        <li
+          key={`li-${i}`}
+          className={`text-sm my-0.5 ${level === 0 ? 'ml-4 list-disc' : ''}`}
+          style={{
+            marginLeft: `${marginRem}rem`,
+            listStyleType: ulStyleType,
+          }}
+          data-testid="reader-list-item"
+          data-list-type="unordered"
+          data-level={level}
+        >
+          {renderInlineFormatted(ulMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+        </li>,
+        i,
+        i
+      );
+      i++;
+      continue;
     }
 
     // Empty line
@@ -1795,6 +1885,8 @@ export function renderMarkdown(
     }
 
     // Normal Paragraph
+    activeListIndents = [0];
+    olCounters.clear();
     addBlock(
       <p key={`p-${i}`} className="my-2 text-sm leading-relaxed">
         {renderInlineFormatted(line, currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
