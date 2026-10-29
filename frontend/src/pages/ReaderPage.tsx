@@ -47,7 +47,7 @@ import {
   fetchDocumentComments,
   fetchDocumentSuggestions,
 } from '../api/reviews';
-import type { CommentRecord } from '../review/types';
+import type { CommentRecord, SuggestionRecord } from '../review/types';
 import { parseMarkdownToHtml } from '../utils/markdownToHtml';
 import { useUIStore } from '../stores/uiStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
@@ -913,6 +913,101 @@ export const ReaderPage: React.FC = () => {
     ]
   );
 
+  const renderSuggestionCard = useCallback(
+    (sugg: SuggestionRecord) => {
+      const isPending = (sugg.status || '').toLowerCase() === 'pending';
+      const isAccepted = (sugg.status || '').toLowerCase() === 'accepted';
+      const author = sugg.author || {
+        id: '',
+        username: 'Reviewer',
+        display_name: 'Reviewer',
+        avatar_color: '#10b981',
+      };
+      const authorName = author.display_name || author.username || 'Reviewer';
+      const authorColor = author.avatar_color || '#10b981';
+      const initials = authorName.slice(0, 2).toUpperCase();
+
+      return (
+        <div
+          key={sugg.id}
+          className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 my-2.5 not-prose ${
+            isAccepted
+              ? 'border-l-emerald-500'
+              : isPending
+              ? 'border-l-amber-500'
+              : 'border-l-rose-500'
+          }`}
+          data-testid="suggestion-item"
+          data-suggestion-id={sugg.id}
+        >
+          {/* Diff Header */}
+          <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span
+                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0"
+                style={{ backgroundColor: authorColor }}
+              >
+                {initials}
+              </span>
+              <span className="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">{authorName}</span>
+              <span className="text-[10px] text-cme-text-muted whitespace-nowrap">
+                • {new Date(sugg.created_at).toLocaleDateString()}
+              </span>
+              <span
+                className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
+                  isAccepted
+                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+                    : isPending
+                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                    : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+                }`}
+              >
+                {sugg.status}
+              </span>
+            </div>
+            {isPending && (
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleAcceptSuggestion(sugg.id)}
+                  className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-[11px] leading-tight flex items-center gap-1 transition-all shadow-xs cursor-pointer"
+                  data-testid="accept-suggestion-btn"
+                >
+                  ✓ Accept
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRejectSuggestion(sugg.id)}
+                  className="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-[11px] leading-tight flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer"
+                  data-testid="reject-suggestion-btn"
+                >
+                  ✕ Reject
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Unified Diff Block */}
+          <div className="font-mono text-xs divide-y divide-cme-border-base/30 bg-cme-bg-surface">
+            <div className="diff-deletion flex items-start gap-2 px-2.5 py-1 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
+              <span className="select-none font-bold text-rose-500 flex-shrink-0">-</span>
+              <span className="line-through whitespace-pre-wrap break-all leading-relaxed">
+                {sugg.original_text}
+              </span>
+            </div>
+            <div className="diff-addition flex items-start gap-2 px-2.5 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
+              <span className="select-none font-bold text-emerald-500 flex-shrink-0">+</span>
+              <span className="whitespace-pre-wrap break-all leading-relaxed">
+                {sugg.suggested_text}
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    },
+    [handleAcceptSuggestion, handleRejectSuggestion]
+  );
+
   // Render markdown content into rich blocks with IDs on headings
   const renderedContent = useMemo(() => {
     if (!document?.content) return null;
@@ -929,7 +1024,9 @@ export const ReaderPage: React.FC = () => {
       document.path || '',
       numberHeaders,
       showReviews ? comments : [],
-      renderCommentCard
+      renderCommentCard,
+      showReviews ? suggestions : [],
+      renderSuggestionCard
     );
   }, [
     document?.id,
@@ -941,6 +1038,8 @@ export const ReaderPage: React.FC = () => {
     showReviews,
     comments,
     renderCommentCard,
+    suggestions,
+    renderSuggestionCard,
   ]);
 
   if (isLoading) {
@@ -1255,97 +1354,7 @@ export const ReaderPage: React.FC = () => {
                   </p>
                 ) : (
                   <div className="space-y-3">
-                    {suggestions.map((sugg) => {
-                      const isPending = (sugg.status || '').toLowerCase() === 'pending';
-                      const isAccepted = (sugg.status || '').toLowerCase() === 'accepted';
-                      const author = sugg.author || {
-                        id: '',
-                        username: 'Reviewer',
-                        display_name: 'Reviewer',
-                        avatar_color: '#10b981',
-                      };
-                      const authorName = author.display_name || author.username || 'Reviewer';
-                      const authorColor = author.avatar_color || '#10b981';
-                      const initials = authorName.slice(0, 2).toUpperCase();
-
-                      return (
-                        <div
-                          key={sugg.id}
-                          className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 ${
-                            isAccepted
-                              ? 'border-l-emerald-500'
-                              : isPending
-                              ? 'border-l-amber-500'
-                              : 'border-l-rose-500'
-                          }`}
-                          data-testid="suggestion-item"
-                          data-suggestion-id={sugg.id}
-                        >
-                          {/* Diff Header */}
-                          <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <span
-                                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0"
-                                style={{ backgroundColor: authorColor }}
-                              >
-                                {initials}
-                              </span>
-                              <span className="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">{authorName}</span>
-                              <span className="text-[10px] text-cme-text-muted whitespace-nowrap">
-                                • {new Date(sugg.created_at).toLocaleDateString()}
-                              </span>
-                              <span
-                                className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
-                                  isAccepted
-                                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
-                                    : isPending
-                                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                                    : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
-                                }`}
-                              >
-                                {sugg.status}
-                              </span>
-                            </div>
-                            {isPending && (
-                              <div className="flex items-center gap-1 flex-shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => handleAcceptSuggestion(sugg.id)}
-                                  className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-[11px] leading-tight flex items-center gap-1 transition-all shadow-xs cursor-pointer"
-                                  data-testid="accept-suggestion-btn"
-                                >
-                                  ✓ Accept
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleRejectSuggestion(sugg.id)}
-                                  className="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-[11px] leading-tight flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer"
-                                  data-testid="reject-suggestion-btn"
-                                >
-                                  ✕ Reject
-                                </button>
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Unified Diff Block */}
-                          <div className="font-mono text-xs divide-y divide-cme-border-base/30 bg-cme-bg-surface">
-                            <div className="diff-deletion flex items-start gap-2 px-2.5 py-1 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
-                              <span className="select-none font-bold text-rose-500 flex-shrink-0">-</span>
-                              <span className="line-through whitespace-pre-wrap break-all leading-relaxed">
-                                {sugg.original_text}
-                              </span>
-                            </div>
-                            <div className="diff-addition flex items-start gap-2 px-2.5 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
-                              <span className="select-none font-bold text-emerald-500 flex-shrink-0">+</span>
-                              <span className="whitespace-pre-wrap break-all leading-relaxed">
-                                {sugg.suggested_text}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {suggestions.map((sugg) => renderSuggestionCard(sugg))}
                   </div>
                 )}
               </div>
@@ -1487,7 +1496,9 @@ export function renderMarkdown(
   currentDocPath: string = '',
   numberHeaders: boolean = false,
   comments: CommentRecord[] = [],
-  renderCommentCard?: (comment: CommentRecord) => React.ReactNode
+  renderCommentCard?: (comment: CommentRecord) => React.ReactNode,
+  suggestions: SuggestionRecord[] = [],
+  renderSuggestionCard?: (suggestion: SuggestionRecord) => React.ReactNode
 ): React.ReactNode[] {
   const lines = content.split('\n');
   const lineStarts: number[] = new Array(lines.length);
@@ -1518,9 +1529,44 @@ export function renderMarkdown(
       return { comment: c, targetPos, quote };
     });
 
+  const activeSuggestions = suggestions
+    .filter((s) => s.status !== 'ARCHIVED')
+    .map((s) => {
+      let targetPos = -1;
+      const reconciled = reconcileAnchor(s.anchor, content);
+      if (reconciled?.range) {
+        targetPos = reconciled.range.end;
+      } else if (s.anchor?.quote?.exact) {
+        const q = s.anchor.quote.exact;
+        const idx = content.indexOf(q);
+        if (idx !== -1) {
+          targetPos = idx + q.length;
+        }
+      } else if (s.original_text) {
+        const idx = content.indexOf(s.original_text);
+        if (idx !== -1) {
+          targetPos = idx + s.original_text.length;
+        }
+      } else if (typeof s.anchor?.offset === 'number') {
+        targetPos = s.anchor.offset + (s.anchor?.quote?.exact?.length || 0);
+      }
+      const quote =
+        s.anchor?.quote?.exact ||
+        (typeof s.anchor?.quote === 'string' ? s.anchor.quote : '') ||
+        s.original_text ||
+        '';
+      return { suggestion: s, targetPos, quote };
+    });
+
   const commentQuotes = rootComments
     .map((rc) => rc.quote)
     .filter((q): q is string => Boolean(q && q.trim().length >= 2));
+
+  const suggestionQuotes = activeSuggestions
+    .map((as) => as.quote)
+    .filter((q): q is string => Boolean(q && q.trim().length >= 2));
+
+  const reviewQuotes = Array.from(new Set([...commentQuotes, ...suggestionQuotes]));
 
   const blockList: { element: React.ReactNode; start: number; end: number }[] = [];
   const addBlock = (el: React.ReactNode, startL: number, endL: number) => {
@@ -1749,7 +1795,7 @@ export function renderMarkdown(
         currentDocMarkdown,
         currentDocPath,
         false,
-        commentQuotes
+        reviewQuotes
       );
 
       const numberBadge = numberHeaders ? (
@@ -1862,7 +1908,7 @@ export function renderMarkdown(
                   currentDocMarkdown,
                   currentDocPath,
                   true,
-                  commentQuotes
+                  reviewQuotes
                 )}
               </p>
             ))
@@ -1914,7 +1960,7 @@ export function renderMarkdown(
                       className="px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0"
                       style={{ textAlign: alignments[colIdx] || 'left' }}
                     >
-                      {renderInlineFormatted(header, currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+                      {renderInlineFormatted(header, currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
                     </th>
                   ))}
                 </tr>
@@ -1935,7 +1981,7 @@ export function renderMarkdown(
                         className="px-4 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0"
                         style={{ textAlign: alignments[colIdx] || 'left' }}
                       >
-                        {renderInlineFormatted(rowCells[colIdx] || '', currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+                        {renderInlineFormatted(rowCells[colIdx] || '', currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
                       </td>
                     ))}
                   </tr>
@@ -1989,7 +2035,7 @@ export function renderMarkdown(
             className="rounded text-cme-primary border-cme-border-base focus:ring-0"
           />
           <span className={checked ? 'line-through text-cme-text-muted' : ''}>
-            {renderInlineFormatted(taskMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+            {renderInlineFormatted(taskMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
           </span>
         </div>,
         i,
@@ -2034,7 +2080,7 @@ export function renderMarkdown(
           data-list-type="ordered"
           data-level={level}
         >
-          {renderInlineFormatted(olMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+          {renderInlineFormatted(olMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
         </li>,
         i,
         i
@@ -2063,7 +2109,7 @@ export function renderMarkdown(
           data-list-type="unordered"
           data-level={level}
         >
-          {renderInlineFormatted(ulMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+          {renderInlineFormatted(ulMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
         </li>,
         i,
         i
@@ -2083,7 +2129,7 @@ export function renderMarkdown(
     olCounters.clear();
     addBlock(
       <p key={`p-${i}`} className="my-2 text-sm leading-relaxed">
-        {renderInlineFormatted(line, currentDocTarget, currentDocMarkdown, currentDocPath, false, commentQuotes)}
+        {renderInlineFormatted(line, currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
       </p>,
       i,
       i
@@ -2091,57 +2137,93 @@ export function renderMarkdown(
     i++;
   }
 
-  if (comments.length === 0 || !renderCommentCard) {
+  const hasComments = rootComments.length > 0 && Boolean(renderCommentCard);
+  const hasSuggestions = activeSuggestions.length > 0 && Boolean(renderSuggestionCard);
+
+  if (!hasComments && !hasSuggestions) {
     return blockList.map((b) => b.element);
   }
 
   if (blockList.length === 0) {
-    if (rootComments.length === 0) return [];
     return [
       <div
         key="inline-comments-empty-doc"
         className="cme-inline-comments-container my-3 space-y-2 select-text"
         data-testid="inline-comments-container"
       >
-        {rootComments.map((rc) => renderCommentCard(rc.comment))}
+        {[
+          ...(hasComments ? rootComments.map((rc) => renderCommentCard!(rc.comment)) : []),
+          ...(hasSuggestions ? activeSuggestions.map((as) => renderSuggestionCard!(as.suggestion)) : []),
+        ]}
       </div>,
     ];
   }
 
   const commentsByBlock: Record<number, CommentRecord[]> = {};
-
-  for (const rc of rootComments) {
-    let assignedBlock = blockList.length - 1;
-    if (rc.targetPos >= 0) {
-      if (rc.targetPos <= blockList[0].end) {
-        assignedBlock = 0;
-      } else {
-        for (let b = 0; b < blockList.length - 1; b++) {
-          if (rc.targetPos >= blockList[b].start && rc.targetPos < blockList[b + 1].start) {
-            assignedBlock = b;
-            break;
+  if (hasComments) {
+    for (const rc of rootComments) {
+      let assignedBlock = blockList.length - 1;
+      if (rc.targetPos >= 0) {
+        if (rc.targetPos <= blockList[0].end) {
+          assignedBlock = 0;
+        } else {
+          for (let b = 0; b < blockList.length - 1; b++) {
+            if (rc.targetPos >= blockList[b].start && rc.targetPos < blockList[b + 1].start) {
+              assignedBlock = b;
+              break;
+            }
           }
         }
       }
+      if (!commentsByBlock[assignedBlock]) {
+        commentsByBlock[assignedBlock] = [];
+      }
+      commentsByBlock[assignedBlock].push(rc.comment);
     }
-    if (!commentsByBlock[assignedBlock]) {
-      commentsByBlock[assignedBlock] = [];
+  }
+
+  const suggestionsByBlock: Record<number, SuggestionRecord[]> = {};
+  if (hasSuggestions) {
+    for (const as of activeSuggestions) {
+      let assignedBlock = blockList.length - 1;
+      if (as.targetPos >= 0) {
+        if (as.targetPos <= blockList[0].end) {
+          assignedBlock = 0;
+        } else {
+          for (let b = 0; b < blockList.length - 1; b++) {
+            if (as.targetPos >= blockList[b].start && as.targetPos < blockList[b + 1].start) {
+              assignedBlock = b;
+              break;
+            }
+          }
+        }
+      }
+      if (!suggestionsByBlock[assignedBlock]) {
+        suggestionsByBlock[assignedBlock] = [];
+      }
+      suggestionsByBlock[assignedBlock].push(as.suggestion);
     }
-    commentsByBlock[assignedBlock].push(rc.comment);
   }
 
   const finalElements: React.ReactNode[] = [];
   for (let b = 0; b < blockList.length; b++) {
     finalElements.push(blockList[b].element);
     const blockComments = commentsByBlock[b];
-    if (blockComments && blockComments.length > 0) {
+    const blockSuggestions = suggestionsByBlock[b];
+    if (
+      (blockComments && blockComments.length > 0) ||
+      (blockSuggestions && blockSuggestions.length > 0)
+    ) {
       finalElements.push(
         <div
           key={`inline-comments-${b}`}
           className="cme-inline-comments-container my-3 space-y-2 select-text"
           data-testid="inline-comments-container"
         >
-          {blockComments.map((c) => renderCommentCard(c))}
+          {[
+            ...(blockComments && renderCommentCard ? blockComments.map((c) => renderCommentCard(c)) : []),
+            ...(blockSuggestions && renderSuggestionCard ? blockSuggestions.map((s) => renderSuggestionCard(s)) : []),
+          ]}
         </div>
       );
     }

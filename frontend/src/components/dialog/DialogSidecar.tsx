@@ -27,6 +27,7 @@ import { createQuoteSelector } from '../../review/textAnchoring';
 import { DiffProposalCard } from './DiffProposalCard';
 import { AgentActionCard } from './AgentActionCard';
 import { ContextSnapshot } from '../../types/dialog';
+import { parseMarkdownToHtml } from '../../utils/markdownToHtml';
 
 interface DialogSidecarProps {
   documentId?: string;
@@ -48,31 +49,39 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   onReviewAction,
 }) => {
   const { setDialogSidecarOpen } = useUIStore();
-  const dialogs = useDialogStore((s) => s.dialogs);
-  const activeDialogId = useDialogStore((s) => s.activeDialogId);
-  const messages = useDialogStore((s) => s.messages);
-  const isLoading = useDialogStore((s) => s.isLoading);
-  const isSending = useDialogStore((s) => s.isSending);
-  const isGenerating = useDialogStore((s) => s.isGenerating);
-  const generatingStartTime = useDialogStore((s) => s.generatingStartTime);
-  const agentStatus = useDialogStore((s) => s.agentStatus);
-  const streamingContent = useDialogStore((s) => s.streamingContent);
-  const activeToolActivity = useDialogStore((s) => s.activeToolActivity);
-  const diffProposals = useDialogStore((s) => s.diffProposals);
-  const agentActions = useDialogStore((s) => s.agentActions);
-  const contextSnapshot = useDialogStore((s) => s.contextSnapshot);
-  const clearContextSnapshot = useDialogStore((s) => s.clearContextSnapshot);
-  const loadDialogs = useDialogStore((s) => s.loadDialogs);
-  const selectDialog = useDialogStore((s) => s.selectDialog);
-  const createAndSelectDialog = useDialogStore((s) => s.createAndSelectDialog);
-  const renameDialog = useDialogStore((s) => s.renameDialog);
-  const deleteDialog = useDialogStore((s) => s.deleteDialog);
-  const resetDialogToMessage = useDialogStore((s) => s.resetDialogToMessage);
-  const forkDialog = useDialogStore((s) => s.forkDialog);
-  const sendMessage = useDialogStore((s) => s.sendMessage);
-  const updateAgentActionStatus = useDialogStore((s) => s.updateAgentActionStatus);
-  const setPairingModalOpen = useDialogStore((s) => s.setPairingModalOpen);
-  const refreshAgentStatus = useDialogStore((s) => s.refreshAgentStatus);
+  const storeState = useDialogStore();
+  // Fall back to getState() in SSR / unit test static render when initial snapshot is empty
+  const isServer = typeof window === 'undefined';
+  const effectiveStore =
+    isServer && !storeState.activeDialogId && useDialogStore.getState().activeDialogId
+      ? useDialogStore.getState()
+      : storeState;
+
+  const dialogs = effectiveStore.dialogs;
+  const activeDialogId = effectiveStore.activeDialogId;
+  const messages = effectiveStore.messages;
+  const isLoading = effectiveStore.isLoading;
+  const isSending = effectiveStore.isSending;
+  const isGenerating = effectiveStore.isGenerating;
+  const generatingStartTime = effectiveStore.generatingStartTime;
+  const agentStatus = effectiveStore.agentStatus;
+  const streamingContent = effectiveStore.streamingContent;
+  const activeToolActivity = effectiveStore.activeToolActivity;
+  const diffProposals = effectiveStore.diffProposals;
+  const agentActions = effectiveStore.agentActions;
+  const contextSnapshot = effectiveStore.contextSnapshot;
+  const clearContextSnapshot = effectiveStore.clearContextSnapshot;
+  const loadDialogs = effectiveStore.loadDialogs;
+  const selectDialog = effectiveStore.selectDialog;
+  const createAndSelectDialog = effectiveStore.createAndSelectDialog;
+  const renameDialog = effectiveStore.renameDialog;
+  const deleteDialog = effectiveStore.deleteDialog;
+  const resetDialogToMessage = effectiveStore.resetDialogToMessage;
+  const forkDialog = effectiveStore.forkDialog;
+  const sendMessage = effectiveStore.sendMessage;
+  const updateAgentActionStatus = effectiveStore.updateAgentActionStatus;
+  const setPairingModalOpen = effectiveStore.setPairingModalOpen;
+  const refreshAgentStatus = effectiveStore.refreshAgentStatus;
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -827,13 +836,21 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
               {/* Message Content Bubble */}
               <div
-                className={`max-w-[90%] rounded-xl px-3.5 py-2.5 leading-relaxed whitespace-pre-wrap break-words ${
+                className={`max-w-[90%] rounded-xl px-3.5 py-2.5 leading-relaxed text-xs shadow-sm break-words ${
                   isUser
-                    ? 'bg-cme-primary text-white shadow-sm'
-                    : 'bg-cme-bg-base border border-cme-border-base text-cme-text-base shadow-sm'
+                    ? 'bg-cme-primary text-white whitespace-pre-wrap'
+                    : 'bg-cme-bg-base border border-cme-border-base text-cme-text-base prose prose-xs dark:prose-invert max-w-none'
                 }`}
               >
-                {m.content}
+                {isUser ? (
+                  m.content
+                ) : (
+                  <div
+                    className="cme-ai-markdown-content prose prose-xs dark:prose-invert max-w-none text-xs leading-relaxed space-y-1.5 [&_pre]:bg-cme-bg-surface [&_pre]:p-2.5 [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-cme-border-base [&_code]:text-[11px] [&_p]:my-1"
+                    data-testid="ai-markdown-parsed"
+                    dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(m.content || '') }}
+                  />
+                )}
               </div>
             </div>
           );
@@ -891,8 +908,12 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                 </span>
               )}
             </div>
-            <div className="max-w-[90%] rounded-xl px-3.5 py-2.5 bg-cme-bg-base border border-cme-border-base text-cme-text-base shadow-sm whitespace-pre-wrap leading-relaxed">
-              {streamingContent}
+            <div className="max-w-[90%] rounded-xl px-3.5 py-2.5 bg-cme-bg-base border border-cme-border-base text-cme-text-base shadow-sm text-xs leading-relaxed break-words prose prose-xs dark:prose-invert max-w-none">
+              <div
+                className="cme-ai-markdown-content prose prose-xs dark:prose-invert max-w-none text-xs leading-relaxed space-y-1.5 [&_pre]:bg-cme-bg-surface [&_pre]:p-2.5 [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-cme-border-base [&_code]:text-[11px] [&_p]:my-1 inline"
+                data-testid="ai-markdown-streaming"
+                dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(streamingContent || '') }}
+              />
               <span className="inline-block w-1.5 h-3.5 ml-1 bg-cme-primary animate-pulse align-middle" />
             </div>
           </div>

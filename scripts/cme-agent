@@ -44,6 +44,7 @@ class CMEAgentDaemon:
         workspace_dir: Optional[str] = None,
         auth_command: Optional[str] = None,
         headers: Optional[List[str]] = None,
+        header_cmd: Optional[str] = None,
         command: Optional[str] = None,
     ):
         self.server_url = server_url.rstrip("/")
@@ -58,6 +59,7 @@ class CMEAgentDaemon:
         self.workspace_dir = os.path.abspath(workspace_dir or os.getcwd())
         self.auth_command = auth_command
         self.headers = headers or []
+        self.header_cmd = header_cmd
         self.command = command
         self.running = True
 
@@ -130,9 +132,9 @@ class CMEAgentDaemon:
 
     def validate_provider(self):
         """Validates that explicitly selected provider has required credentials/connectivity before starting."""
-        if not self.token and not self.auth_command and not self.headers:
+        if not self.token and not self.auth_command and not self.headers and not self.header_cmd:
             print(
-                "\n[FATAL] Missing credentials: You must supply either --token, --auth-command, or --header (e.g. X-Remote-User for delegated auth).\n",
+                "\n[FATAL] Missing credentials: You must supply either --token, --auth-command, --header-cmd, or --header (e.g. X-Remote-User for delegated auth).\n",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -230,6 +232,62 @@ class CMEAgentDaemon:
             print(f"[AGENT] Failed to run auth command '{self.auth_command}': {e}", file=sys.stderr)
             raise
 
+    def _fetch_headers_from_cmd(self) -> Dict[str, str]:
+        if not self.header_cmd:
+            return {}
+        try:
+            res = subprocess.run(
+                self.header_cmd,
+                shell=True,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30.0,
+            )
+            raw = res.stdout.strip()
+            if not raw:
+                print(f"[AGENT] Warning: Header command '{self.header_cmd}' returned empty output.", file=sys.stderr)
+                return {}
+
+            # Attempt JSON parsing if wrapped in braces or brackets
+            if (raw.startswith("{") and raw.endswith("}")) or (raw.startswith("[") and raw.endswith("]")):
+                try:
+                    parsed = json.loads(raw)
+                    if isinstance(parsed, dict):
+                        return {str(k): str(v) for k, v in parsed.items()}
+                    elif isinstance(parsed, list):
+                        res_dict = {}
+                        for item in parsed:
+                            if isinstance(item, str) and ":" in item:
+                                k, v = item.split(":", 1)
+                                res_dict[k.strip()] = v.strip()
+                            elif isinstance(item, dict) and "name" in item and "value" in item:
+                                res_dict[str(item["name"]).strip()] = str(item["value"]).strip()
+                        return res_dict
+                except json.JSONDecodeError:
+                    pass
+
+            # Otherwise parse line-delimited headers: "Header-Name: Header-Value" or "Header-Name=Header-Value"
+            dynamic_headers = {}
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    dynamic_headers[k.strip()] = v.strip()
+                elif "=" in line:
+                    k, v = line.split("=", 1)
+                    dynamic_headers[k.strip()] = v.strip()
+            return dynamic_headers
+        except subprocess.CalledProcessError as e:
+            print(f"[AGENT] Error running header command (code {e.returncode}): {e.stderr.strip()}", file=sys.stderr)
+            raise
+        except Exception as e:
+            print(f"[AGENT] Failed to run header command '{self.header_cmd}': {e}", file=sys.stderr)
+            raise
+
     async def run(self):
         ws_base = self.server_url.replace("http://", "ws://").replace("https://", "wss://")
 
@@ -249,6 +307,8 @@ class CMEAgentDaemon:
             print(f"  API Base:  {self.api_base}")
         if self.auth_command:
             print(f"  Auth Cmd:  {self.auth_command}")
+        if self.header_cmd:
+            print(f"  Header Cmd: {self.header_cmd}")
         if self.headers:
             print(f"  Headers:   {len(self.headers)} custom header(s)")
         print("=" * 60)
@@ -277,6 +337,18 @@ class CMEAgentDaemon:
                         backoff = min(backoff * 1.5, 30.0)
                         continue
 
+                active_headers = dict(parsed_headers)
+                if self.header_cmd:
+                    try:
+                        dyn_headers = self._fetch_headers_from_cmd()
+                        active_headers.update(dyn_headers)
+                        print(f"[AGENT] Retrieved {len(dyn_headers)} header(s) from header-cmd.")
+                    except Exception as e:
+                        print(f"[AGENT] Header command failed: {e}. Retrying in {backoff:.1f}s...")
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 1.5, 30.0)
+                        continue
+
                 query_params = {"name": self.agent_name}
                 if current_token:
                     query_params["token"] = current_token
@@ -288,12 +360,12 @@ class CMEAgentDaemon:
                     "ping_timeout": 20,
                     "max_size": 16 * 1024 * 1024,
                 }
-                if parsed_headers:
+                if active_headers:
                     sig = inspect.signature(websockets.connect)
                     if "additional_headers" in sig.parameters:
-                        connect_kwargs["additional_headers"] = parsed_headers
+                        connect_kwargs["additional_headers"] = active_headers
                     else:
-                        connect_kwargs["extra_headers"] = parsed_headers
+                        connect_kwargs["extra_headers"] = active_headers
 
                 print(f"\n[AGENT] Connecting outbound to CME gateway at {self.server_url}...")
                 async with websockets.connect(
@@ -1284,6 +1356,13 @@ def main():
         help="Custom HTTP/WebSocket header to send on connect (e.g. 'X-Remote-User: alice' or 'Authorization: Bearer ...'). Can be repeated."
     )
     parser.add_argument(
+        "--header-cmd", "--header-command",
+        dest="header_cmd",
+        type=str,
+        default=None,
+        help="Shell command executed before connect and on each reconnect to obtain HTTP headers from stdout (useful for time-bound auth tokens or rotated headers)"
+    )
+    parser.add_argument(
         "--name", "-n",
         type=str,
         default=f"{socket.gethostname()}-agent",
@@ -1342,8 +1421,8 @@ def main():
     args = parser.parse_args()
 
     # Validate that at least one form of authentication is provided
-    if not args.token and not args.auth_command and not args.headers:
-        parser.error("One of --token, --auth-command, or --header (for delegated auth) is required.")
+    if not args.token and not args.auth_command and not args.headers and not args.header_cmd:
+        parser.error("One of --token, --auth-command, --header-cmd, or --header (for delegated auth) is required.")
 
     tools = [t.strip() for t in args.allow_tools.split(",") if t.strip()]
 
@@ -1360,6 +1439,7 @@ def main():
         workspace_dir=args.workspace,
         auth_command=args.auth_command,
         headers=args.headers,
+        header_cmd=args.header_cmd,
         command=args.command,
     )
 

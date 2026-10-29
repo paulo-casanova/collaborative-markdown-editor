@@ -402,4 +402,131 @@ This is the second paragraph with another discussion.`;
     expect(lastElement?.props?.['data-testid']).toBe('inline-comments-container');
     expect(lastElement?.props?.children?.[0]?.props?.['data-comment-id']).toBe('comment-unanchored');
   });
+
+  it('renders suggestion cards inline directly below the anchored block when suggestions exist', async () => {
+    const { renderMarkdown } = await import('../../src/pages/ReaderPage');
+
+    const quote = 'first paragraph';
+    const mockSuggestion: any = {
+      id: 'sugg-101',
+      document_id: 'doc-1',
+      original_text: 'first paragraph',
+      suggested_text: 'primary paragraph',
+      status: 'PENDING',
+      created_at: new Date().toISOString(),
+      author: {
+        id: 'user-2',
+        username: 'editor',
+        display_name: 'Editor In Chief',
+      },
+      anchor: {
+        quote: { exact: quote },
+        offset: sampleMarkdown.indexOf(quote),
+      },
+    };
+
+    const renderSuggestionCard = (s: any) => (
+      <div key={s.id} data-testid="mock-inline-suggestion-card" data-suggestion-id={s.id}>
+        <span>{s.original_text} {'->'} {s.suggested_text}</span>
+      </div>
+    );
+
+    const elements = renderMarkdown(
+      sampleMarkdown,
+      () => {},
+      null,
+      '',
+      '',
+      '',
+      false,
+      [],
+      undefined,
+      [mockSuggestion],
+      renderSuggestionCard
+    );
+
+    const containers = elements.filter(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(containers.length).toBe(1);
+
+    const renderedSuggestion = containers[0]?.props?.children?.[0];
+    expect(renderedSuggestion?.props?.['data-testid']).toBe('mock-inline-suggestion-card');
+    expect(renderedSuggestion?.props?.['data-suggestion-id']).toBe('sugg-101');
+
+    // Container should follow first paragraph (H1, P1, Container, P2)
+    const containerIdx = elements.findIndex(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(containerIdx).toBe(2);
+  });
+
+  it('renders both comments and suggestions interleaved under their respective blocks', async () => {
+    const { renderMarkdown } = await import('../../src/pages/ReaderPage');
+
+    const quoteComment = 'Document Title';
+    const quoteSugg = 'second paragraph';
+
+    const mockComment: any = {
+      id: 'comment-1',
+      document_id: 'doc-1',
+      content: 'Comment on title',
+      status: 'OPEN',
+      created_at: new Date().toISOString(),
+      anchor: {
+        quote: { exact: quoteComment },
+        offset: sampleMarkdown.indexOf(quoteComment),
+      },
+    };
+
+    const mockSuggestion: any = {
+      id: 'sugg-1',
+      document_id: 'doc-1',
+      original_text: 'second paragraph',
+      suggested_text: 'final paragraph',
+      status: 'PENDING',
+      created_at: new Date().toISOString(),
+      anchor: {
+        quote: { exact: quoteSugg },
+        offset: sampleMarkdown.indexOf(quoteSugg),
+      },
+    };
+
+    const renderCommentCard = (c: any) => (
+      <div key={c.id} data-testid="mock-comment-card" data-comment-id={c.id}>
+        {c.content}
+      </div>
+    );
+
+    const renderSuggestionCard = (s: any) => (
+      <div key={s.id} data-testid="mock-suggestion-card" data-suggestion-id={s.id}>
+        {s.suggested_text}
+      </div>
+    );
+
+    const elements = renderMarkdown(
+      sampleMarkdown,
+      () => {},
+      null,
+      '',
+      '',
+      '',
+      false,
+      [mockComment],
+      renderCommentCard,
+      [mockSuggestion],
+      renderSuggestionCard
+    );
+
+    const containers = elements.filter(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(containers.length).toBe(2);
+
+    // First container under heading has the comment
+    expect(containers[0]?.props?.children?.[0]?.props?.['data-comment-id']).toBe('comment-1');
+
+    // Second container under paragraph 2 has the suggestion
+    expect(containers[1]?.props?.children?.[0]?.props?.['data-suggestion-id']).toBe('sugg-1');
+  });
 });

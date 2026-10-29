@@ -642,4 +642,51 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(patched).toContain('Line 2: fixed here');
     expect(patched).not.toContain('error here');
   });
+
+  it('parses markdown formatting in AI assistant responses in the chat view', () => {
+    const testDialog = {
+      id: 'dlg-md-test',
+      user_id: 'u1',
+      title: 'Markdown Test Dialog',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      message_count: 2,
+    };
+    const testMessages: any[] = [
+      {
+        id: 'm-user',
+        dialog_id: 'dlg-md-test',
+        user_id: 'u1',
+        role: 'user',
+        content: 'Show me python code and a list',
+        created_at: '2026-10-24T00:00:00Z',
+      },
+      {
+        id: 'm-assistant',
+        dialog_id: 'dlg-md-test',
+        user_id: 'agent',
+        role: 'assistant',
+        content: 'Here is **bold** text and code:\n```python\nprint("hello")\n```\n- Item 1\n- Item 2',
+        created_at: '2026-10-24T00:00:01Z',
+      },
+    ];
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-md-test',
+      dialogs: [testDialog],
+      messages: testMessages,
+    });
+
+    const html = renderToStaticMarkup(
+      React.createElement(DialogSidecar, {
+        documentId: 'doc-1',
+        documentTitle: 'test.md',
+      })
+    );
+
+    expect(html).toContain('data-testid="ai-markdown-parsed"');
+    expect(html).toContain('<strong>bold</strong>');
+    expect(html).toContain('<pre><code class="language-python">');
+    expect(html).toContain('<li><p>Item 1</p></li>');
+  });
 });

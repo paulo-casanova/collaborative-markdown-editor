@@ -67,6 +67,29 @@ class TestCMEAgentCLIImprovements(unittest.IsolatedAsyncioTestCase):
         # Should validate successfully without token because headers are provided
         agent.validate_provider()
 
+    def test_header_cmd_execution(self):
+        # 1. Line-delimited headers from command
+        cmd_lines = "printf 'Authorization: Bearer dynamic_token_123\\nX-Custom-Auth: custom_secret\\n'"
+        agent_lines = CMEAgentDaemon("http://localhost:8080", header_cmd=cmd_lines, agent_name="test")
+        hdrs_lines = agent_lines._fetch_headers_from_cmd()
+        self.assertEqual(hdrs_lines.get("Authorization"), "Bearer dynamic_token_123")
+        self.assertEqual(hdrs_lines.get("X-Custom-Auth"), "custom_secret")
+
+        # 2. JSON headers from command
+        cmd_json = "echo '{\"Authorization\": \"Bearer json_token_456\", \"X-Remote-User\": \"eve\"}'"
+        agent_json = CMEAgentDaemon("http://localhost:8080", header_cmd=cmd_json, agent_name="test")
+        hdrs_json = agent_json._fetch_headers_from_cmd()
+        self.assertEqual(hdrs_json.get("Authorization"), "Bearer json_token_456")
+        self.assertEqual(hdrs_json.get("X-Remote-User"), "eve")
+
+        # 3. Provider validation passes with header_cmd alone
+        agent_json.validate_provider()
+
+        # 4. Error in header command raises exception
+        agent_err = CMEAgentDaemon("http://localhost:8080", header_cmd="exit 2", agent_name="test")
+        with self.assertRaises(Exception):
+            agent_err._fetch_headers_from_cmd()
+
     async def test_stream_command_ndjson_claude_format(self):
         """Simulates `claude -p --output-format stream-json` emitting NDJSON events."""
         # Python one-liner simulating Claude CLI's NDJSON output stream
