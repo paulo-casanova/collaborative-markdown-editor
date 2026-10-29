@@ -173,6 +173,38 @@ class TestCMEAgentCLIImprovements(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Error running command agent", complete_msg.get("content"))
         self.assertIn("Fatal CLI error: model crashed", complete_msg.get("content"))
 
+    async def test_stream_command_large_event_line(self):
+        """Verifies handling of events exceeding the default 64KiB line buffer (e.g. large file tool results)."""
+        sim_cmd = (
+            "python3 -c '"
+            "import sys, json;\n"
+            "# Large 250KB tool result event line\n"
+            "large_tool_result = {\"type\": \"user\", \"message\": {\"content\": [{\"type\": \"tool_result\", \"content\": \"X\" * 250000}]}};\n"
+            "print(json.dumps(large_tool_result), flush=True);\n"
+            "# Followed by regular response stream\n"
+            "delta_event = {\"type\": \"stream_event\", \"event\": {\"type\": \"content_block_delta\", \"delta\": {\"type\": \"text_delta\", \"text\": \"Large payload processed cleanly!\"}}};\n"
+            "print(json.dumps(delta_event), flush=True);\n"
+            "'"
+        )
+
+        agent = CMEAgentDaemon("http://localhost:8080", token="tok", provider="command", command=sim_cmd)
+        ws = MockWebSocket()
+
+        await agent._stream_command(
+            ws,
+            dialog_id="test_dlg_large",
+            prompt="Process large output",
+            history=[],
+            context={}
+        )
+
+        tokens = [m["delta"] for m in ws.sent_messages if m.get("type") == "token_stream"]
+        full_stream = "".join(tokens)
+        self.assertIn("Large payload processed cleanly!", full_stream)
+
+        complete_msg = next(m for m in ws.sent_messages if m.get("type") == "prompt_complete")
+        self.assertIn("Large payload processed cleanly!", complete_msg.get("content"))
+
 
 if __name__ == "__main__":
     unittest.main()

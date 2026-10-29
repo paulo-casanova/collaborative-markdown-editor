@@ -46,6 +46,7 @@ class CMEAgentDaemon:
         headers: Optional[List[str]] = None,
         header_cmd: Optional[str] = None,
         command: Optional[str] = None,
+        stream_limit: Optional[int] = None,
     ):
         self.server_url = server_url.rstrip("/")
         self.token = token or ""
@@ -61,6 +62,7 @@ class CMEAgentDaemon:
         self.headers = headers or []
         self.header_cmd = header_cmd
         self.command = command
+        self.stream_limit = stream_limit or int(os.environ.get("CME_AGENT_STREAM_LIMIT", 128 * 1024 * 1024))
         self.running = True
 
         # Canonicalize provider aliases for command-line agent
@@ -1191,23 +1193,42 @@ class CMEAgentDaemon:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.workspace_dir,
                 env=env,
+                limit=self.stream_limit,
             )
 
+            stdin_task = None
             if stdin_data is not None:
-                try:
-                    proc.stdin.write(stdin_data)
-                    await proc.stdin.drain()
-                    proc.stdin.close()
-                except Exception as e:
-                    print(f"[AGENT] Error writing to command stdin: {e}", file=sys.stderr)
+                async def _feed_stdin(writer, data):
+                    try:
+                        writer.write(data)
+                        await writer.drain()
+                        writer.close()
+                    except Exception as e:
+                        print(f"[AGENT] Error writing to command stdin: {e}", file=sys.stderr)
+
+                stdin_task = asyncio.create_task(_feed_stdin(proc.stdin, stdin_data))
 
             full_content = ""
             streamed_chunks = False
 
-            while True:
-                line_bytes = await proc.stdout.readline()
-                if not line_bytes:
-                    break
+            async def _iter_stream_lines(stream: asyncio.StreamReader):
+                buffer = bytearray()
+                while True:
+                    chunk = await stream.read(65536)
+                    if not chunk:
+                        break
+                    buffer.extend(chunk)
+                    while True:
+                        nl_idx = buffer.find(b"\n")
+                        if nl_idx < 0:
+                            break
+                        line_bytes = bytes(buffer[:nl_idx])
+                        del buffer[:nl_idx + 1]
+                        yield line_bytes
+                if buffer:
+                    yield bytes(buffer)
+
+            async for line_bytes in _iter_stream_lines(proc.stdout):
                 line = line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")
                 if not line.strip():
                     continue
@@ -1231,6 +1252,16 @@ class CMEAgentDaemon:
                                         "dialog_id": dialog_id,
                                         "tool": "thinking",
                                         "status": inner_delta.get("thinking", "")[:80],
+                                    }))
+                            elif inner_type == "content_block_start":
+                                cb = inner.get("content_block", {})
+                                if cb.get("type") == "tool_use":
+                                    tool_name = cb.get("name") or "tool"
+                                    await ws.send(json.dumps({
+                                        "type": "tool_activity",
+                                        "dialog_id": dialog_id,
+                                        "tool": tool_name,
+                                        "status": "executing",
                                     }))
 
                         # 2. Direct content_block_delta (SSE/Messages API style)
@@ -1287,6 +1318,9 @@ class CMEAgentDaemon:
                         "delta": delta_text,
                     }))
 
+            if stdin_task:
+                await stdin_task
+
             stderr_bytes = await proc.stderr.read()
             await proc.wait()
 
@@ -1312,6 +1346,12 @@ class CMEAgentDaemon:
             print(f"[PROMPT] Completed response for dialog {dialog_id[:8]}")
 
         except Exception as e:
+            if 'proc' in locals() and proc.returncode is None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
             print(f"[AGENT] Command streaming error: {e}", file=sys.stderr)
             error_text = f"**Command Execution Error:** {e}"
             await ws.send(json.dumps({
@@ -1417,6 +1457,12 @@ def main():
         default=None,
         help="Root workspace path for local tool executions (default: cwd)"
     )
+    parser.add_argument(
+        "--stream-limit",
+        type=int,
+        default=128 * 1024 * 1024,
+        help="Buffer limit in bytes for subprocess pipes (default: 134217728 [128 MiB], prevents failures on large JSON lines or tool results)"
+    )
 
     args = parser.parse_args()
 
@@ -1441,6 +1487,7 @@ def main():
         headers=args.headers,
         header_cmd=args.header_cmd,
         command=args.command,
+        stream_limit=args.stream_limit,
     )
 
     agent.validate_provider()
