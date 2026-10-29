@@ -122,6 +122,23 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     }
   };
 
+  const handleCreateNewDialog = async () => {
+    if (isCreatingNew) return;
+    setIsCreatingNew(true);
+    try {
+      await createAndSelectDialog(
+        documentTitle ? `Chat: ${documentTitle}` : 'New Dialog',
+        documentId
+      );
+      setDropdownOpen(false);
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 50);
+    } finally {
+      setIsCreatingNew(false);
+    }
+  };
+
   useEffect(() => {
     void loadDialogs();
     void refreshAgentStatus();
@@ -140,6 +157,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   }, [messages, streamingContent, activeToolActivity, isGenerating]);
 
   const handleSend = async () => {
+    if (!activeDialogId) return;
     if (!inputPrompt.trim() || isSending || isGenerating) return;
     const content = inputPrompt;
     setInputPrompt('');
@@ -211,6 +229,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
+      if (!activeDialogId) return;
       void handleSend();
     }
   };
@@ -513,17 +532,9 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
                   <div className="border-t border-cme-border-base mt-1 pt-1">
                     <button
-                      onClick={async () => {
-                        setIsCreatingNew(true);
-                        await createAndSelectDialog(
-                          documentTitle ? `Chat: ${documentTitle}` : 'New Dialog',
-                          documentId
-                        );
-                        setIsCreatingNew(false);
-                        setDropdownOpen(false);
-                      }}
+                      onClick={handleCreateNewDialog}
                       disabled={isCreatingNew}
-                      className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-cme-primary hover:bg-cme-bg-hover transition-colors font-medium"
+                      className="w-full flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-cme-primary hover:bg-cme-bg-hover transition-colors font-medium cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>{isCreatingNew ? 'Creating...' : '+ New Dialog'}</span>
@@ -596,7 +607,48 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
       {/* Messages Thread Container */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
-        {messages.length === 0 && !streamingContent && !isLoading && (
+        {!activeDialogId || !currentDialog ? (
+          <div
+            className="h-full flex flex-col items-center justify-center text-center p-6 text-cme-text-muted space-y-3"
+            data-testid="no-dialog-selected-state"
+          >
+            <div className="p-3 rounded-2xl bg-cme-bg-subtle border border-cme-border-base text-cme-primary">
+              <MessageSquare className="w-6 h-6" />
+            </div>
+            <div className="font-semibold text-cme-text-base text-sm">
+              No Dialog Selected
+            </div>
+            <p className="text-xs leading-relaxed text-cme-text-subtle max-w-xs">
+              Select an existing dialog thread from the menu above or create a new one to start collaborating with the AI agent.
+            </p>
+            <button
+              onClick={handleCreateNewDialog}
+              disabled={isCreatingNew}
+              className="mt-2 px-3.5 py-1.5 rounded-lg bg-cme-primary text-white text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center gap-1.5 shadow-sm cursor-pointer"
+              data-testid="create-dialog-empty-btn"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>{isCreatingNew ? 'Creating...' : 'Create New Dialog'}</span>
+            </button>
+            {dialogs.length > 0 && (
+              <div className="pt-2">
+                <span className="text-[11px] text-cme-text-muted">Or pick a previous thread:</span>
+                <div className="mt-1 flex flex-wrap gap-1 justify-center max-w-xs">
+                  {dialogs.slice(0, 3).map((d) => (
+                    <button
+                      key={d.id}
+                      onClick={() => void selectDialog(d.id, documentId)}
+                      className="px-2 py-1 rounded border border-cme-border-base bg-cme-bg-base hover:bg-cme-bg-hover text-[11px] text-cme-text-base truncate max-w-[140px] cursor-pointer"
+                      title={d.title}
+                    >
+                      {d.title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        ) : messages.length === 0 && !streamingContent && !isLoading ? (
           <div className="h-full flex flex-col items-center justify-center text-center p-6 text-cme-text-muted space-y-3">
             <div className="p-3 rounded-2xl bg-cme-bg-subtle border border-cme-border-base text-cme-primary">
               <Sparkles className="w-6 h-6" />
@@ -617,10 +669,12 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
               </button>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Render Conversation Timeline (Messages, Actions, and Diffs in Chronological Order) */}
-        {React.useMemo(() => {
+        {activeDialogId &&
+          currentDialog &&
+          React.useMemo(() => {
           type TimelineItem =
             | { kind: 'message'; data: (typeof messages)[0]; timestamp: number }
             | { kind: 'action'; data: (typeof agentActions)[0]; timestamp: number }
@@ -842,8 +896,25 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
       {/* Composer Section */}
       <div className="p-3 border-t border-cme-border-base bg-cme-bg-subtle shrink-0 space-y-2">
-        {/* Offline Warning banner if agent is not connected */}
-        {!agentStatus.online && (
+        {/* Banner if no active dialog */}
+        {!activeDialogId ? (
+          <div
+            className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-cme-primary/10 border border-cme-primary/20 text-[11px] text-cme-primary"
+            data-testid="no-dialog-banner"
+          >
+            <div className="flex items-center gap-1.5 truncate">
+              <MessageSquare className="w-3.5 h-3.5 shrink-0 text-cme-primary" />
+              <span className="truncate">Select or create a dialog to start chatting</span>
+            </div>
+            <button
+              onClick={handleCreateNewDialog}
+              disabled={isCreatingNew}
+              className="underline font-semibold hover:opacity-80 shrink-0 ml-1 cursor-pointer"
+            >
+              + New
+            </button>
+          </div>
+        ) : !agentStatus.online ? (
           <div className="flex items-center justify-between px-2.5 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300">
             <div className="flex items-center gap-1.5 truncate">
               <AlertCircle className="w-3.5 h-3.5 shrink-0 text-amber-500" />
@@ -856,7 +927,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
               Pair
             </button>
           </div>
-        )}
+        ) : null}
 
         {/* Context Snapshot Attachment Pill */}
         {contextSnapshot && (
@@ -903,18 +974,28 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
             value={inputPrompt}
             onChange={(e) => setInputPrompt(e.target.value)}
             onKeyDown={handleKeyDown}
+            disabled={!activeDialogId || isSending || isGenerating}
             placeholder={
-              agentStatus.online
+              !activeDialogId
+                ? 'Select or create a dialog to write a prompt...'
+                : agentStatus.online
                 ? 'Ask your local agent or request edits (Enter to send)...'
                 : 'Type prompt to save to dialog...'
             }
-            className="flex-1 resize-none px-3 py-2 text-xs bg-cme-bg-base border border-cme-border-base rounded-lg focus:outline-none focus:ring-1 focus:ring-cme-primary text-cme-text-base leading-relaxed"
+            className="flex-1 resize-none px-3 py-2 text-xs bg-cme-bg-base border border-cme-border-base rounded-lg focus:outline-none focus:ring-1 focus:ring-cme-primary text-cme-text-base leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-cme-bg-subtle"
+            data-testid="dialog-prompt-input"
           />
           <button
             onClick={handleSend}
-            disabled={!inputPrompt.trim() || isSending || isGenerating}
-            className="p-2 rounded-lg bg-cme-primary text-white hover:opacity-90 disabled:opacity-40 transition-all shrink-0 flex items-center justify-center"
-            title={isGenerating ? `Agent responding (${elapsedSeconds}s)` : 'Send prompt (Enter)'}
+            disabled={!activeDialogId || !inputPrompt.trim() || isSending || isGenerating}
+            className="p-2 rounded-lg bg-cme-primary text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 flex items-center justify-center"
+            title={
+              !activeDialogId
+                ? 'Select or create a dialog first'
+                : isGenerating
+                ? `Agent responding (${elapsedSeconds}s)`
+                : 'Send prompt (Enter)'
+            }
             data-testid="send-prompt-btn"
           >
             {isGenerating ? (

@@ -6,6 +6,7 @@ import { useDialogStore, sortDialogMessages } from '../../src/stores/dialogStore
 import * as dialogApi from '../../src/api/dialogs';
 import { DialogMessage } from '../../src/types/dialog';
 import { EditorToolbar } from '../../src/components/editor/EditorToolbar';
+import { DialogSidecar } from '../../src/components/dialog/DialogSidecar';
 import { computeReplacementChange } from '../../src/utils/diffPatcher';
 
 describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
@@ -194,6 +195,23 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     );
     expect(useDialogStore.getState().messages).toHaveLength(1);
     expect(useDialogStore.getState().messages[0].id).toBe('msg-user-99');
+  });
+
+  it('prevents writing and sending prompts when no dialog is selected', async () => {
+    useDialogStore.setState({ activeDialogId: null });
+    const postSpy = vi.spyOn(dialogApi, 'postMessage');
+
+    // Store level: sendMessage does nothing if no activeDialogId
+    await useDialogStore.getState().sendMessage('Hello into the void');
+    expect(postSpy).not.toHaveBeenCalled();
+    expect(useDialogStore.getState().messages).toHaveLength(0);
+
+    // Component level: render DialogSidecar when activeDialogId is null
+    const html = renderToStaticMarkup(React.createElement(DialogSidecar, { documentId: 'doc-test' }));
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('Select or create a dialog to write a prompt...');
+    expect(html).toContain('No Dialog Selected');
+    expect(html).toContain('Select or create a dialog to start chatting');
   });
 
   it('manages agent pairing modal state and queries agent presence', async () => {
