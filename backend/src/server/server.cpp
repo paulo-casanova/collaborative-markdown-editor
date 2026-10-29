@@ -5457,11 +5457,15 @@ Result<void> Server::start() {
                         std::string dialog_id = j.value("dialog_id", "");
                         std::string content = j.value("content", "");
                         nlohmann::json ctx = j.value("context_snapshot", nlohmann::json::object());
+                        nlohmann::json complete_event = j;
                         if (!dialog_id.empty() && !content.empty() && dialog_service_) {
-                            dialog_service_->add_message(data->user_id, dialog_id, "assistant", content, ctx);
+                            auto add_res = dialog_service_->add_message(data->user_id, dialog_id, "assistant", content, ctx);
+                            if (add_res.has_value()) {
+                                complete_event["message"] = add_res.value().to_json();
+                            }
                         }
                         if (!dialog_id.empty() && agent_manager_) {
-                            agent_manager_->send_to_dialog(dialog_id, std::string(message));
+                            agent_manager_->send_to_dialog(dialog_id, complete_event.dump());
                         }
                     }
                 } catch (const std::exception& e) {

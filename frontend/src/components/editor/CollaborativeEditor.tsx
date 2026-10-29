@@ -177,6 +177,8 @@ interface CollaborativeEditorProps {
   editable?: boolean;
   onEditorReady?: (editor: any) => void;
   autoFocus?: boolean | 'start' | 'end' | 'all';
+  documentId?: string;
+  documentTitle?: string;
   documentPath?: string;
   onToggleNumberHeaders?: () => void;
 }
@@ -226,6 +228,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   editable = true,
   onEditorReady,
   autoFocus = false,
+  documentId,
+  documentTitle,
   documentPath,
   onToggleNumberHeaders,
 }) => {
@@ -514,6 +518,9 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           editor={editor as any}
           provider={provider}
           onToggleNumberHeaders={onToggleNumberHeaders}
+          documentId={documentId}
+          documentTitle={documentTitle}
+          documentPath={documentPath}
         />
       )}
       <div
@@ -530,7 +537,15 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       </div>
 
       {/* Floating Selection Menu */}
-      {editable && <FloatingReviewMenu editor={editor as any} provider={provider} />}
+      {editable && (
+        <FloatingReviewMenu
+          editor={editor as any}
+          provider={provider}
+          documentId={documentId}
+          documentTitle={documentTitle}
+          documentPath={documentPath}
+        />
+      )}
 
       {/* New Suggestion / Comment Modals */}
       <NewSuggestionModal />

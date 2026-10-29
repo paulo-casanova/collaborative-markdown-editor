@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { useUIStore } from '../../src/stores/uiStore';
-import { useDialogStore } from '../../src/stores/dialogStore';
+import { useDialogStore, sortDialogMessages } from '../../src/stores/dialogStore';
 import * as dialogApi from '../../src/api/dialogs';
+import { DialogMessage } from '../../src/types/dialog';
+import { EditorToolbar } from '../../src/components/editor/EditorToolbar';
 
 describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
   beforeEach(() => {
@@ -436,5 +440,157 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(snap?.comments[0].content).toBe('Consider refactoring');
     expect(snap?.suggestions).toHaveLength(1);
     expect(snap?.suggestions[0].suggested_text).toBe('const a = 1');
+  });
+
+  it('sortDialogMessages enforces prompt-before-response ordering on identical timestamps', () => {
+    const messages: DialogMessage[] = [
+      {
+        id: 'msg-assist-1',
+        dialog_id: 'dlg-1',
+        role: 'assistant',
+        content: 'Assistant answer',
+        created_at: '2026-10-29T10:00:00.000Z',
+      },
+      {
+        id: 'msg-user-1',
+        dialog_id: 'dlg-1',
+        role: 'user',
+        content: 'User prompt',
+        created_at: '2026-10-29T10:00:00.000Z',
+      },
+      {
+        id: 'msg-assist-0',
+        dialog_id: 'dlg-1',
+        role: 'assistant',
+        content: 'Earlier response',
+        created_at: '2026-10-29T09:55:00.000Z',
+      },
+      {
+        id: 'msg-user-2',
+        dialog_id: 'dlg-1',
+        role: 'user',
+        content: 'Follow-up question',
+        created_at: '2026-10-29T10:05:00.000Z',
+      },
+    ];
+
+    const sorted = sortDialogMessages(messages);
+    expect(sorted.map((m) => m.id)).toEqual([
+      'msg-assist-0',
+      'msg-user-1',
+      'msg-assist-1',
+      'msg-user-2',
+    ]);
+  });
+
+  it('optimistically displays user prompt immediately when sendMessage is called', async () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-test',
+      messages: [],
+      agentStatus: {
+        online: true,
+        agent_name: 'test-agent',
+        connected_at: '2026-10-29T10:00:00Z',
+        capabilities: ['edit'],
+      },
+    });
+
+    let resolvePostMessage: (msg: DialogMessage) => void;
+    const pendingPromise = new Promise<DialogMessage>((res) => {
+      resolvePostMessage = res;
+    });
+
+    vi.spyOn(dialogApi, 'postMessage').mockReturnValue(pendingPromise);
+
+    const sendCall = useDialogStore.getState().sendMessage('Summarize this document');
+
+    // Immediately after invocation, the optimistic user message must be present in messages
+    const stateDuring = useDialogStore.getState();
+    expect(stateDuring.isSending).toBe(true);
+    expect(stateDuring.isGenerating).toBe(true);
+    expect(stateDuring.messages.length).toBe(1);
+    expect(stateDuring.messages[0].role).toBe('user');
+    expect(stateDuring.messages[0].content).toBe('Summarize this document');
+    expect(stateDuring.messages[0].id).toMatch(/^temp-user-/);
+
+    // Now resolve the server response
+    resolvePostMessage!({
+      id: 'server-msg-101',
+      dialog_id: 'dlg-test',
+      role: 'user',
+      content: 'Summarize this document',
+      created_at: new Date().toISOString(),
+      agent_dispatched: true,
+    });
+
+    await sendCall;
+
+    const stateAfter = useDialogStore.getState();
+    expect(stateAfter.isSending).toBe(false);
+    expect(stateAfter.messages.length).toBe(1);
+    expect(stateAfter.messages[0].id).toBe('server-msg-101');
+    expect(stateAfter.messages[0].content).toBe('Summarize this document');
+  });
+
+  it('provides Ask Agent in editor selection context and opens AI sidecar', () => {
+    expect(useUIStore.getState().dialogSidecarOpen).toBe(false);
+    expect(useDialogStore.getState().contextSnapshot).toBeNull();
+
+    // Trigger Ask Agent context snapshot packaging
+    useDialogStore.getState().setContextSnapshot({
+      document_id: 'doc-456',
+      document_title: 'readme.md',
+      document_path: '/docs/readme.md',
+      selected_text: '# Installation Guide',
+    });
+    useUIStore.getState().setDialogSidecarOpen(true);
+
+    expect(useUIStore.getState().dialogSidecarOpen).toBe(true);
+    expect(useDialogStore.getState().contextSnapshot).toEqual({
+      document_id: 'doc-456',
+      document_title: 'readme.md',
+      document_path: '/docs/readme.md',
+      selected_text: '# Installation Guide',
+    });
+
+    // Render EditorToolbar to verify toolbar-ask-agent-btn exists
+    const mockEditor: any = {
+      state: {
+        selection: { empty: false, from: 1, to: 10 },
+        doc: { textBetween: () => 'some text' },
+      },
+      on: () => {},
+      off: () => {},
+      can: () => ({
+        undo: () => false,
+        redo: () => false,
+        chain: () => ({
+          focus: () => ({
+            undo: () => ({ run: () => false }),
+            redo: () => ({ run: () => false }),
+          }),
+        }),
+      }),
+      chain: () => ({
+        focus: () => ({
+          undo: () => ({ run: () => false }),
+          redo: () => ({ run: () => false }),
+        }),
+      }),
+      isActive: () => false,
+      getText: () => 'some text in editor',
+    };
+
+    const html = renderToStaticMarkup(
+      React.createElement(EditorToolbar, {
+        editor: mockEditor,
+        documentId: 'doc-456',
+        documentTitle: 'readme.md',
+        documentPath: '/docs/readme.md',
+      })
+    );
+
+    expect(html).toContain('data-testid="toolbar-ask-agent-btn"');
+    expect(html).toContain('Ask your AI agent about selected text');
   });
 });

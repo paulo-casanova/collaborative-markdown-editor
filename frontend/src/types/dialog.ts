@@ -61,6 +61,7 @@ export interface DiffProposal {
   document_id?: string;
   diff: string;
   applied?: boolean;
+  timestamp?: number;
 }
 
 export type AgentActionType =

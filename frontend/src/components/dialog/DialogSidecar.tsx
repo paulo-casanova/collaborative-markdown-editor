@@ -599,8 +599,64 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           </div>
         )}
 
-        {/* Render Conversation Messages */}
-        {messages.map((m) => {
+        {/* Render Conversation Timeline (Messages, Actions, and Diffs in Chronological Order) */}
+        {React.useMemo(() => {
+          type TimelineItem =
+            | { kind: 'message'; data: (typeof messages)[0]; timestamp: number }
+            | { kind: 'action'; data: (typeof agentActions)[0]; timestamp: number }
+            | { kind: 'diff'; data: (typeof diffProposals)[0]; timestamp: number };
+
+          const items: TimelineItem[] = [];
+
+          for (const m of messages) {
+            items.push({
+              kind: 'message',
+              data: m,
+              timestamp: new Date(m.created_at).getTime() || 0,
+            });
+          }
+
+          for (const act of agentActions) {
+            items.push({
+              kind: 'action',
+              data: act,
+              timestamp: act.timestamp || 0,
+            });
+          }
+
+          for (const dp of diffProposals) {
+            const ts =
+              dp.timestamp ||
+              parseInt(dp.id.replace('diff-', ''), 10) ||
+              0;
+            items.push({
+              kind: 'diff',
+              data: dp,
+              timestamp: ts,
+            });
+          }
+
+          return items.sort((a, b) => {
+            if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+            if (a.kind === 'message' && b.kind !== 'message') return -1;
+            if (a.kind !== 'message' && b.kind === 'message') return 1;
+            return 0;
+          });
+        }, [messages, agentActions, diffProposals]).map((item) => {
+          if (item.kind === 'action') {
+            return <AgentActionCard key={item.data.id} action={item.data} />;
+          }
+          if (item.kind === 'diff') {
+            return (
+              <DiffProposalCard
+                key={item.data.id}
+                proposal={item.data}
+                onApply={onApplyDiff}
+              />
+            );
+          }
+
+          const m = item.data;
           const isUser = m.role === 'user';
           return (
             <div
@@ -649,7 +705,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                       e.stopPropagation();
                       if (
                         window.confirm(
-                          'Reset conversation to this message? Subsequent messages in this dialog will be deleted.'
+                           'Reset conversation to this message? Subsequent messages in this dialog will be deleted.'
                         )
                       ) {
                         await resetDialogToMessage(m.id);
@@ -760,16 +816,6 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
             </div>
           </div>
         )}
-
-        {/* Executed Agent Actions */}
-        {agentActions.map((act) => (
-          <AgentActionCard key={act.id} action={act} />
-        ))}
-
-        {/* Proposed Diffs */}
-        {diffProposals.map((dp) => (
-          <DiffProposalCard key={dp.id} proposal={dp} onApply={onApplyDiff} />
-        ))}
 
         <div ref={messagesEndRef} />
       </div>

@@ -1,18 +1,26 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Editor } from '@tiptap/react';
-import { MessageSquare, GitPullRequest } from 'lucide-react';
+import { MessageSquare, GitPullRequest, Sparkles } from 'lucide-react';
 import { useReviewStore } from '../../stores/reviewStore';
+import { useDialogStore } from '../../stores/dialogStore';
+import { useUIStore } from '../../stores/uiStore';
 import { createDualAnchor } from '../../review/textAnchoring';
 import { CmeCollabProvider } from '../../api/collabProvider';
 
 interface FloatingReviewMenuProps {
   editor: Editor | null;
   provider?: CmeCollabProvider | null;
+  documentId?: string;
+  documentTitle?: string;
+  documentPath?: string;
 }
 
 export const FloatingReviewMenu: React.FC<FloatingReviewMenuProps> = ({
   editor,
   provider,
+  documentId,
+  documentTitle,
+  documentPath,
 }) => {
   const { setPendingCommentSelection, setPendingSuggestionSelection } =
     useReviewStore();
@@ -140,6 +148,21 @@ export const FloatingReviewMenu: React.FC<FloatingReviewMenuProps> = ({
     setPosition(null);
   };
 
+  const handleAskAgent = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectedText) return;
+
+    useDialogStore.getState().setContextSnapshot({
+      document_id: documentId,
+      document_title: documentTitle,
+      document_path: documentPath,
+      selected_text: selectedText,
+    });
+    useUIStore.getState().setDialogSidecarOpen(true);
+    setPosition(null);
+  };
+
   return (
     <div
       ref={menuRef}
@@ -172,6 +195,19 @@ export const FloatingReviewMenu: React.FC<FloatingReviewMenuProps> = ({
       >
         <MessageSquare className="w-3.5 h-3.5" />
         Comment
+      </button>
+
+      <div className="w-[1px] h-3.5 bg-cme-border-base mx-0.5" />
+
+      <button
+        type="button"
+        data-testid="floating-ask-agent-btn"
+        onClick={handleAskAgent}
+        className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/50 rounded-lg transition-colors cursor-pointer"
+        title="Ask your AI agent about selected text"
+      >
+        <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+        Ask Agent
       </button>
     </div>
   );

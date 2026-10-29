@@ -318,7 +318,7 @@ Result<std::vector<DialogMessageRecord>> DialogService::list_messages(const std:
             "SELECT id, dialog_id, role, content, context_snapshot::text, created_at::text "
             "FROM dialog_messages "
             "WHERE dialog_id = $1::uuid "
-            "ORDER BY created_at ASC "
+            "ORDER BY created_at ASC, CASE WHEN role = 'user' THEN 0 ELSE 1 END ASC, id ASC "
             "LIMIT $2;",
             dialog_id, limit
         );
@@ -463,7 +463,7 @@ Result<std::vector<DialogMessageRecord>> DialogService::truncate_dialog(
             "SELECT id, dialog_id, role, content, context_snapshot::text, created_at::text "
             "FROM dialog_messages "
             "WHERE dialog_id = $1::uuid "
-            "ORDER BY created_at ASC;",
+            "ORDER BY created_at ASC, CASE WHEN role = 'user' THEN 0 ELSE 1 END ASC, id ASC;",
             dialog_id
         );
 
@@ -547,7 +547,7 @@ Result<DialogRecord> DialogService::fork_dialog(
                 "SELECT $1::uuid, role, content, context_snapshot, created_at "
                 "FROM dialog_messages "
                 "WHERE dialog_id = $2::uuid AND (created_at < $3::timestamptz OR id = $4::uuid) "
-                "ORDER BY created_at ASC;",
+                "ORDER BY created_at ASC, CASE WHEN role = 'user' THEN 0 ELSE 1 END ASC, id ASC;",
                 new_dialog_id, source_dialog_id, target_created_at, *up_to_message_id
             );
         } else {
@@ -556,7 +556,7 @@ Result<DialogRecord> DialogService::fork_dialog(
                 "SELECT $1::uuid, role, content, context_snapshot, created_at "
                 "FROM dialog_messages "
                 "WHERE dialog_id = $2::uuid "
-                "ORDER BY created_at ASC;",
+                "ORDER BY created_at ASC, CASE WHEN role = 'user' THEN 0 ELSE 1 END ASC, id ASC;",
                 new_dialog_id, source_dialog_id
             );
         }

@@ -16,6 +16,18 @@ import {
 import * as dialogApi from '../api/dialogs';
 import { TOKEN_STORAGE_KEY } from '../api/client';
 
+export const sortDialogMessages = (messages: DialogMessage[]): DialogMessage[] => {
+  return [...messages].sort((a, b) => {
+    const timeA = new Date(a.created_at).getTime() || 0;
+    const timeB = new Date(b.created_at).getTime() || 0;
+    if (timeA !== timeB) return timeA - timeB;
+    // When timestamps match (e.g. same second), user messages always precede assistant responses
+    if (a.role === 'user' && b.role !== 'user') return -1;
+    if (a.role !== 'user' && b.role === 'user') return 1;
+    return (a.id || '').localeCompare(b.id || '');
+  });
+};
+
 interface DialogState {
   dialogs: Dialog[];
   activeDialogId: string | null;
@@ -109,7 +121,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
 
     try {
       const messages = await dialogApi.fetchMessages(dialogId);
-      set({ messages, isLoading: false });
+      set({ messages: sortDialogMessages(messages), isLoading: false });
 
       // Connect real-time WebSocket stream for this dialog
       get().connectDialogWs(dialogId);
@@ -180,22 +192,36 @@ export const useDialogStore = create<DialogState>((set, get) => ({
 
     const snapshot = overrideSnapshot || get().contextSnapshot || undefined;
     const isOnline = get().agentStatus.online;
-    set({
+    const tempId = `temp-user-${Date.now()}`;
+    const optimisticMsg: DialogMessage = {
+      id: tempId,
+      dialog_id: activeId,
+      user_id: '',
+      role: 'user',
+      content,
+      context_snapshot: snapshot,
+      created_at: new Date().toISOString(),
+      agent_dispatched: isOnline,
+    };
+
+    set((state) => ({
+      messages: sortDialogMessages([...state.messages, optimisticMsg]),
       isSending: true,
       isGenerating: isOnline,
       generatingStartTime: isOnline ? Date.now() : null,
       streamingContent: '',
       activeToolActivity: null,
-    });
+    }));
 
     try {
       const msg = await dialogApi.postMessage(activeId, content, snapshot, 'user');
-      // Append user message if not already received via WS broadcast
       set((state) => {
-        const exists = state.messages.some((m) => m.id === msg.id);
+        const filtered = state.messages.filter(
+          (m) => m.id !== tempId && m.id !== msg.id
+        );
         const shouldGenerate = msg.agent_dispatched ?? state.agentStatus.online;
         return {
-          messages: exists ? state.messages : [...state.messages, msg],
+          messages: sortDialogMessages([...filtered, msg]),
           isSending: false,
           isGenerating: shouldGenerate,
           generatingStartTime: shouldGenerate ? (state.generatingStartTime || Date.now()) : null,
@@ -203,7 +229,12 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       });
     } catch (err) {
       console.warn('[DialogStore] Failed to send message:', err);
-      set({ isSending: false, isGenerating: false, generatingStartTime: null });
+      set((state) => ({
+        messages: state.messages.filter((m) => m.id !== tempId),
+        isSending: false,
+        isGenerating: false,
+        generatingStartTime: null,
+      }));
     }
   },
 
@@ -212,7 +243,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
     if (!activeId) return;
     try {
       const remaining = await dialogApi.truncateDialog(activeId, messageId, inclusive);
-      set({ messages: remaining, streamingContent: '', activeToolActivity: null });
+      set({ messages: sortDialogMessages(remaining), streamingContent: '', activeToolActivity: null });
     } catch (err) {
       console.warn(`[DialogStore] Failed to reset dialog ${activeId} to message ${messageId}:`, err);
     }
@@ -296,9 +327,13 @@ export const useDialogStore = create<DialogState>((set, get) => ({
           } else if (type === 'user_message') {
             if (data.message && data.dialog_id === get().activeDialogId) {
               set((state) => {
-                const exists = state.messages.some((m) => m.id === data.message.id);
+                const filtered = state.messages.filter(
+                  (m) =>
+                    m.id !== data.message.id &&
+                    !(m.id.startsWith('temp-user-') && m.content === data.message.content)
+                );
                 return {
-                  messages: exists ? state.messages : [...state.messages, data.message],
+                  messages: sortDialogMessages([...filtered, data.message]),
                 };
               });
             }
@@ -319,12 +354,13 @@ export const useDialogStore = create<DialogState>((set, get) => ({
             }
           } else if (type === 'diff_proposal') {
             if (data.dialog_id === get().activeDialogId && data.diff) {
-              const proposal: DiffProposal = {
+              const proposal: DiffProposal & { timestamp?: number } = {
                 id: `diff-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
                 dialog_id: data.dialog_id,
                 document_id: data.document_id,
                 diff: data.diff,
                 applied: false,
+                timestamp: Date.now(),
               };
               set((state) => ({
                 diffProposals: [...state.diffProposals, proposal],
@@ -349,21 +385,31 @@ export const useDialogStore = create<DialogState>((set, get) => ({
             if (data.dialog_id === get().activeDialogId) {
               void (async () => {
                 const msgs = await dialogApi.fetchMessages(dialogId);
-                set({ messages: msgs, streamingContent: '', activeToolActivity: null });
+                set({ messages: sortDialogMessages(msgs), streamingContent: '', activeToolActivity: null });
               })();
             }
           } else if (type === 'prompt_complete') {
             if (data.dialog_id === get().activeDialogId) {
               // Finalize message turn: clear streaming buffer and refresh message history
-              set({
-                streamingContent: '',
-                activeToolActivity: null,
-                isGenerating: false,
-                generatingStartTime: null,
+              const assistantMsg: DialogMessage | undefined = data.message;
+              set((state) => {
+                const updated = assistantMsg
+                  ? sortDialogMessages([
+                      ...state.messages.filter((m) => m.id !== assistantMsg.id),
+                      assistantMsg,
+                    ])
+                  : state.messages;
+                return {
+                  messages: updated,
+                  streamingContent: '',
+                  activeToolActivity: null,
+                  isGenerating: false,
+                  generatingStartTime: null,
+                };
               });
               void (async () => {
                 const msgs = await dialogApi.fetchMessages(dialogId);
-                set({ messages: msgs });
+                set({ messages: sortDialogMessages(msgs) });
               })();
             }
           }

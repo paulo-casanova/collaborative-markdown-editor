@@ -832,6 +832,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             onCursorLineChange={setCursorLine}
             onEditorReady={handleEditorReady}
             autoFocus={isPrimary ? 'end' : false}
+            documentId={document?.id}
+            documentTitle={document?.title}
             documentPath={document?.path}
             onToggleNumberHeaders={handleToggleNumberHeaders}
           />

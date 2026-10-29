@@ -25,9 +25,11 @@ import {
   Eye,
   EyeOff,
   Tag,
+  Sparkles,
 } from 'lucide-react';
 import { useReviewStore } from '../../stores/reviewStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useDialogStore } from '../../stores/dialogStore';
 import { createDualAnchor } from '../../review/textAnchoring';
 import { CmeCollabProvider } from '../../api/collabProvider';
 
@@ -35,9 +37,19 @@ interface EditorToolbarProps {
   editor: any;
   provider?: CmeCollabProvider | null;
   onToggleNumberHeaders?: () => void;
+  documentId?: string;
+  documentTitle?: string;
+  documentPath?: string;
 }
 
-export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider, onToggleNumberHeaders }) => {
+export const EditorToolbar: React.FC<EditorToolbarProps> = ({
+  editor,
+  provider,
+  onToggleNumberHeaders,
+  documentId,
+  documentTitle,
+  documentPath,
+}) => {
   const { numberHeaders, toggleNumberHeaders, lineNumbers, toggleLineNumbers } = useUIStore();
   const {
     comments,
@@ -117,6 +129,17 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider, 
       text: selectedText,
       anchor,
     });
+  };
+
+  const handleToolbarAskAgent = () => {
+    if (!hasSelection || !selectedText) return;
+    useDialogStore.getState().setContextSnapshot({
+      document_id: documentId,
+      document_title: documentTitle,
+      document_path: documentPath,
+      selected_text: selectedText,
+    });
+    useUIStore.getState().setDialogSidecarOpen(true);
   };
 
   const openReviewsCount =
@@ -437,6 +460,18 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({ editor, provider, 
         title="Add review comment on selected text"
       >
         <MessageSquare className="w-3.5 h-3.5" />
+      </button>
+
+      {/* Ask Agent */}
+      <button
+        type="button"
+        data-testid="toolbar-ask-agent-btn"
+        disabled={!hasSelection}
+        onClick={handleToolbarAskAgent}
+        className={btnClass(false) + ' disabled:opacity-30 text-amber-600 dark:text-amber-400'}
+        title="Ask your AI agent about selected text"
+      >
+        <Sparkles className="w-3.5 h-3.5" />
       </button>
 
       {/* Suggesting Mode Toggle */}
