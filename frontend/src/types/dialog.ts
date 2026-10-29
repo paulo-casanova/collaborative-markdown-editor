@@ -62,3 +62,24 @@ export interface DiffProposal {
   diff: string;
   applied?: boolean;
 }
+
+export type AgentActionType =
+  | 'direct_edit'
+  | 'add_suggestion'
+  | 'remove_suggestion'
+  | 'reject_suggestion'
+  | 'accept_suggestion'
+  | 'add_comment'
+  | 'reply_comment'
+  | string;
+
+export interface AgentAction {
+  id: string;
+  dialog_id: string;
+  document_id?: string;
+  action: AgentActionType;
+  payload: Record<string, any>;
+  status: 'applied' | 'pending' | 'failed';
+  error?: string;
+  timestamp: number;
+}

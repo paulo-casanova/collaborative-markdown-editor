@@ -357,4 +357,84 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(useDialogStore.getState().generatingStartTime).not.toBeNull();
     expect(typeof useDialogStore.getState().generatingStartTime).toBe('number');
   });
+
+  it('manages agentActions in DialogStore and updates action statuses', () => {
+    expect(useDialogStore.getState().agentActions).toEqual([]);
+
+    // Add direct_edit action
+    const action1 = {
+      id: 'act-1',
+      dialog_id: 'dlg-1',
+      document_id: 'doc-1',
+      action: 'direct_edit',
+      payload: { diff: '--- a/doc.md\n+++ b/doc.md\n@@ -1 +1 @@\n-old\n+new' },
+      status: 'pending' as const,
+      timestamp: Date.now(),
+    };
+
+    // Add add_suggestion action
+    const action2 = {
+      id: 'act-2',
+      dialog_id: 'dlg-1',
+      document_id: 'doc-1',
+      action: 'add_suggestion',
+      payload: { original_text: 'old text', suggested_text: 'new suggestion' },
+      status: 'pending' as const,
+      timestamp: Date.now(),
+    };
+
+    useDialogStore.setState({ agentActions: [action1, action2] });
+    expect(useDialogStore.getState().agentActions.length).toBe(2);
+
+    // Mark action1 applied
+    useDialogStore.getState().updateAgentActionStatus('act-1', 'applied');
+    expect(useDialogStore.getState().agentActions[0].status).toBe('applied');
+
+    // Mark action2 failed
+    useDialogStore.getState().updateAgentActionStatus('act-2', 'failed', 'Invalid anchor');
+    expect(useDialogStore.getState().agentActions[1].status).toBe('failed');
+    expect(useDialogStore.getState().agentActions[1].error).toBe('Invalid anchor');
+  });
+
+  it('clears agentActions upon selecting or deleting dialogs', async () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-1',
+      agentActions: [
+        {
+          id: 'act-1',
+          dialog_id: 'dlg-1',
+          action: 'add_comment',
+          payload: { content: 'test comment' },
+          status: 'applied',
+          timestamp: Date.now(),
+        },
+      ],
+    });
+
+    vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue([]);
+    await useDialogStore.getState().selectDialog('dlg-2');
+    expect(useDialogStore.getState().agentActions).toEqual([]);
+  });
+
+  it('preserves comments and suggestions inside context snapshot', () => {
+    const comments = [
+      { id: 'c-1', author: 'Alice', content: 'Consider refactoring', status: 'OPEN', quote: 'function foo()' },
+    ];
+    const suggestions = [
+      { id: 's-1', author: 'Bob', original_text: 'let a = 1', suggested_text: 'const a = 1', status: 'PENDING' },
+    ];
+
+    useDialogStore.getState().setContextSnapshot({
+      document_id: 'doc-123',
+      document_title: 'test.md',
+      comments,
+      suggestions,
+    });
+
+    const snap = useDialogStore.getState().contextSnapshot;
+    expect(snap?.comments).toHaveLength(1);
+    expect(snap?.comments[0].content).toBe('Consider refactoring');
+    expect(snap?.suggestions).toHaveLength(1);
+    expect(snap?.suggestions[0].suggested_text).toBe('const a = 1');
+  });
 });

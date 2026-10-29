@@ -152,6 +152,13 @@ async def main():
                 "diff": "--- a/doc\n+++ b/doc\n@@ -1 +1 @@\n-old\n+new"
             }))
             await agent_ws.send(json.dumps({
+                "type": "agent_action",
+                "dialog_id": dialog_id,
+                "document_id": "doc-test-123",
+                "action": "direct_edit",
+                "payload": {"diff": "--- a/doc\n+++ b/doc\n@@ -1 +1 @@\n-old\n+new"}
+            }))
+            await agent_ws.send(json.dumps({
                 "type": "prompt_complete",
                 "dialog_id": dialog_id,
                 "content": "Certainly! Here is the summary."
@@ -171,10 +178,13 @@ async def main():
             frame4 = json.loads(await asyncio.wait_for(browser_ws.recv(), timeout=3.0))
             assert frame4.get("type") == "diff_proposal" and "--- a/doc" in frame4.get("diff", "")
 
+            frame4b = json.loads(await asyncio.wait_for(browser_ws.recv(), timeout=3.0))
+            assert frame4b.get("type") == "agent_action" and frame4b.get("action") == "direct_edit"
+
             frame5 = json.loads(await asyncio.wait_for(browser_ws.recv(), timeout=3.0))
             assert frame5.get("type") == "prompt_complete"
             assert frame5.get("content") == "Certainly! Here is the summary."
-            print("  - All 5 frames received by browser client with exact payload matches.")
+            print("  - All 6 frames received by browser client with exact payload matches.")
 
             # Step 10: Verify assistant message was saved to database
             print("\n[STEP 10] Verifying assistant message was persisted in database...")

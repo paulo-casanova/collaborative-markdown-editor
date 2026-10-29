@@ -11,6 +11,7 @@ import {
   AgentStatus,
   ContextSnapshot,
   DiffProposal,
+  AgentAction,
 } from '../types/dialog';
 import * as dialogApi from '../api/dialogs';
 import { TOKEN_STORAGE_KEY } from '../api/client';
@@ -27,6 +28,7 @@ interface DialogState {
   streamingContent: string;
   activeToolActivity: { tool: string; status: string } | null;
   diffProposals: DiffProposal[];
+  agentActions: AgentAction[];
   contextSnapshot: ContextSnapshot | null;
   pairingModalOpen: boolean;
   ws: WebSocket | null;
@@ -42,6 +44,7 @@ interface DialogState {
   forkDialog: (upToMessageId?: string, customTitle?: string) => Promise<Dialog | null>;
   setContextSnapshot: (snapshot: ContextSnapshot | null) => void;
   clearContextSnapshot: () => void;
+  updateAgentActionStatus: (actionId: string, status: 'applied' | 'failed', error?: string) => void;
   refreshAgentStatus: () => Promise<void>;
   setPairingModalOpen: (open: boolean) => void;
   connectDialogWs: (dialogId: string) => void;
@@ -66,6 +69,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   streamingContent: '',
   activeToolActivity: null,
   diffProposals: [],
+  agentActions: [],
   contextSnapshot: null,
   pairingModalOpen: false,
   ws: null,
@@ -97,6 +101,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       streamingContent: '',
       activeToolActivity: null,
       diffProposals: [],
+      agentActions: [],
       isLoading: true,
       isGenerating: false,
       generatingStartTime: null,
@@ -158,6 +163,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
             streamingContent: '',
             activeToolActivity: null,
             diffProposals: [],
+            agentActions: [],
             isGenerating: false,
             generatingStartTime: null,
           });
@@ -234,6 +240,14 @@ export const useDialogStore = create<DialogState>((set, get) => ({
 
   clearContextSnapshot: () => {
     set({ contextSnapshot: null });
+  },
+
+  updateAgentActionStatus: (actionId: string, status: 'applied' | 'failed', error?: string) => {
+    set((state) => ({
+      agentActions: state.agentActions.map((a) =>
+        a.id === actionId ? { ...a, status, error } : a
+      ),
+    }));
   },
 
   refreshAgentStatus: async () => {
@@ -314,6 +328,21 @@ export const useDialogStore = create<DialogState>((set, get) => ({
               };
               set((state) => ({
                 diffProposals: [...state.diffProposals, proposal],
+              }));
+            }
+          } else if (type === 'agent_action') {
+            if (data.dialog_id === get().activeDialogId && data.action) {
+              const actionRecord: AgentAction = {
+                id: `act-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+                dialog_id: data.dialog_id,
+                document_id: data.document_id,
+                action: data.action,
+                payload: data.payload || {},
+                status: 'pending',
+                timestamp: Date.now(),
+              };
+              set((state) => ({
+                agentActions: [...state.agentActions, actionRecord],
               }));
             }
           } else if (type === 'dialog_truncated') {

@@ -264,28 +264,159 @@ class CMEAgentDaemon:
         if selected_text:
             instructions.append("\n### Active Selection in Document:\n```markdown\n" + selected_text + "\n```")
 
+        comments = context.get("comments", [])
+        if comments and isinstance(comments, list):
+            instructions.append("\n### Active Comments & Review Threads on Document:")
+            for c in comments:
+                if not isinstance(c, dict):
+                    continue
+                c_id = c.get("id", "")
+                author = c.get("author", "User")
+                status = c.get("status", "OPEN")
+                quote = c.get("quote", "")
+                body = c.get("content", "")
+                replies = c.get("replies", [])
+                item_str = f"- Comment ID `{c_id}` [{status}] by {author}: \"{body}\""
+                if quote:
+                    item_str += f" (anchored to text: \"{quote}\")"
+                instructions.append(item_str)
+                for r in replies:
+                    if isinstance(r, dict):
+                        instructions.append(f"  * Reply by {r.get('author', 'User')}: \"{r.get('content', '')}\"")
+
+        suggestions = context.get("suggestions", [])
+        if suggestions and isinstance(suggestions, list):
+            instructions.append("\n### Active Inline Suggestions in Review System:")
+            for s in suggestions:
+                if not isinstance(s, dict):
+                    continue
+                s_id = s.get("id", "")
+                author = s.get("author", "User")
+                status = s.get("status", "PENDING")
+                orig = s.get("original_text", "")
+                sugg = s.get("suggested_text", "")
+                instructions.append(f"- Suggestion ID `{s_id}` [{status}] by {author}: \"{orig}\" -> \"{sugg}\"")
+
         instructions.extend([
             "",
-            "### Instructions for Answering and Proposing Edits:",
-            "1. When the user asks you to edit, correct, fix, update, or refactor a document:",
-            "   - Briefly describe the corrections or improvements you are proposing.",
-            "   - Output your edits as a valid unified diff block inside a ```diff code block.",
-            "   - Use standard diff headers referring to the active file path:",
-            f"     ```diff",
-            f"     --- a/{doc_path or 'document.md'}",
-            f"     +++ b/{doc_path or 'document.md'}",
-            f"     @@ -1,5 +1,5 @@",
-            f"      unchanged context line",
-            f"     -old erroneous line",
-            f"     +corrected replacement line",
-            f"      unchanged context line",
-            f"     ```",
-            "   - CME automatically detects this ```diff block and displays an interactive 'Proposed Changes' card in the user's editor with a 1-click 'Apply Changes' button.",
-            "2. If the user asks a general question, explanation, or query without requesting file modifications, reply directly in standard Markdown without a diff block.",
-            "3. Always maintain markdown formatting, links, and preserve unedited sections faithfully."
+            "### Action Capabilities & How to Respond:",
+            "Choose your response action based on what the user asks:",
+            "",
+            "1. DIRECT EDIT (change text directly with NO approval needed):",
+            "   When the user asks you to fix, edit, change, rewrite, replace, or update text directly:",
+            "   Output a structured ```action block:",
+            "   ```action",
+            "   {",
+            "     \"action\": \"direct_edit\",",
+            f"     \"diff\": \"--- a/{doc_path or 'document.md'}\\n+++ b/{doc_path or 'document.md'}\\n@@ -1,3 +1,3 @@\\n-old text\\n+new text\\n\",",
+            "     \"original_text\": \"old text to replace\",",
+            "     \"replacement_text\": \"new replacement text\"",
+            "   }",
+            "   ```",
+            "   CME automatically applies this edit directly to the document without prompting the user for approval.",
+            "",
+            "2. ADD SUGGESTION (propose an inline suggestion into CME's Review System):",
+            "   When the user asks you to propose, suggest, or draft an alternative phrasing:",
+            "   ```action",
+            "   {",
+            "     \"action\": \"add_suggestion\",",
+            "     \"original_text\": \"exact text in document to replace\",",
+            "     \"suggested_text\": \"your recommended replacement text\"",
+            "   }",
+            "   ```",
+            "",
+            "3. REMOVE / REJECT / ACCEPT SUGGESTIONS:",
+            "   When the user asks to remove, reject, or accept an existing suggestion from the list above:",
+            "   ```action",
+            "   {",
+            "     \"action\": \"reject_suggestion\",",
+            "     \"suggestion_id\": \"<id of the suggestion>\"",
+            "   }",
+            "   ```",
+            "   (Or action=\"accept_suggestion\" to accept and apply the suggestion).",
+            "",
+            "4. ADD COMMENTS (post an anchored review comment):",
+            "   When the user asks you to leave a note, ask a question, or comment on a specific section:",
+            "   ```action",
+            "   {",
+            "     \"action\": \"add_comment\",",
+            "     \"content\": \"your comment message\",",
+            "     \"target_text\": \"exact text in document to anchor to\"",
+            "   }",
+            "   ```",
+            "",
+            "5. RESPOND TO COMMENTS (reply to an existing comment thread):",
+            "   When the user asks you to answer or reply to an existing comment from the list above:",
+            "   ```action",
+            "   {",
+            "     \"action\": \"reply_comment\",",
+            "     \"comment_id\": \"<id of the comment to reply to>\",",
+            "     \"content\": \"your reply text\"",
+            "   }",
+            "   ```",
+            "",
+            "6. GENERAL QUERIES & DIFF PROPOSALS:",
+            "   If the user asks an exploratory question or explanation without modifying files, reply directly in standard Markdown.",
+            "   If the user specifically asks for a diff to preview/review first (e.g. 'show diff', 'propose diff'), output a standard ```diff code block.",
+            "Always include a concise, helpful explanation in Markdown alongside any action blocks you output."
         ])
 
         return "\n".join(instructions)
+
+    async def _dispatch_actions_and_proposals(self, ws, dialog_id: str, context: Dict[str, Any], prompt: str, full_content: str):
+        doc_id = context.get("document_id", "")
+        actions_emitted = 0
+
+        # 1. Parse any ```action or ```json:action blocks
+        action_pattern = re.compile(r"```(?:action|json:action)\s*\n(.*?)\n```", re.DOTALL)
+        for block in action_pattern.findall(full_content):
+            try:
+                parsed = json.loads(block.strip())
+                items = parsed if isinstance(parsed, list) else [parsed]
+                for item in items:
+                    if isinstance(item, dict) and "action" in item:
+                        action_type = item["action"]
+                        await ws.send(json.dumps({
+                            "type": "agent_action",
+                            "dialog_id": dialog_id,
+                            "document_id": doc_id,
+                            "action": action_type,
+                            "payload": item,
+                        }))
+                        actions_emitted += 1
+                        print(f"[ACTION] Dispatched agent_action '{action_type}' for dialog {dialog_id[:8]}")
+            except Exception as e:
+                print(f"[AGENT] Failed to parse action block: {e}", file=sys.stderr)
+
+        # 2. Check for unified diff if no direct_edit was explicitly emitted in action blocks
+        diff_match = re.search(r"```(?:diff)?\n(---.*?\n\+\+\+.*?\n@@.*?)```", full_content, re.DOTALL)
+        if diff_match and actions_emitted == 0:
+            diff_text = diff_match.group(1).strip()
+            lower_prompt = prompt.lower()
+            direct_triggers = ["no approval", "directly", "change", "fix", "replace", "correct", "update", "rewrite", "modify"]
+            proposal_triggers = ["propose", "proposal", "preview", "review", "suggest a diff", "diff only"]
+            is_direct = any(t in lower_prompt for t in direct_triggers) and not any(t in lower_prompt for t in proposal_triggers)
+
+            if is_direct:
+                await ws.send(json.dumps({
+                    "type": "agent_action",
+                    "dialog_id": dialog_id,
+                    "document_id": doc_id,
+                    "action": "direct_edit",
+                    "payload": {
+                        "action": "direct_edit",
+                        "diff": diff_text,
+                    },
+                }))
+                print(f"[ACTION] Dispatched direct_edit (no approval needed) for dialog {dialog_id[:8]}")
+            else:
+                await ws.send(json.dumps({
+                    "type": "diff_proposal",
+                    "dialog_id": dialog_id,
+                    "document_id": doc_id,
+                    "diff": diff_text,
+                }))
+                print(f"[ACTION] Dispatched diff_proposal for dialog {dialog_id[:8]}")
 
     async def handle_prompt_request(self, ws, request: Dict[str, Any]):
         dialog_id = request.get("dialog_id", "")
@@ -384,15 +515,8 @@ class CMEAgentDaemon:
                         except Exception:
                             pass
 
-            # Detect unified diff in markdown
-            diff_match = re.search(r"```(?:diff)?\n(---.*?\n\+\+\+.*?\n@@.*?)```", full_content, re.DOTALL)
-            if diff_match:
-                await ws.send(json.dumps({
-                    "type": "diff_proposal",
-                    "dialog_id": dialog_id,
-                    "document_id": context.get("document_id", ""),
-                    "diff": diff_match.group(1).strip(),
-                }))
+            # Dispatch any structured actions (direct edit, suggestions, comments) or diff proposals
+            await self._dispatch_actions_and_proposals(ws, dialog_id, context, prompt, full_content)
 
             await ws.send(json.dumps({
                 "type": "prompt_complete",
@@ -492,14 +616,8 @@ class CMEAgentDaemon:
                         except Exception:
                             pass
 
-            diff_match = re.search(r"```(?:diff)?\n(---.*?\n\+\+\+.*?\n@@.*?)```", full_content, re.DOTALL)
-            if diff_match:
-                await ws.send(json.dumps({
-                    "type": "diff_proposal",
-                    "dialog_id": dialog_id,
-                    "document_id": context.get("document_id", ""),
-                    "diff": diff_match.group(1).strip(),
-                }))
+            # Dispatch any structured actions (direct edit, suggestions, comments) or diff proposals
+            await self._dispatch_actions_and_proposals(ws, dialog_id, context, prompt, full_content)
 
             await ws.send(json.dumps({
                 "type": "prompt_complete",
@@ -576,14 +694,8 @@ class CMEAgentDaemon:
                     except Exception:
                         pass
 
-            diff_match = re.search(r"```(?:diff)?\n(---.*?\n\+\+\+.*?\n@@.*?)```", full_content, re.DOTALL)
-            if diff_match:
-                await ws.send(json.dumps({
-                    "type": "diff_proposal",
-                    "dialog_id": dialog_id,
-                    "document_id": context.get("document_id", ""),
-                    "diff": diff_match.group(1).strip(),
-                }))
+            # Dispatch any structured actions (direct edit, suggestions, comments) or diff proposals
+            await self._dispatch_actions_and_proposals(ws, dialog_id, context, prompt, full_content)
 
             await ws.send(json.dumps({
                 "type": "prompt_complete",
@@ -657,14 +769,8 @@ class CMEAgentDaemon:
                         except Exception:
                             pass
 
-            diff_match = re.search(r"```(?:diff)?\n(---.*?\n\+\+\+.*?\n@@.*?)```", full_content, re.DOTALL)
-            if diff_match:
-                await ws.send(json.dumps({
-                    "type": "diff_proposal",
-                    "dialog_id": dialog_id,
-                    "document_id": context.get("document_id", ""),
-                    "diff": diff_match.group(1).strip(),
-                }))
+            # Dispatch any structured actions (direct edit, suggestions, comments) or diff proposals
+            await self._dispatch_actions_and_proposals(ws, dialog_id, context, prompt, full_content)
 
             await ws.send(json.dumps({
                 "type": "prompt_complete",
@@ -733,14 +839,105 @@ class CMEAgentDaemon:
             }))
             await asyncio.sleep(0.04)
 
-        if any(w in prompt.lower() for w in ["refactor", "diff", "edit", "change", "replace", "fix", "correct"]):
-            diff_text = f"--- a/{doc_path}\n+++ b/{doc_path}\n@@ -1,3 +1,3 @@\n-Draft section with errors\n+Corrected section: verified by local agent\n"
+        lower_p = prompt.lower()
+        action_markdown = ""
+
+        if any(w in lower_p for w in ["suggest", "suggestion", "propose alternative"]):
+            orig = selected_text.strip() if selected_text else "Draft section with errors"
+            sugg = f"Improved: {orig}" if orig != "Draft section with errors" else "Corrected section: verified by local agent"
+            action_markdown = (
+                f"\nI have proposed an inline suggestion into the review system:\n\n"
+                f"```action\n"
+                f"{{\n"
+                f'  "action": "add_suggestion",\n'
+                f'  "original_text": {json.dumps(orig)},\n'
+                f'  "suggested_text": {json.dumps(sugg)}\n'
+                f"}}\n"
+                f"```\n"
+            )
+        elif any(w in lower_p for w in ["reject", "remove suggestion", "delete suggestion"]):
+            suggestions = context.get("suggestions", [])
+            sugg_id = suggestions[0].get("id") if (suggestions and isinstance(suggestions[0], dict)) else "sugg-demo-1"
+            action_markdown = (
+                f"\nI have rejected the suggestion as requested:\n\n"
+                f"```action\n"
+                f"{{\n"
+                f'  "action": "reject_suggestion",\n'
+                f'  "suggestion_id": {json.dumps(sugg_id)}\n'
+                f"}}\n"
+                f"```\n"
+            )
+        elif any(w in lower_p for w in ["accept suggestion"]):
+            suggestions = context.get("suggestions", [])
+            sugg_id = suggestions[0].get("id") if (suggestions and isinstance(suggestions[0], dict)) else "sugg-demo-1"
+            action_markdown = (
+                f"\nI have accepted and applied the suggestion:\n\n"
+                f"```action\n"
+                f"{{\n"
+                f'  "action": "accept_suggestion",\n'
+                f'  "suggestion_id": {json.dumps(sugg_id)}\n'
+                f"}}\n"
+                f"```\n"
+            )
+        elif any(w in lower_p for w in ["reply", "respond to comment", "answer comment"]):
+            comments = context.get("comments", [])
+            comm_id = comments[0].get("id") if (comments and isinstance(comments[0], dict)) else "comm-demo-1"
+            reply_msg = "Thanks for the feedback. I have verified this change meets the specifications."
+            action_markdown = (
+                f"\nI have replied to the comment thread:\n\n"
+                f"```action\n"
+                f"{{\n"
+                f'  "action": "reply_comment",\n'
+                f'  "comment_id": {json.dumps(comm_id)},\n'
+                f'  "content": {json.dumps(reply_msg)}\n'
+                f"}}\n"
+                f"```\n"
+            )
+        elif any(w in lower_p for w in ["add comment", "comment on", "leave a comment", "leave a note"]):
+            target = selected_text.strip() if selected_text else "Draft section with errors"
+            comment_msg = "Please consider reviewing this section for clarity and adherence to the style guide."
+            action_markdown = (
+                f"\nI have added a review comment:\n\n"
+                f"```action\n"
+                f"{{\n"
+                f'  "action": "add_comment",\n'
+                f'  "content": {json.dumps(comment_msg)},\n'
+                f'  "target_text": {json.dumps(target)}\n'
+                f"}}\n"
+                f"```\n"
+            )
+        elif any(w in lower_p for w in ["propose", "proposal", "preview diff", "show diff"]):
+            diff_text = f"--- a/{doc_path}\n+++ b/{doc_path}\n@@ -1,3 +1,3 @@\n-Draft section with errors\n+Proposed improvement: preview before applying\n"
+            action_markdown = (
+                f"\nHere is a proposed diff for your review:\n\n"
+                f"```diff\n{diff_text}```\n"
+            )
+        elif any(w in lower_p for w in ["direct", "change", "replace", "fix", "edit", "no approval", "correct", "refactor"]):
+            orig = selected_text.strip() if selected_text else "Draft section with errors"
+            rep = "Corrected section: verified by local agent"
+            diff_text = f"--- a/{doc_path}\n+++ b/{doc_path}\n@@ -1,3 +1,3 @@\n-{orig}\n+{rep}\n"
+            action_markdown = (
+                f"\nI have applied the edits directly to your document (no approval needed):\n\n"
+                f"```action\n"
+                f"{{\n"
+                f'  "action": "direct_edit",\n'
+                f'  "diff": {json.dumps(diff_text)},\n'
+                f'  "original_text": {json.dumps(orig)},\n'
+                f'  "replacement_text": {json.dumps(rep)}\n'
+                f"}}\n"
+                f"```\n"
+            )
+
+        if action_markdown:
+            full_content += action_markdown
             await ws.send(json.dumps({
-                "type": "diff_proposal",
+                "type": "token_stream",
                 "dialog_id": dialog_id,
-                "document_id": context.get("document_id", ""),
-                "diff": diff_text,
+                "delta": action_markdown,
             }))
+
+        # Dispatch any structured actions or diff proposals
+        await self._dispatch_actions_and_proposals(ws, dialog_id, context, prompt, full_content)
 
         await ws.send(json.dumps({
             "type": "prompt_complete",

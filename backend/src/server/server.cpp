@@ -5448,7 +5448,7 @@ Result<void> Server::start() {
                     std::string type = j.value("type", "");
                     if (type == "ping") {
                         ws->send("{\"type\":\"pong\"}", uWS::OpCode::TEXT);
-                    } else if (type == "token_stream" || type == "tool_activity" || type == "diff_proposal") {
+                    } else if (type == "token_stream" || type == "tool_activity" || type == "diff_proposal" || type == "agent_action") {
                         std::string dialog_id = j.value("dialog_id", "");
                         if (!dialog_id.empty() && agent_manager_) {
                             agent_manager_->send_to_dialog(dialog_id, std::string(message));

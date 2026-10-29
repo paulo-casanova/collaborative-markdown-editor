@@ -21,7 +21,11 @@ import {
 } from 'lucide-react';
 import { useDialogStore } from '../../stores/dialogStore';
 import { useUIStore } from '../../stores/uiStore';
+import { useReviewStore } from '../../stores/reviewStore';
+import * as reviewApi from '../../api/reviews';
+import { createQuoteSelector } from '../../review/textAnchoring';
 import { DiffProposalCard } from './DiffProposalCard';
+import { AgentActionCard } from './AgentActionCard';
 import { ContextSnapshot } from '../../types/dialog';
 
 interface DialogSidecarProps {
@@ -52,6 +56,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     streamingContent,
     activeToolActivity,
     diffProposals,
+    agentActions,
     contextSnapshot,
     clearContextSnapshot,
     loadDialogs,
@@ -62,6 +67,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     resetDialogToMessage,
     forkDialog,
     sendMessage,
+    updateAgentActionStatus,
     setPairingModalOpen,
     refreshAgentStatus,
   } = useDialogStore();
@@ -146,6 +152,29 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     const cleanContent =
       sanitizeContent(contextSnapshot?.document_content) || sanitizeContent(documentContent);
 
+    // Package active review comments and suggestions so the assistant can reference them
+    const reviewState = useReviewStore.getState();
+    const commentsSnapshot = reviewState.comments.map((c) => ({
+      id: c.id,
+      author: c.author?.display_name || c.author?.username || 'User',
+      status: c.status,
+      content: c.content,
+      quote: c.anchor?.quote?.exact || '',
+      replies: (c.replies || []).map((r) => ({
+        id: r.id,
+        author: r.author?.display_name || r.author?.username || 'User',
+        content: r.content,
+      })),
+    }));
+
+    const suggestionsSnapshot = reviewState.suggestions.map((s) => ({
+      id: s.id,
+      author: s.author?.display_name || s.author?.username || 'User',
+      status: s.status,
+      original_text: s.original_text,
+      suggested_text: s.suggested_text,
+    }));
+
     const effectiveSnapshot: ContextSnapshot | undefined = contextSnapshot
       ? {
           ...contextSnapshot,
@@ -153,6 +182,8 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           document_title: contextSnapshot.document_title || documentTitle,
           document_path: contextSnapshot.document_path || documentPath,
           document_content: cleanContent,
+          comments: commentsSnapshot,
+          suggestions: suggestionsSnapshot,
         }
       : (documentId || documentPath || documentTitle
           ? {
@@ -160,6 +191,8 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
               document_title: documentTitle,
               document_path: documentPath,
               document_content: cleanContent,
+              comments: commentsSnapshot,
+              suggestions: suggestionsSnapshot,
             }
           : undefined);
 
@@ -176,6 +209,157 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
       void handleSend();
     }
   };
+
+  // Automatically execute pending agent actions as they arrive
+  useEffect(() => {
+    const pendingActions = agentActions.filter((a) => a.status === 'pending');
+    if (pendingActions.length === 0) return;
+
+    for (const act of pendingActions) {
+      void (async () => {
+        try {
+          const payload = act.payload || {};
+          const docText = documentContent || '';
+          const targetDocId = act.document_id || documentId;
+
+          switch (act.action) {
+            case 'direct_edit': {
+              const diff =
+                payload.diff ||
+                (payload.original_text && payload.replacement_text
+                  ? `--- a/${documentPath || 'document.md'}\n+++ b/${documentPath || 'document.md'}\n@@ -1,1 +1,1 @@\n-${payload.original_text}\n+${payload.replacement_text}\n`
+                  : '');
+              if (diff && onApplyDiff) {
+                onApplyDiff(diff);
+              }
+              updateAgentActionStatus(act.id, 'applied');
+              break;
+            }
+
+            case 'add_suggestion': {
+              if (!targetDocId) {
+                updateAgentActionStatus(act.id, 'failed', 'No active document ID for suggestion');
+                break;
+              }
+              const orig = payload.original_text || '';
+              const sugg = payload.suggested_text || '';
+              let anchor: any = payload.anchor;
+              if (!anchor) {
+                const idx = orig ? docText.indexOf(orig) : -1;
+                const start = idx >= 0 ? idx : 0;
+                const end = idx >= 0 ? idx + orig.length : 0;
+                anchor = {
+                  type: 'dual',
+                  quote: createQuoteSelector(docText, start, end),
+                  offset: start,
+                  length: end - start,
+                };
+              }
+              const created = await reviewApi.createSuggestion(targetDocId, orig, sugg, anchor);
+              if (created) {
+                useReviewStore.setState((state) => ({
+                  suggestions: [created, ...state.suggestions.filter((s) => s.id !== created.id)],
+                  isSidebarOpen: true,
+                  activeItemId: created.id,
+                }));
+                updateAgentActionStatus(act.id, 'applied');
+              } else {
+                updateAgentActionStatus(act.id, 'failed', 'Failed to create suggestion');
+              }
+              break;
+            }
+
+            case 'reject_suggestion':
+            case 'remove_suggestion': {
+              const suggId = payload.suggestion_id;
+              if (suggId) {
+                await useReviewStore.getState().rejectSuggestion(suggId);
+                updateAgentActionStatus(act.id, 'applied');
+              } else {
+                updateAgentActionStatus(act.id, 'failed', 'No suggestion_id provided');
+              }
+              break;
+            }
+
+            case 'accept_suggestion': {
+              const suggId = payload.suggestion_id;
+              if (suggId) {
+                const targetSugg = useReviewStore.getState().suggestions.find((s) => s.id === suggId);
+                if (targetSugg && onApplyDiff) {
+                  const diff = `--- a/${documentPath || 'document.md'}\n+++ b/${documentPath || 'document.md'}\n@@ -1,1 +1,1 @@\n-${targetSugg.original_text}\n+${targetSugg.suggested_text}\n`;
+                  onApplyDiff(diff);
+                }
+                await useReviewStore.getState().acceptSuggestion(suggId);
+                updateAgentActionStatus(act.id, 'applied');
+              } else {
+                updateAgentActionStatus(act.id, 'failed', 'No suggestion_id provided');
+              }
+              break;
+            }
+
+            case 'add_comment': {
+              if (!targetDocId) {
+                updateAgentActionStatus(act.id, 'failed', 'No active document ID for comment');
+                break;
+              }
+              const commentContent = payload.content || '';
+              const target = payload.target_text || '';
+              let anchor: any = payload.anchor;
+              if (!anchor) {
+                const idx = target ? docText.indexOf(target) : -1;
+                const start = idx >= 0 ? idx : 0;
+                const end = idx >= 0 ? idx + target.length : 0;
+                anchor = {
+                  type: 'dual',
+                  quote: createQuoteSelector(docText, start, end),
+                  offset: start,
+                  length: end - start,
+                };
+              }
+              const created = await reviewApi.createComment(targetDocId, commentContent, anchor);
+              if (created) {
+                useReviewStore.setState((state) => ({
+                  comments: [created, ...state.comments.filter((c) => c.id !== created.id)],
+                  isSidebarOpen: true,
+                  activeItemId: created.id,
+                }));
+                updateAgentActionStatus(act.id, 'applied');
+              } else {
+                updateAgentActionStatus(act.id, 'failed', 'Failed to create comment');
+              }
+              break;
+            }
+
+            case 'reply_comment': {
+              const commentId = payload.comment_id;
+              const replyText = payload.content || '';
+              if (commentId && replyText) {
+                await useReviewStore.getState().postReply(commentId, replyText);
+                updateAgentActionStatus(act.id, 'applied');
+              } else {
+                updateAgentActionStatus(act.id, 'failed', 'Missing comment_id or content');
+              }
+              break;
+            }
+
+            default:
+              updateAgentActionStatus(act.id, 'applied');
+              break;
+          }
+        } catch (err: any) {
+          console.warn('[DialogSidecar] Error executing agent action:', err);
+          updateAgentActionStatus(act.id, 'failed', err?.message || String(err));
+        }
+      })();
+    }
+  }, [
+    agentActions,
+    documentId,
+    documentPath,
+    documentContent,
+    onApplyDiff,
+    updateAgentActionStatus,
+  ]);
 
   const currentDialog = dialogs.find((d) => d.id === activeDialogId);
 
@@ -576,6 +760,11 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
             </div>
           </div>
         )}
+
+        {/* Executed Agent Actions */}
+        {agentActions.map((act) => (
+          <AgentActionCard key={act.id} action={act} />
+        ))}
 
         {/* Proposed Diffs */}
         {diffProposals.map((dp) => (
