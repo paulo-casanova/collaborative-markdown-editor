@@ -5367,37 +5367,63 @@ Result<void> Server::start() {
             std::string sec_proto = std::string(req->getHeader("sec-websocket-protocol"));
             std::string sec_ext = std::string(req->getHeader("sec-websocket-extensions"));
 
-            std::string auth_hdr = std::string(req->getHeader("authorization"));
-            std::string token;
-            if (!auth_hdr.empty()) {
-                auto extracted = auth::extract_bearer_token(auth_hdr);
-                if (extracted.has_value()) {
-                    token = *extracted;
+            std::string user_id;
+            bool authenticated = false;
+
+            // 1. Delegated auth: when configured, trust the proxy's identity header and skip agent token
+            if (config_.authn.provider == "delegated" && delegated_provider_) {
+                std::string del_header_name = config_.authn.delegated_header;
+                std::string del_email_name = config_.authn.delegated_email_header;
+                for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+                std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+                std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+                if (!remote_user_hdr.empty()) {
+                    auto del_res = delegated_provider_->authenticate(remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+                    if (del_res.has_value() && del_res.value().has_value()) {
+                        user_id = del_res.value()->user_id;
+                        authenticated = true;
+                    }
                 }
             }
-            if (token.empty()) {
-                token = std::string(req->getQuery("token"));
-            }
-            if (token.empty()) {
-                token = std::string(req->getQuery("access_token"));
-            }
 
-            if (token.empty()) {
-                res->writeStatus("401 Unauthorized");
-                res->writeHeader("Content-Type", "application/json");
-                res->end("{\"error\":\"Missing agent token\"}");
-                return;
-            }
+            // 2. Or else read the agent token from query string before Authorization
+            if (!authenticated) {
+                std::string token = std::string(req->getQuery("token"));
+                if (token.empty()) {
+                    token = std::string(req->getQuery("access_token"));
+                }
+                if (token.empty()) {
+                    std::string auth_hdr = std::string(req->getHeader("authorization"));
+                    if (!auth_hdr.empty()) {
+                        auto extracted = auth::extract_bearer_token(auth_hdr);
+                        if (extracted.has_value()) {
+                            token = *extracted;
+                        } else {
+                            token = auth_hdr;
+                        }
+                    }
+                }
 
-            auto val_res = dialog_service_->validate_agent_token(token);
-            if (!val_res.has_value() || !val_res.value().has_value()) {
-                res->writeStatus("401 Unauthorized");
-                res->writeHeader("Content-Type", "application/json");
-                res->end("{\"error\":\"Invalid or revoked agent token\"}");
-                return;
-            }
+                if (token.empty()) {
+                    res->writeStatus("401 Unauthorized");
+                    res->writeHeader("Content-Type", "application/json");
+                    res->end("{\"error\":\"Missing agent token\"}");
+                    return;
+                }
 
-            std::string user_id = val_res.value().value();
+                auto val_res = dialog_service_->validate_agent_token(token);
+                if (!val_res.has_value() || !val_res.value().has_value()) {
+                    res->writeStatus("401 Unauthorized");
+                    res->writeHeader("Content-Type", "application/json");
+                    res->end("{\"error\":\"Invalid or revoked agent token\"}");
+                    return;
+                }
+
+                user_id = val_res.value().value();
+            }
             std::string agent_name = std::string(req->getHeader("x-agent-name"));
             if (agent_name.empty()) {
                 agent_name = std::string(req->getQuery("name"));

@@ -202,12 +202,48 @@ int main() {
     }
     std::cout << "  - Server daemon stopped.\n";
 
+    // Step 8: Test Delegated Auth Mode
+    std::cout << "\n[STEP 8] Testing Delegated Auth mode on Agent Gateway WebSocket...\n";
+    {
+        config::AppConfig del_cfg;
+        del_cfg.server.bind = "127.0.0.1";
+        del_cfg.server.port = 18102;
+        del_cfg.storage.root_path = test_storage.string();
+        del_cfg.database.url = db_url;
+        del_cfg.database.lease_enabled = false;
+        del_cfg.authn.provider = "delegated";
+        del_cfg.authn.delegated_header = "X-Remote-User";
+        del_cfg.authn.delegated_email_header = "X-Remote-Email";
+
+        auto del_server = std::make_shared<server::Server>(del_cfg);
+        std::thread del_server_thread([del_server]() {
+            auto res = del_server->start();
+            (void)res;
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        std::ostringstream del_cmd;
+        del_cmd << "python3 tests/backend/agent_gateway_runner.py "
+                << "http://127.0.0.1:18102 "
+                << "delegated_mode "
+                << "dummy_session "
+                << "dummy_dialog";
+        int del_ret = std::system(del_cmd.str().c_str());
+        assert(del_ret == 0);
+
+        del_server->stop();
+        if (del_server_thread.joinable()) {
+            del_server_thread.join();
+        }
+        std::cout << "  - Delegated Auth mode verified successfully.\n";
+    }
+
     // Cleanup DB & Storage
     {
         auto clean_conn = pool->acquire();
         if (clean_conn.has_value()) {
             pqxx::work tx(clean_conn->get());
-            tx.exec("DELETE FROM users WHERE username = 'agent_ws_alice';");
+            tx.exec("DELETE FROM users WHERE username IN ('agent_ws_alice', 'delegated_bob');");
             tx.commit();
         }
     }

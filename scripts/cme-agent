@@ -12,6 +12,10 @@ import time
 import socket
 import argparse
 import asyncio
+import subprocess
+import inspect
+import shlex
+import shutil
 import re
 import urllib.request
 import urllib.parse
@@ -29,8 +33,8 @@ class CMEAgentDaemon:
     def __init__(
         self,
         server_url: str,
-        token: str,
-        agent_name: str,
+        token: Optional[str] = None,
+        agent_name: str = f"{socket.gethostname()}-agent",
         provider: str = "auto",
         model: Optional[str] = None,
         api_key: Optional[str] = None,
@@ -38,9 +42,12 @@ class CMEAgentDaemon:
         ollama_host: str = "http://localhost:11434",
         allowed_tools: Optional[List[str]] = None,
         workspace_dir: Optional[str] = None,
+        auth_command: Optional[str] = None,
+        headers: Optional[List[str]] = None,
+        command: Optional[str] = None,
     ):
         self.server_url = server_url.rstrip("/")
-        self.token = token
+        self.token = token or ""
         self.agent_name = agent_name
         self.provider = provider.lower()
         self.model = model
@@ -49,7 +56,19 @@ class CMEAgentDaemon:
         self.ollama_host = ollama_host.rstrip("/")
         self.allowed_tools = set(allowed_tools or ["git", "grep", "filesystem"])
         self.workspace_dir = os.path.abspath(workspace_dir or os.getcwd())
+        self.auth_command = auth_command
+        self.headers = headers or []
+        self.command = command
         self.running = True
+
+        # Canonicalize provider aliases for command-line agent
+        if self.provider in ("cli", "claude", "cmd", "exec"):
+            self.provider = "command"
+        if self.command and self.provider == "auto":
+            self.provider = "command"
+
+        if self.provider == "command" and not self.command:
+            self.command = "claude -p --output-format stream-json --verbose"
 
         # Default model selection based on provider
         if not self.model:
@@ -59,12 +78,19 @@ class CMEAgentDaemon:
                 self.model = "claude-3-5-sonnet-20241022"
             elif self.provider == "openai":
                 self.model = "gpt-4o"
+            elif self.provider == "command":
+                self.model = "command-cli"
             else:
                 self.model = "llama3.1"
 
     def _detect_provider(self) -> str:
+        if self.provider in ("cli", "claude", "cmd", "exec"):
+            return "command"
         if self.provider != "auto":
             return self.provider
+
+        if self.command:
+            return "command"
 
         # 1. Check Google Gemini
         if self.api_key or os.environ.get("GEMINI_API_KEY"):
@@ -104,8 +130,30 @@ class CMEAgentDaemon:
 
     def validate_provider(self):
         """Validates that explicitly selected provider has required credentials/connectivity before starting."""
+        if not self.token and not self.auth_command and not self.headers:
+            print(
+                "\n[FATAL] Missing credentials: You must supply either --token, --auth-command, or --header (e.g. X-Remote-User for delegated auth).\n",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
         prov = self.provider.lower()
         if prov in ("auto", "echo"):
+            return
+
+        if prov == "command":
+            cmd = self.command or "claude -p --output-format stream-json --verbose"
+            try:
+                parts = shlex.split(cmd)
+                prog = parts[0] if parts else ""
+                if prog and not shutil.which(prog):
+                    print(
+                        f"\n[WARN] Command-line executable '{prog}' was not found in PATH.\n"
+                        f"  Please ensure '{prog}' is installed and accessible in your shell environment.\n",
+                        file=sys.stderr,
+                    )
+            except Exception:
+                pass
             return
 
         if prov == "gemini":
@@ -155,15 +203,38 @@ class CMEAgentDaemon:
                 )
                 sys.exit(1)
         elif prov not in ("custom",):
-            print(f"\n[FATAL] Unknown provider '{self.provider}'. Supported providers: gemini, ollama, anthropic, openai, custom, echo\n", file=sys.stderr)
+            print(f"\n[FATAL] Unknown provider '{self.provider}'. Supported providers: gemini, ollama, anthropic, openai, command, custom, echo\n", file=sys.stderr)
             sys.exit(1)
+
+    def _fetch_token_from_auth_command(self) -> str:
+        if not self.auth_command:
+            return ""
+        try:
+            res = subprocess.run(
+                self.auth_command,
+                shell=True,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=30.0,
+            )
+            tok = res.stdout.strip()
+            if not tok:
+                print(f"[AGENT] Warning: Auth command '{self.auth_command}' returned empty token.", file=sys.stderr)
+            return tok
+        except subprocess.CalledProcessError as e:
+            print(f"[AGENT] Error running auth command (code {e.returncode}): {e.stderr.strip()}", file=sys.stderr)
+            raise
+        except Exception as e:
+            print(f"[AGENT] Failed to run auth command '{self.auth_command}': {e}", file=sys.stderr)
+            raise
 
     async def run(self):
         ws_base = self.server_url.replace("http://", "ws://").replace("https://", "wss://")
-        ws_endpoint = f"{ws_base}/api/v1/agents/ws?token={urllib.parse.quote(self.token)}&name={urllib.parse.quote(self.agent_name)}"
 
         active_prov = self._detect_provider()
-        effective_model = self.model or ("gemini-1.5-flash" if active_prov == "gemini" else "llama3.1")
+        effective_model = self.model or ("gemini-1.5-flash" if active_prov == "gemini" else ("command-cli" if active_prov == "command" else "llama3.1"))
 
         print("=" * 60)
         print("  CME Local Agent Daemon (cme-agent)")
@@ -172,19 +243,62 @@ class CMEAgentDaemon:
         print(f"  Workspace: {self.workspace_dir}")
         print(f"  Tools:     {', '.join(sorted(self.allowed_tools))}")
         print(f"  Provider:  {active_prov} ({effective_model})")
+        if active_prov == "command":
+            print(f"  Command:   {self.command or 'claude -p --output-format stream-json --verbose'}")
         if self.api_base:
             print(f"  API Base:  {self.api_base}")
+        if self.auth_command:
+            print(f"  Auth Cmd:  {self.auth_command}")
+        if self.headers:
+            print(f"  Headers:   {len(self.headers)} custom header(s)")
         print("=" * 60)
+
+        # Parse static headers from CLI
+        parsed_headers = {}
+        for h in self.headers:
+            if ":" in h:
+                k, v = h.split(":", 1)
+                parsed_headers[k.strip()] = v.strip()
+            elif "=" in h:
+                k, v = h.split("=", 1)
+                parsed_headers[k.strip()] = v.strip()
 
         backoff = 1.0
         while self.running:
             try:
+                current_token = self.token
+                if self.auth_command:
+                    try:
+                        current_token = self._fetch_token_from_auth_command()
+                        print(f"[AGENT] Retrieved fresh agent token from auth-command.")
+                    except Exception as e:
+                        print(f"[AGENT] Auth command failed: {e}. Retrying in {backoff:.1f}s...")
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 1.5, 30.0)
+                        continue
+
+                query_params = {"name": self.agent_name}
+                if current_token:
+                    query_params["token"] = current_token
+
+                ws_endpoint = f"{ws_base}/api/v1/agents/ws?{urllib.parse.urlencode(query_params)}"
+
+                connect_kwargs = {
+                    "ping_interval": 20,
+                    "ping_timeout": 20,
+                    "max_size": 16 * 1024 * 1024,
+                }
+                if parsed_headers:
+                    sig = inspect.signature(websockets.connect)
+                    if "additional_headers" in sig.parameters:
+                        connect_kwargs["additional_headers"] = parsed_headers
+                    else:
+                        connect_kwargs["extra_headers"] = parsed_headers
+
                 print(f"\n[AGENT] Connecting outbound to CME gateway at {self.server_url}...")
                 async with websockets.connect(
                     ws_endpoint,
-                    ping_interval=20,
-                    ping_timeout=20,
-                    max_size=16 * 1024 * 1024,
+                    **connect_kwargs,
                 ) as ws:
                     backoff = 1.0
                     print(f"[AGENT] Connection established. Listening for prompt requests...")
@@ -448,6 +562,8 @@ class CMEAgentDaemon:
             await self._stream_openai_compatible(ws, dialog_id, prompt, history, context)
         elif active_prov == "anthropic":
             await self._stream_anthropic(ws, dialog_id, prompt, history, context)
+        elif active_prov == "command":
+            await self._stream_command(ws, dialog_id, prompt, history, context)
         else:
             await self._stream_echo(ws, dialog_id, prompt, history, context)
 
@@ -957,10 +1073,190 @@ class CMEAgentDaemon:
         }))
         print(f"[PROMPT] Completed response for dialog {dialog_id[:8]}")
 
+    async def _stream_command(self, ws, dialog_id: str, prompt: str, history: List[Any], context: Dict[str, Any]):
+        cmd_template = self.command or "claude -p --output-format stream-json --verbose"
+
+        # Build full prompt containing system instructions, context, history, and user request
+        system_inst = self._build_system_instructions(context)
+        prompt_parts = []
+        if system_inst:
+            prompt_parts.append(system_inst)
+            prompt_parts.append("\n---\n")
+
+        if history:
+            prompt_parts.append("### Conversation History:\n")
+            for msg in history:
+                sender = msg.get("sender_type", msg.get("role", "user")).upper()
+                content = msg.get("content", "")
+                if content:
+                    prompt_parts.append(f"{sender}: {content}\n")
+            prompt_parts.append("\n---\n")
+
+        prompt_parts.append(f"User Request:\n{prompt}\n")
+        full_input = "\n".join(prompt_parts)
+
+        # Check if template has placeholder {prompt}
+        has_prompt_slot = "{prompt}" in cmd_template
+        if has_prompt_slot:
+            cmd_exec = cmd_template.replace("{prompt}", shlex.quote(full_input))
+            stdin_data = None
+        else:
+            cmd_exec = cmd_template
+            stdin_data = full_input.encode("utf-8")
+
+        print(f"[AGENT] Spawning CLI agent command: {cmd_template[:100]}...")
+
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        if "NO_COLOR" not in env:
+            env["NO_COLOR"] = "1"
+
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                cmd_exec,
+                stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=self.workspace_dir,
+                env=env,
+            )
+
+            if stdin_data is not None:
+                try:
+                    proc.stdin.write(stdin_data)
+                    await proc.stdin.drain()
+                    proc.stdin.close()
+                except Exception as e:
+                    print(f"[AGENT] Error writing to command stdin: {e}", file=sys.stderr)
+
+            full_content = ""
+            streamed_chunks = False
+
+            while True:
+                line_bytes = await proc.stdout.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", errors="replace").rstrip("\r\n")
+                if not line.strip():
+                    continue
+
+                delta_text = ""
+                try:
+                    evt = json.loads(line)
+                    if isinstance(evt, dict):
+                        evt_type = evt.get("type", "")
+
+                        # 1. Claude stream_event (with text_delta, thinking_delta, etc.)
+                        if evt_type == "stream_event":
+                            inner = evt.get("event", {})
+                            inner_type = inner.get("type", "")
+                            if inner_type == "content_block_delta":
+                                inner_delta = inner.get("delta", {})
+                                delta_text = inner_delta.get("text", "")
+                                if not delta_text and "thinking" in inner_delta:
+                                    await ws.send(json.dumps({
+                                        "type": "tool_activity",
+                                        "dialog_id": dialog_id,
+                                        "tool": "thinking",
+                                        "status": inner_delta.get("thinking", "")[:80],
+                                    }))
+
+                        # 2. Direct content_block_delta (SSE/Messages API style)
+                        elif evt_type == "content_block_delta":
+                            delta_obj = evt.get("delta", {})
+                            delta_text = delta_obj.get("text", "")
+
+                        # 3. Tool use / tool execution event
+                        elif evt_type in ("tool_use", "tool_call"):
+                            tool_name = evt.get("name") or evt.get("tool") or "cli_tool"
+                            await ws.send(json.dumps({
+                                "type": "tool_activity",
+                                "dialog_id": dialog_id,
+                                "tool": tool_name,
+                                "status": "executing",
+                            }))
+
+                        # 4. Assistant message chunk or completion
+                        elif evt_type == "assistant":
+                            if not streamed_chunks:
+                                msg = evt.get("message", {})
+                                content = msg.get("content", [])
+                                if isinstance(content, list):
+                                    texts = [c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text"]
+                                    delta_text = "".join(texts)
+                                elif isinstance(content, str):
+                                    delta_text = content
+                                elif "delta" in evt:
+                                    delta_text = evt.get("delta", {}).get("text", "")
+
+                        # 5. Generic delta or chunk or text
+                        elif "delta" in evt:
+                            d = evt["delta"]
+                            delta_text = d.get("text", "") if isinstance(d, dict) else str(d)
+                        elif "chunk" in evt:
+                            delta_text = str(evt["chunk"])
+                        elif "text" in evt and not streamed_chunks:
+                            delta_text = str(evt["text"])
+                        elif evt_type == "result" and not streamed_chunks:
+                            res = evt.get("result") or evt.get("output")
+                            if isinstance(res, str):
+                                delta_text = res
+
+                except json.JSONDecodeError:
+                    # Plain text fallback from CLI tool
+                    delta_text = line + "\n"
+
+                if delta_text:
+                    full_content += delta_text
+                    streamed_chunks = True
+                    await ws.send(json.dumps({
+                        "type": "token_stream",
+                        "dialog_id": dialog_id,
+                        "delta": delta_text,
+                    }))
+
+            stderr_bytes = await proc.stderr.read()
+            await proc.wait()
+
+            if proc.returncode != 0:
+                err_msg = stderr_bytes.decode("utf-8", errors="replace").strip()
+                print(f"[AGENT] Command agent exited with error code {proc.returncode}: {err_msg}", file=sys.stderr)
+                if not full_content:
+                    full_content = f"**Error running command agent (exit code {proc.returncode}):**\n```\n{err_msg or 'Unknown error'}\n```"
+                    await ws.send(json.dumps({
+                        "type": "token_stream",
+                        "dialog_id": dialog_id,
+                        "delta": full_content,
+                    }))
+
+            # Dispatch any structured actions (direct edit, suggestions, comments) or diff proposals
+            await self._dispatch_actions_and_proposals(ws, dialog_id, context, prompt, full_content)
+
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": full_content,
+            }))
+            print(f"[PROMPT] Completed response for dialog {dialog_id[:8]}")
+
+        except Exception as e:
+            print(f"[AGENT] Command streaming error: {e}", file=sys.stderr)
+            error_text = f"**Command Execution Error:** {e}"
+            await ws.send(json.dumps({
+                "type": "token_stream",
+                "dialog_id": dialog_id,
+                "delta": f"\n\n{error_text}\n",
+            }))
+            await ws.send(json.dumps({
+                "type": "prompt_complete",
+                "dialog_id": dialog_id,
+                "content": error_text,
+            }))
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="CME Local Agent CLI Daemon - Bridges Gemini, Ollama, Anthropic, OpenAI & local tools with CME."
+        description="CME Local Agent CLI Daemon - Bridges Gemini, Ollama, Anthropic, OpenAI, CLI tools & local workstation with CME."
     )
     parser.add_argument(
         "--server", "-s",
@@ -971,8 +1267,21 @@ def main():
     parser.add_argument(
         "--token", "-t",
         type=str,
-        required=True,
-        help="Cryptographic agent pairing token generated in CME UI"
+        default=None,
+        help="Cryptographic agent pairing token generated in CME UI (optional if --auth-command or delegated --header is used)"
+    )
+    parser.add_argument(
+        "--auth-command",
+        type=str,
+        default=None,
+        help="Shell command executed before connect and on each reconnect to obtain a fresh agent token from stdout"
+    )
+    parser.add_argument(
+        "--header", "-H",
+        dest="headers",
+        action="append",
+        default=[],
+        help="Custom HTTP/WebSocket header to send on connect (e.g. 'X-Remote-User: alice' or 'Authorization: Bearer ...'). Can be repeated."
     )
     parser.add_argument(
         "--name", "-n",
@@ -984,7 +1293,14 @@ def main():
         "--provider", "-p",
         type=str,
         default="auto",
-        help="Inference provider: gemini, ollama, anthropic, openai, custom, echo (default: auto)"
+        help="Inference provider: gemini, ollama, anthropic, openai, command, custom, echo (default: auto)"
+    )
+    parser.add_argument(
+        "--cmd", "--command",
+        dest="command",
+        type=str,
+        default=None,
+        help="Shell command for the command-line agent (default: 'claude -p --output-format stream-json --verbose'). Used when --provider command is selected."
     )
     parser.add_argument(
         "--model", "-m",
@@ -1025,6 +1341,10 @@ def main():
 
     args = parser.parse_args()
 
+    # Validate that at least one form of authentication is provided
+    if not args.token and not args.auth_command and not args.headers:
+        parser.error("One of --token, --auth-command, or --header (for delegated auth) is required.")
+
     tools = [t.strip() for t in args.allow_tools.split(",") if t.strip()]
 
     agent = CMEAgentDaemon(
@@ -1038,6 +1358,9 @@ def main():
         ollama_host=args.ollama_host,
         allowed_tools=tools,
         workspace_dir=args.workspace,
+        auth_command=args.auth_command,
+        headers=args.headers,
+        command=args.command,
     )
 
     agent.validate_provider()

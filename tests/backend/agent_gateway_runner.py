@@ -50,6 +50,43 @@ async def main():
     dialog_id = sys.argv[4]
 
     ws_base = base_url.replace("http://", "ws://").replace("https://", "wss://")
+
+    # Special mode for delegated auth verification
+    if agent_token == "delegated_mode":
+        print(f"[TEST AGENT GW] Running delegated auth tests against {base_url}...")
+        # 1. Connect agent without any agent token, trusting proxy's X-Remote-User header
+        agent_url = f"{ws_base}/api/v1/agents/ws?name=DelegatedProxyAgent"
+        headers = {"X-Remote-User": "delegated_bob", "X-Remote-Email": "bob@example.com"}
+        async with websockets.connect(agent_url, additional_headers=headers) as ws:
+            ack_raw = await asyncio.wait_for(ws.recv(), timeout=3.0)
+            ack = json.loads(ack_raw)
+            assert ack.get("type") == "agent_ack"
+            assert ack.get("status") == "connected"
+            assert ack.get("agent_name") == "DelegatedProxyAgent"
+            print("  - Successfully connected agent using delegated identity header without agent token.")
+
+            # Check status via REST with delegated header
+            req = urllib.request.Request(f"{base_url}/api/v1/user/agent/status", headers=headers, method="GET")
+            with urllib.request.urlopen(req) as resp:
+                status_data = json.loads(resp.read().decode())
+                assert status_data["online"] is True
+                assert status_data["agent_name"] == "DelegatedProxyAgent"
+                print("  - Online status verified via delegated identity header.")
+
+        # 2. Connection without identity header or agent token should be rejected with 401
+        rejected = False
+        try:
+            async with websockets.connect(agent_url) as ws:
+                pass
+        except Exception as e:
+            status = getattr(e, "status_code", None)
+            if hasattr(e, "response") and getattr(e.response, "status_code", None) is not None:
+                status = e.response.status_code
+            if status == 401 or "401" in str(e):
+                rejected = True
+        assert rejected, "Agent gateway should reject connection when no identity header or token is provided"
+        print("  - Unauthenticated connection rejected with 401.")
+        return
     agent_ws_url = f"{ws_base}/api/v1/agents/ws?token={agent_token}&name=TestLocalAgent"
     dialog_ws_url = f"{ws_base}/ws/dialog/{dialog_id}?token={session_token}"
 
@@ -232,6 +269,18 @@ async def main():
 
     assert rejected, "Agent gateway should reject connection with invalid token"
     print("  - Invalid token correctly rejected with HTTP 401.")
+
+    # Step 14: Verify query string token takes precedence over Authorization header
+    print("\n[STEP 14] Verifying agent token in query string is preferred over Authorization header...")
+    query_override_url = f"{ws_base}/api/v1/agents/ws?token={agent_token}&name=ProxyClient"
+    # Pass an invalid Bearer token in Authorization header simulating reverse-proxy auth
+    headers = {"Authorization": "Bearer proxy_external_auth_token_not_cme"}
+    async with websockets.connect(query_override_url, additional_headers=headers) as override_ws:
+        ack_raw = await asyncio.wait_for(override_ws.recv(), timeout=3.0)
+        ack = json.loads(ack_raw)
+        assert ack.get("type") == "agent_ack"
+        assert ack.get("status") == "connected"
+        print("  - Successfully connected using query string token despite proxy Authorization header.")
 
     print("\n========================================================")
     print("=== ALL AGENT GATEWAY E2E TESTS PASSED (100% SUCCESS) ===")
