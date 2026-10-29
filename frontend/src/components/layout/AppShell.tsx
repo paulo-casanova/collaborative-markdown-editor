@@ -94,16 +94,25 @@ export const AppShell: React.FC = () => {
       const anchor = customEvent.detail?.anchor;
       if (target) {
         window.dispatchEvent(new Event('cme-wikilink-handled'));
-        const hash = anchor ? `#${anchor}` : '';
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(target);
+        let cleanTarget = target.trim();
+        let effectiveAnchor = anchor || '';
+        if (cleanTarget.includes('#')) {
+          const parts = cleanTarget.split('#');
+          cleanTarget = parts[0].trim();
+          if (!effectiveAnchor) {
+            effectiveAnchor = parts.slice(1).join('#').trim();
+          }
+        }
+        const hash = effectiveAnchor ? `#${effectiveAnchor}` : '';
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanTarget);
         const isRead =
           useUIStore.getState().viewMode === 'read' ||
           window.location.pathname.startsWith('/docs/');
         const baseRoute = isRead ? '/docs' : '/documents';
         if (isUuid) {
-          navigate(`${baseRoute}/${target}${hash}`);
+          navigate(`${baseRoute}/${cleanTarget}${hash}`);
         } else {
-          navigate(`${baseRoute}/by-path?path=${encodeURIComponent(target)}${hash}`);
+          navigate(`${baseRoute}/by-path?path=${encodeURIComponent(cleanTarget)}${hash}`);
         }
       } else if (anchor) {
         window.dispatchEvent(new Event('cme-wikilink-handled'));

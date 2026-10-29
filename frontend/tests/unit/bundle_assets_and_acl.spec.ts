@@ -8,6 +8,11 @@ import {
   downloadBundleZip,
   importWorkspaceFileToBundleAsset,
 } from '../../src/api/documents';
+import {
+  validateLinkTarget,
+  updateKnownWorkspaceNodes,
+  updateCachedDocumentHeadings,
+} from '../../src/utils/linkValidator';
 import { DocumentAsset, DirectoryDashboardItem, NodePermissions } from '../../src/types/document';
 import { buildTree } from '../../src/components/navigation/FileTree';
 
@@ -492,6 +497,104 @@ describe('Bundle Assets & Additive ACL types and logic', () => {
       expect(canImportAsAsset(node)).toBe(true);
       expect(canImportAsAsset({ is_directory: true, is_bundle: false })).toBe(false);
       expect(canImportAsAsset({ is_directory: true, is_bundle: true })).toBe(true);
+    });
+  });
+
+  describe('Bundle Wikilinks and Heading Resolution', () => {
+    it('resolves bundle path lookups with or without .bundle extension', () => {
+      updateWorkspaceNodesCache([
+        {
+          path: 'projects/My Spec.bundle',
+          name: 'My Spec.bundle',
+          is_directory: true,
+          is_bundle: true,
+        },
+        {
+          path: 'Design Guide.bundle',
+          name: 'Design Guide.bundle',
+          is_directory: true,
+          is_bundle: true,
+        },
+      ]);
+
+      expect(findWorkspacePath('My Spec')).toBe('projects/My Spec.bundle');
+      expect(findWorkspacePath('My Spec.bundle')).toBe('projects/My Spec.bundle');
+      expect(findWorkspacePath('projects/My Spec')).toBe('projects/My Spec.bundle');
+      expect(findWorkspacePath('projects/My Spec.bundle')).toBe('projects/My Spec.bundle');
+      expect(findWorkspacePath('Design Guide')).toBe('Design Guide.bundle');
+      expect(findWorkspacePath('Design Guide.bundle')).toBe('Design Guide.bundle');
+    });
+
+    it('validates wikilinks targeting bundles and their headings without false broken links', () => {
+      const bundleNodes = [
+        {
+          path: 'docs/System Architecture.bundle',
+          name: 'System Architecture.bundle',
+          is_directory: true,
+          is_bundle: true,
+        },
+      ];
+      updateWorkspaceNodesCache(bundleNodes);
+      updateKnownWorkspaceNodes(bundleNodes);
+
+      // Validate link to bundle target without .bundle
+      const linkWithoutExt = validateLinkTarget('System Architecture');
+      expect(linkWithoutExt.valid).toBe(true);
+
+      // Validate link to bundle target with .bundle
+      const linkWithExt = validateLinkTarget('System Architecture.bundle');
+      expect(linkWithExt.valid).toBe(true);
+
+      // Cache headings for the bundle
+      const bundleMarkdown = `# Introduction
+Some overview text.
+
+## 2. Microservices Overview
+Details about services.
+
+### Event Bus Specification
+Details on Kafka / RabbitMQ.`;
+
+      updateCachedDocumentHeadings('docs/System Architecture.bundle', bundleMarkdown);
+
+      // Heading link to bundle without extension: [[System Architecture#Microservices Overview]]
+      const headingWithoutExt = validateLinkTarget('System Architecture#Microservices Overview');
+      expect(headingWithoutExt.valid).toBe(true);
+
+      // Heading link to bundle with slugified or stripped target
+      const slugifiedHeading = validateLinkTarget('System Architecture#microservices-overview');
+      expect(slugifiedHeading.valid).toBe(true);
+
+      const subHeading = validateLinkTarget('System Architecture#Event Bus Specification');
+      expect(subHeading.valid).toBe(true);
+
+      // Heading link with .bundle: [[System Architecture.bundle#Introduction]]
+      const headingWithExt = validateLinkTarget('System Architecture.bundle#Introduction');
+      expect(headingWithExt.valid).toBe(true);
+
+      // Non-existent heading in bundle should fail validation
+      const missingHeading = validateLinkTarget('System Architecture#Non Existent Heading');
+      expect(missingHeading.valid).toBe(false);
+      expect(missingHeading.reason).toContain('Heading "#Non Existent Heading" not found');
+
+      // Link to completely missing bundle
+      const missingBundle = validateLinkTarget('Missing Bundle');
+      expect(missingBundle.valid).toBe(false);
+      expect(missingBundle.reason).toContain('File "Missing Bundle" does not exist');
+    });
+
+    it('validates headings when current document is a bundle', () => {
+      const currentDocPath = 'workspace/Research.bundle';
+      const currentDocMarkdown = `# Overview
+Intro here.
+## Methodology
+Details here.`;
+
+      // Local heading reference within current bundle
+      expect(validateLinkTarget('#Methodology', currentDocMarkdown, currentDocPath).valid).toBe(true);
+      expect(validateLinkTarget('Research#Methodology', currentDocMarkdown, currentDocPath).valid).toBe(true);
+      expect(validateLinkTarget('Research.bundle#Methodology', currentDocMarkdown, currentDocPath).valid).toBe(true);
+      expect(validateLinkTarget('#Unknown', currentDocMarkdown, currentDocPath).valid).toBe(false);
     });
   });
 });

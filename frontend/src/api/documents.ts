@@ -30,9 +30,17 @@ export function updateWorkspaceNodesCache(nodes: WorkspaceNode[]) {
         const stem = basename.slice(0, -3);
         workspacePathLookup.set(stem.toLowerCase(), norm);
       }
+      if (basename.toLowerCase().endsWith('.bundle')) {
+        const stem = basename.slice(0, -7);
+        workspacePathLookup.set(stem.toLowerCase(), norm);
+      }
       if (norm.toLowerCase().endsWith('.md')) {
         const normWithoutMd = norm.slice(0, -3);
         workspacePathLookup.set(normWithoutMd.toLowerCase(), norm);
+      }
+      if (norm.toLowerCase().endsWith('.bundle')) {
+        const normWithoutBundle = norm.slice(0, -7);
+        workspacePathLookup.set(normWithoutBundle.toLowerCase(), norm);
       }
     }
   }
@@ -86,12 +94,18 @@ export function findWorkspacePath(target: string, currentDocPath?: string): stri
     if (workspacePathLookup.has(`${relClean.toLowerCase()}.md`)) {
       return workspacePathLookup.get(`${relClean.toLowerCase()}.md`)!;
     }
+    if (workspacePathLookup.has(`${relClean.toLowerCase()}.bundle`)) {
+      return workspacePathLookup.get(`${relClean.toLowerCase()}.bundle`)!;
+    }
     const relDecoded = resolveWorkspaceRelativePath(decoded, currentDocPath);
     if (workspacePathLookup.has(relDecoded.toLowerCase())) {
       return workspacePathLookup.get(relDecoded.toLowerCase())!;
     }
     if (workspacePathLookup.has(`${relDecoded.toLowerCase()}.md`)) {
       return workspacePathLookup.get(`${relDecoded.toLowerCase()}.md`)!;
+    }
+    if (workspacePathLookup.has(`${relDecoded.toLowerCase()}.bundle`)) {
+      return workspacePathLookup.get(`${relDecoded.toLowerCase()}.bundle`)!;
     }
   }
 
@@ -102,11 +116,17 @@ export function findWorkspacePath(target: string, currentDocPath?: string): stri
   if (workspacePathLookup.has(`${clean.toLowerCase()}.md`)) {
     return workspacePathLookup.get(`${clean.toLowerCase()}.md`)!;
   }
+  if (workspacePathLookup.has(`${clean.toLowerCase()}.bundle`)) {
+    return workspacePathLookup.get(`${clean.toLowerCase()}.bundle`)!;
+  }
   if (workspacePathLookup.has(decoded.toLowerCase())) {
     return workspacePathLookup.get(decoded.toLowerCase())!;
   }
   if (workspacePathLookup.has(`${decoded.toLowerCase()}.md`)) {
     return workspacePathLookup.get(`${decoded.toLowerCase()}.md`)!;
+  }
+  if (workspacePathLookup.has(`${decoded.toLowerCase()}.bundle`)) {
+    return workspacePathLookup.get(`${decoded.toLowerCase()}.bundle`)!;
   }
 
   // 3. Basename or stem match in lookup
@@ -117,6 +137,9 @@ export function findWorkspacePath(target: string, currentDocPath?: string): stri
   }
   if (workspacePathLookup.has(`${basename.toLowerCase()}.md`)) {
     return workspacePathLookup.get(`${basename.toLowerCase()}.md`)!;
+  }
+  if (workspacePathLookup.has(`${basename.toLowerCase()}.bundle`)) {
+    return workspacePathLookup.get(`${basename.toLowerCase()}.bundle`)!;
   }
 
   // 4. Default to resolved relative path if currentDocPath provided, else decoded/clean

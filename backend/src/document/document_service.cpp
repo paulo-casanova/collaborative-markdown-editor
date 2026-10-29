@@ -736,7 +736,7 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
         );
         validate_and_purge_dir_rows(rows);
 
-        // 2. Exact fs_path with .md extension or folder note resolution (<dir>/<basename>.md or <dir>/index.md)
+        // 2. Exact fs_path with .md or .bundle extension or folder note resolution (<dir>/<basename>.md or <dir>/index.md)
         if (rows.empty() && !norm_path.ends_with(".md") && !norm_path.ends_with(".bundle")) {
             rows = tx.exec_params(
                 "SELECT id, fs_path, title, COALESCE(owner_user_id::text, ''), "
@@ -747,13 +747,16 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
                 "WHERE fs_path = $1 "
                 "   OR fs_path = $2 "
                 "   OR fs_path = $3 "
+                "   OR fs_path = $4 "
                 "ORDER BY CASE "
                 "   WHEN fs_path = $1 THEN 1 "
                 "   WHEN fs_path = $2 THEN 2 "
-                "   ELSE 3 "
+                "   WHEN fs_path = $3 THEN 3 "
+                "   ELSE 4 "
                 "END "
                 "LIMIT 1;",
                 norm_path + ".md",
+                norm_path + ".bundle",
                 norm_path + "/" + basename + ".md",
                 norm_path + "/index.md"
             );
@@ -909,6 +912,8 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
             } else if (!info_res.has_value()) {
                 if (!disk_target_path.ends_with(".md") && storage_->exists(disk_target_path + ".md").value_or(false)) {
                     disk_target_path += ".md";
+                } else if (!disk_target_path.ends_with(".bundle") && storage_->exists(disk_target_path + ".bundle").value_or(false)) {
+                    disk_target_path += ".bundle";
                 } else if (storage_->exists(disk_target_path + "/" + basename + ".md").value_or(false)) {
                     disk_target_path = disk_target_path + "/" + basename + ".md";
                 } else if (storage_->exists(disk_target_path + "/index.md").value_or(false)) {
@@ -921,8 +926,10 @@ Result<DocumentRecord> DocumentService::get_document_by_path(
                             std::filesystem::path np(node.relative_path);
                             if (np.filename().string() == basename ||
                                 np.filename().string() == basename + ".md" ||
+                                np.filename().string() == basename + ".bundle" ||
                                 np.stem().string() == stem ||
                                 to_lower_string(np.filename().string()) == to_lower_string(basename + ".md") ||
+                                to_lower_string(np.filename().string()) == to_lower_string(basename + ".bundle") ||
                                 to_lower_string(np.stem().string()) == to_lower_string(stem)) {
                                 disk_target_path = node.relative_path;
                                 break;

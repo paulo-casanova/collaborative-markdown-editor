@@ -4,6 +4,7 @@ import {
   fetchWorkspaceTree,
   updateWorkspaceNodesCache,
   resolveWorkspaceRelativePath,
+  findWorkspacePath,
 } from '../api/documents';
 
 /**
@@ -195,6 +196,11 @@ export function updateKnownWorkspaceNodes(nodes: WorkspaceNode[]) {
         next.add(withoutMd);
         next.add(withoutMd.toLowerCase());
       }
+      if (norm.toLowerCase().endsWith('.bundle')) {
+        const withoutBundle = norm.slice(0, -7);
+        next.add(withoutBundle);
+        next.add(withoutBundle.toLowerCase());
+      }
       // Also allow matching by basename if unique/obsidian-style
       const slashIdx = norm.lastIndexOf('/');
       const basename = slashIdx >= 0 ? norm.slice(slashIdx + 1) : norm;
@@ -202,6 +208,11 @@ export function updateKnownWorkspaceNodes(nodes: WorkspaceNode[]) {
       next.add(basename.toLowerCase());
       if (basename.toLowerCase().endsWith('.md')) {
         const stem = basename.slice(0, -3);
+        next.add(stem);
+        next.add(stem.toLowerCase());
+      }
+      if (basename.toLowerCase().endsWith('.bundle')) {
+        const stem = basename.slice(0, -7);
         next.add(stem);
         next.add(stem.toLowerCase());
       }
@@ -238,6 +249,25 @@ export function updateCachedDocumentHeadings(path: string, markdown: string) {
     const withoutMd = norm.slice(0, -3);
     remoteDocHeadingsCache.set(withoutMd, headings);
     remoteDocHeadingsCache.set(withoutMd.toLowerCase(), headings);
+  }
+  if (norm.toLowerCase().endsWith('.bundle')) {
+    const withoutBundle = norm.slice(0, -7);
+    remoteDocHeadingsCache.set(withoutBundle, headings);
+    remoteDocHeadingsCache.set(withoutBundle.toLowerCase(), headings);
+  }
+  const slashIdx = norm.lastIndexOf('/');
+  const basename = slashIdx >= 0 ? norm.slice(slashIdx + 1) : norm;
+  remoteDocHeadingsCache.set(basename, headings);
+  remoteDocHeadingsCache.set(basename.toLowerCase(), headings);
+  if (basename.toLowerCase().endsWith('.md')) {
+    const stem = basename.slice(0, -3);
+    remoteDocHeadingsCache.set(stem, headings);
+    remoteDocHeadingsCache.set(stem.toLowerCase(), headings);
+  }
+  if (basename.toLowerCase().endsWith('.bundle')) {
+    const stem = basename.slice(0, -7);
+    remoteDocHeadingsCache.set(stem, headings);
+    remoteDocHeadingsCache.set(stem.toLowerCase(), headings);
   }
 }
 
@@ -290,16 +320,40 @@ export function validateLinkTarget(
   }
 
   // If referencing current document explicitly
-  if (
-    currentDocPath &&
-    (normFile.toLowerCase() === normalizeWorkspacePath(currentDocPath).toLowerCase() ||
-      `${normFile.toLowerCase()}.md` === normalizeWorkspacePath(currentDocPath).toLowerCase())
-  ) {
-    if (!headingRef) return { valid: true };
-    if (currentDocMarkdown === undefined) return { valid: true };
-    const headings = extractDocumentHeadings(currentDocMarkdown);
-    const found = headings.some((h) => matchesHeadingTarget(h.rawText, headingRef));
-    return found ? { valid: true } : { valid: false, reason: `Heading "#${headingRef}" does not exist` };
+  if (currentDocPath) {
+    const normCurrent = normalizeWorkspacePath(currentDocPath).toLowerCase();
+    const currentSlash = normCurrent.lastIndexOf('/');
+    const currentBasename = currentSlash >= 0 ? normCurrent.slice(currentSlash + 1) : normCurrent;
+    let currentStem = currentBasename;
+    if (currentStem.endsWith('.md')) currentStem = currentStem.slice(0, -3);
+    else if (currentStem.endsWith('.bundle')) currentStem = currentStem.slice(0, -7);
+
+    let normCurrentNoExt = normCurrent;
+    if (normCurrentNoExt.endsWith('.md')) normCurrentNoExt = normCurrentNoExt.slice(0, -3);
+    else if (normCurrentNoExt.endsWith('.bundle')) normCurrentNoExt = normCurrentNoExt.slice(0, -7);
+
+    const relFile = resolveWorkspaceRelativePath(rawFilePart, currentDocPath).toLowerCase();
+    const normFileLower = normFile.toLowerCase();
+
+    const isCurrentDoc =
+      normFileLower === normCurrent ||
+      `${normFileLower}.md` === normCurrent ||
+      `${normFileLower}.bundle` === normCurrent ||
+      normFileLower === normCurrentNoExt ||
+      relFile === normCurrent ||
+      `${relFile}.md` === normCurrent ||
+      `${relFile}.bundle` === normCurrent ||
+      relFile === normCurrentNoExt ||
+      normFileLower === currentBasename ||
+      normFileLower === currentStem;
+
+    if (isCurrentDoc) {
+      if (!headingRef) return { valid: true };
+      if (currentDocMarkdown === undefined) return { valid: true };
+      const headings = extractDocumentHeadings(currentDocMarkdown);
+      const found = headings.some((h) => matchesHeadingTarget(h.rawText, headingRef));
+      return found ? { valid: true } : { valid: false, reason: `Heading "#${headingRef}" does not exist` };
+    }
   }
 
   ensureWorkspaceTreeLoaded();
@@ -311,11 +365,24 @@ export function validateLinkTarget(
     normFile.toLowerCase(),
     normFile.toLowerCase().endsWith('.md') ? normFile : `${normFile}.md`,
     normFile.toLowerCase().endsWith('.md') ? normFile.toLowerCase() : `${normFile.toLowerCase()}.md`,
+    normFile.toLowerCase().endsWith('.bundle') ? normFile : `${normFile}.bundle`,
+    normFile.toLowerCase().endsWith('.bundle') ? normFile.toLowerCase() : `${normFile.toLowerCase()}.bundle`,
     relFile,
     relFile.toLowerCase(),
     relFile.toLowerCase().endsWith('.md') ? relFile : `${relFile}.md`,
     relFile.toLowerCase().endsWith('.md') ? relFile.toLowerCase() : `${relFile.toLowerCase()}.md`,
+    relFile.toLowerCase().endsWith('.bundle') ? relFile : `${relFile}.bundle`,
+    relFile.toLowerCase().endsWith('.bundle') ? relFile.toLowerCase() : `${relFile.toLowerCase()}.bundle`,
   ];
+
+  const resolvedPath = findWorkspacePath(rawFilePart, currentDocPath);
+  if (resolvedPath) {
+    const normResolved = normalizeWorkspacePath(resolvedPath);
+    candidates.push(normResolved, normResolved.toLowerCase());
+    const lastSlash = normResolved.lastIndexOf('/');
+    const baseResolved = lastSlash >= 0 ? normResolved.slice(lastSlash + 1) : normResolved;
+    candidates.push(baseResolved, baseResolved.toLowerCase());
+  }
 
   // Check if file exists in workspace tree
   if (workspaceTreeLoaded) {
@@ -341,13 +408,34 @@ export function validateLinkTarget(
     return { valid: false, reason: `File "${rawFilePart}" does not exist` };
   }
 
-  // If there's also a #heading on a remote markdown file, check cached remote headings or fetch asynchronously
+  // If there's also a #heading on a remote markdown or bundle file, check cached remote headings or fetch asynchronously
   if (headingRef) {
-    const cachedHeadings =
-      remoteDocHeadingsCache.get(normFile) ||
-      remoteDocHeadingsCache.get(normFile.toLowerCase()) ||
-      remoteDocHeadingsCache.get(`${normFile}.md`) ||
-      remoteDocHeadingsCache.get(`${normFile.toLowerCase()}.md`);
+    const candidateKeys = [
+      normFile,
+      normFile.toLowerCase(),
+      `${normFile}.md`,
+      `${normFile.toLowerCase()}.md`,
+      `${normFile}.bundle`,
+      `${normFile.toLowerCase()}.bundle`,
+    ];
+    if (resolvedPath) {
+      const normResolved = normalizeWorkspacePath(resolvedPath);
+      candidateKeys.push(
+        normResolved,
+        normResolved.toLowerCase(),
+        resolvedPath,
+        resolvedPath.toLowerCase()
+      );
+      const slashIdx = normResolved.lastIndexOf('/');
+      const baseResolved = slashIdx >= 0 ? normResolved.slice(slashIdx + 1) : normResolved;
+      candidateKeys.push(baseResolved, baseResolved.toLowerCase());
+    }
+
+    let cachedHeadings: string[] | undefined;
+    for (const key of candidateKeys) {
+      cachedHeadings = remoteDocHeadingsCache.get(key);
+      if (cachedHeadings) break;
+    }
 
     if (cachedHeadings) {
       const found = cachedHeadings.some((rawH) => matchesHeadingTarget(rawH, headingRef));
@@ -357,7 +445,10 @@ export function validateLinkTarget(
     }
 
     // Trigger background fetch of remote document to validate its headings
-    const fetchPath = normFile.toLowerCase().endsWith('.md') ? normFile : `${normFile}.md`;
+    let fetchPath = resolvedPath || normFile;
+    if (!fetchPath.toLowerCase().endsWith('.md') && !fetchPath.toLowerCase().endsWith('.bundle')) {
+      fetchPath = `${fetchPath}.md`;
+    }
     if (!pendingDocFetches.has(fetchPath.toLowerCase()) && !remoteDocNegativeCache.has(fetchPath.toLowerCase())) {
       pendingDocFetches.add(fetchPath.toLowerCase());
       fetchDocumentByPath(fetchPath)
@@ -376,7 +467,10 @@ export function validateLinkTarget(
     }
   } else if (!workspaceTreeLoaded) {
     // If tree isn't loaded yet, also probe the target path if not already probing
-    const fetchPath = normFile.toLowerCase().endsWith('.md') || normFile.includes('.') ? normFile : `${normFile}.md`;
+    let fetchPath = resolvedPath || normFile;
+    if (!fetchPath.toLowerCase().endsWith('.md') && !fetchPath.toLowerCase().endsWith('.bundle') && !fetchPath.includes('.')) {
+      fetchPath = `${fetchPath}.md`;
+    }
     if (!pendingDocFetches.has(fetchPath.toLowerCase()) && !remoteDocNegativeCache.has(fetchPath.toLowerCase())) {
       pendingDocFetches.add(fetchPath.toLowerCase());
       fetchDocumentByPath(fetchPath)

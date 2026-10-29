@@ -123,14 +123,30 @@ export const ReaderPage: React.FC = () => {
     queryKey: ['doc-reader', rawTarget],
     queryFn: async () => {
       if (!rawTarget) throw new Error('No document path or ID provided');
-      const targetPath = rawTarget.split('#')[0].trim();
+      let targetPath = rawTarget.split('#')[0].trim();
+      try {
+        targetPath = decodeURIComponent(targetPath);
+      } catch {
+        // ignore
+      }
       const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetPath);
       if (isUuid) {
         return await fetchDocument(targetPath);
       }
+      const resolved = findWorkspacePath(targetPath);
+      if (resolved) {
+        targetPath = resolved;
+      }
       try {
         return await fetchDocumentByPath(targetPath);
       } catch (err) {
+        if (!targetPath.endsWith('.bundle')) {
+          try {
+            return await fetchDocumentByPath(`${targetPath}.bundle`);
+          } catch {
+            // ignore
+          }
+        }
         if (!targetPath.startsWith('workspace/')) {
           try {
             return await fetchDocumentByPath(`workspace/${targetPath}`);
@@ -626,10 +642,11 @@ export const ReaderPage: React.FC = () => {
   // Auto-scroll to heading anchor if present in URL on load
   useEffect(() => {
     if (!document?.content || isLoading) return;
-    if (window.location.hash) {
-      scrollTarget(window.location.hash);
+    const targetHash = window.location.hash || (rawTarget.includes('#') ? `#${rawTarget.split('#')[1].trim()}` : '');
+    if (targetHash) {
+      scrollTarget(targetHash);
     }
-  }, [document?.id, document?.content, isLoading, scrollTarget]);
+  }, [document?.id, document?.content, isLoading, scrollTarget, rawTarget]);
 
   useEffect(() => {
     const handleHashChange = () => {

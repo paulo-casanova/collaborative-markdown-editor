@@ -46,7 +46,8 @@ export const EditorPage: React.FC = () => {
       if (!pathParam) {
         return Promise.reject(new Error("Query parameter 'path' is required"));
       }
-      return fetchDocumentByPath(pathParam);
+      const cleanPath = pathParam.split('#')[0].trim();
+      return fetchDocumentByPath(cleanPath);
     },
     enabled: isByPath && Boolean(pathParam),
     retry: 1,
@@ -55,6 +56,9 @@ export const EditorPage: React.FC = () => {
   // When document is resolved by path, register tab and replace URL with real UUID
   useEffect(() => {
     if (isByPath && docByPath?.id) {
+      const hashPart = pathParam && pathParam.includes('#')
+        ? `#${pathParam.split('#')[1].trim()}`
+        : (location.hash || '');
       openTab({
         id: docByPath.id,
         path: docByPath.path,
@@ -62,9 +66,9 @@ export const EditorPage: React.FC = () => {
         is_bundle: docByPath.is_bundle,
       });
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
-      navigate(`/documents/${docByPath.id}${location.hash || ''}`, { replace: true });
+      navigate(`/documents/${docByPath.id}${hashPart}`, { replace: true });
     }
-  }, [isByPath, docByPath, openTab, queryClient, navigate]);
+  }, [isByPath, docByPath, openTab, queryClient, navigate, pathParam, location.hash]);
 
   // Clean up any stale 'by-path' tab in workspaceStore
   useEffect(() => {
