@@ -8,7 +8,6 @@ import {
   AlertCircle,
   Maximize2,
   Minimize2,
-  CheckCircle2,
   Copy,
   Check,
   Link2,
@@ -31,7 +30,6 @@ import { NewSuggestionModal } from '../components/review/NewSuggestionModal';
 import {
   fetchDocument,
   fetchDocumentByPath,
-  fetchDocumentTasks,
   findWorkspacePath,
   getWorkspaceFileUrl,
   isMarkdownPath,
@@ -164,12 +162,6 @@ export const ReaderPage: React.FC = () => {
     enabled: Boolean(docId),
   });
 
-  const { data: tasks = [] } = useQuery({
-    queryKey: ['reader-tasks', docId],
-    queryFn: () => (docId ? fetchDocumentTasks(docId) : Promise.resolve([])),
-    enabled: Boolean(docId),
-  });
-
   const queryClient = useQueryClient();
 
   // Poll server every 5 seconds to check if a new version or comments exist (Issue #19)
@@ -245,8 +237,6 @@ export const ReaderPage: React.FC = () => {
               queryClient.refetchQueries({ queryKey: ['reader-comments', document.id] }),
               queryClient.invalidateQueries({ queryKey: ['reader-suggestions', document.id] }),
               queryClient.refetchQueries({ queryKey: ['reader-suggestions', document.id] }),
-              queryClient.invalidateQueries({ queryKey: ['reader-tasks', document.id] }),
-              queryClient.refetchQueries({ queryKey: ['reader-tasks', document.id] }),
             ])
           : Promise.resolve(),
       ]);
@@ -1309,83 +1299,6 @@ export const ReaderPage: React.FC = () => {
           >
             {renderedContent}
           </article>
-
-          {/* Review Overlay Section (when enabled) */}
-          {showReviews && (
-            <section
-              className="mt-12 p-6 bg-cme-bg-surface border border-cme-border-base rounded-2xl space-y-6 shadow-sm"
-              data-testid="review-overlay-panel"
-            >
-              <div className="flex items-center justify-between pb-3 border-b border-cme-border-base">
-                <div className="flex items-center gap-2 font-semibold text-sm text-cme-text-base">
-                  <MessageSquare className="w-4 h-4 text-cme-primary" />
-                  <span>Review & Feedback Overlay</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-cme-text-muted">
-                  <span className="px-2 py-0.5 rounded bg-cme-bg-subtle font-mono">
-                    {comments.length} comments
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-cme-bg-subtle font-mono">
-                    {suggestions.length} suggestions
-                  </span>
-                </div>
-              </div>
-
-              {/* Review Comments Summary */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-cme-text-muted">
-                  Inline Discussions ({comments.length})
-                </h4>
-                <p className="text-xs text-cme-text-muted italic bg-cme-bg-subtle/50 p-3 rounded-xl border border-dashed border-cme-border-base">
-                  {comments.length === 0
-                    ? 'No open comments on this document.'
-                    : `${comments.length} comment thread${comments.length === 1 ? '' : 's'} displayed inline with the text above.`}
-                </p>
-              </div>
-
-              {/* Review Suggestions with Unified Diff Blocks & Accept/Reject */}
-              <div className="space-y-4 pt-2">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-cme-text-muted">
-                  Suggested Edits ({suggestions.length})
-                </h4>
-                {suggestions.length === 0 ? (
-                  <p className="text-xs text-cme-text-muted italic bg-cme-bg-subtle/50 p-3 rounded-xl border border-dashed border-cme-border-base">
-                    No pending suggestions on this document.
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {suggestions.map((sugg) => renderSuggestionCard(sugg))}
-                  </div>
-                )}
-              </div>
-
-              {/* Action Tasks */}
-              {tasks.length > 0 && (
-                <div className="space-y-3 pt-2">
-                  <h4 className="text-xs font-semibold uppercase tracking-wider text-cme-text-muted">
-                    Assigned Tasks ({tasks.length})
-                  </h4>
-                  <div className="space-y-1.5">
-                    {tasks.map((task) => (
-                      <div
-                        key={task.id}
-                        className="flex items-center gap-2 p-2 rounded-lg border border-cme-border-base bg-cme-bg-base text-xs"
-                      >
-                        <CheckCircle2
-                          className={`w-4 h-4 ${
-                            task.is_completed ? 'text-emerald-500' : 'text-cme-text-muted'
-                          }`}
-                        />
-                        <span className={task.is_completed ? 'line-through text-cme-text-muted' : ''}>
-                          {task.description}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </section>
-          )}
         </main>
 
         {/* Right Sticky Column: Document Outline (Table of Contents) */}

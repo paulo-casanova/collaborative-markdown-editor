@@ -149,28 +149,21 @@ Divider with spaced hyphens.
     await expect(h2TocItem).toHaveAttribute('data-active', 'true');
   });
 
-  test('toggles Review Overlay cleanly showing discussions and annotations', async ({ page }) => {
+  test('toggles Reviews cleanly showing discussions and annotations', async ({ page }) => {
     await page.goto(`/docs/${docPath}`);
 
-    // 1. Review Overlay is initially hidden
+    // 1. Reviews are initially hidden
     const overlayToggle = page.locator('[data-testid="review-overlay-toggle"]');
     await expect(overlayToggle).toBeVisible();
     await expect(overlayToggle).toContainText('Reviews: OFF');
-    await expect(page.locator('[data-testid="review-overlay-panel"]')).not.toBeVisible();
 
     // 2. Click toggle button to enable Reviews
     await overlayToggle.click();
     await expect(overlayToggle).toContainText('Reviews: ON');
 
-    // 3. Verify Review Overlay panel appears with sections
-    const reviewPanel = page.locator('[data-testid="review-overlay-panel"]');
-    await expect(reviewPanel).toBeVisible();
-    await expect(reviewPanel).toContainText('Review & Feedback Overlay');
-
-    // 4. Click toggle button to hide Reviews
+    // 3. Click toggle button to hide Reviews
     await overlayToggle.click();
     await expect(overlayToggle).toContainText('Reviews: OFF');
-    await expect(reviewPanel).not.toBeVisible();
   });
 
   test('navigates by UUID and seamlessly switches between Reader view and Collaborative Editor', async ({
