@@ -35,6 +35,7 @@ interface DialogSidecarProps {
   documentContent?: string;
   onApplyDiff?: (diff: string) => void;
   onApplyReplacement?: (orig: string, rep: string, anchor?: any) => void;
+  onReviewAction?: (actionType: string, payload: any) => void;
 }
 
 export const DialogSidecar: React.FC<DialogSidecarProps> = ({
@@ -44,6 +45,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   documentContent,
   onApplyDiff,
   onApplyReplacement,
+  onReviewAction,
 }) => {
   const { setDialogSidecarOpen } = useUIStore();
   const dialogs = useDialogStore((s) => s.dialogs);
@@ -302,6 +304,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                   activeItemId: created.id,
                 }));
                 updateAgentActionStatus(act.id, 'applied');
+                onReviewAction?.(act.action, payload);
               } else {
                 updateAgentActionStatus(act.id, 'failed', 'Failed to create suggestion');
               }
@@ -314,6 +317,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
               if (suggId) {
                 await useReviewStore.getState().rejectSuggestion(suggId);
                 updateAgentActionStatus(act.id, 'applied');
+                onReviewAction?.(act.action, payload);
               } else {
                 updateAgentActionStatus(act.id, 'failed', 'No suggestion_id provided');
               }
@@ -330,6 +334,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                 }
                 await useReviewStore.getState().acceptSuggestion(suggId);
                 updateAgentActionStatus(act.id, 'applied');
+                onReviewAction?.(act.action, payload);
               } else {
                 updateAgentActionStatus(act.id, 'failed', 'No suggestion_id provided');
               }
@@ -363,6 +368,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                   activeItemId: created.id,
                 }));
                 updateAgentActionStatus(act.id, 'applied');
+                onReviewAction?.(act.action, payload);
               } else {
                 updateAgentActionStatus(act.id, 'failed', 'Failed to create comment');
               }
@@ -375,6 +381,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
               if (commentId && replyText) {
                 await useReviewStore.getState().postReply(commentId, replyText);
                 updateAgentActionStatus(act.id, 'applied');
+                onReviewAction?.(act.action, payload);
               } else {
                 updateAgentActionStatus(act.id, 'failed', 'Missing comment_id or content');
               }

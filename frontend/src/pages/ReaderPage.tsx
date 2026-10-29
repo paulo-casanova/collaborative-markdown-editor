@@ -75,6 +75,20 @@ import { splitTableRow, parseTableAlignments } from '../utils/tableUtils';
 type FontMode = 'sans' | 'serif' | 'mono';
 type WidthMode = 'standard' | 'full';
 
+export function computeCommentsSignature(comments: CommentRecord[] = []): string {
+  if (!comments || comments.length === 0) return '';
+  return comments
+    .map((c) => {
+      const replyParts = (c.replies || [])
+        .map((r) => `${r.id}:${r.status || 'OPEN'}:${r.updated_at || r.created_at || ''}:${r.content || ''}`)
+        .sort()
+        .join(';');
+      return `${c.id}:${c.status || 'OPEN'}:${c.updated_at || c.created_at || ''}:${c.content || ''}[${replyParts}]`;
+    })
+    .sort()
+    .join('|');
+}
+
 export const ReaderPage: React.FC = () => {
   const params = useParams();
   const [searchParams] = useSearchParams();
@@ -91,6 +105,7 @@ export const ReaderPage: React.FC = () => {
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [linkValVer, setLinkValVer] = useState(0);
   const [hasNewVersion, setHasNewVersion] = useState(false);
+  const [refreshReason, setRefreshReason] = useState<'content' | 'comments' | 'all' | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
@@ -140,42 +155,57 @@ export const ReaderPage: React.FC = () => {
   const { data: comments = [] } = useQuery({
     queryKey: ['reader-comments', docId],
     queryFn: () => (docId ? fetchDocumentComments(docId) : Promise.resolve([])),
-    enabled: Boolean(docId) && showReviews,
+    enabled: Boolean(docId),
   });
 
   const { data: suggestions = [] } = useQuery({
     queryKey: ['reader-suggestions', docId],
     queryFn: () => (docId ? fetchDocumentSuggestions(docId) : Promise.resolve([])),
-    enabled: Boolean(docId) && showReviews,
+    enabled: Boolean(docId),
   });
 
   const { data: tasks = [] } = useQuery({
     queryKey: ['reader-tasks', docId],
     queryFn: () => (docId ? fetchDocumentTasks(docId) : Promise.resolve([])),
-    enabled: Boolean(docId) && showReviews,
+    enabled: Boolean(docId),
   });
 
   const queryClient = useQueryClient();
 
-  // Poll server every 5 seconds to check if a new version exists (Issue #19)
+  // Poll server every 5 seconds to check if a new version or comments exist (Issue #19)
   useEffect(() => {
     if (!document?.id) return;
 
     let isMounted = true;
     const currentId = document.id;
     const currentContent = document.content ?? '';
-
-    setHasNewVersion(false);
+    const displayedCommentsSig = computeCommentsSignature(comments);
 
     const checkServerVersion = async () => {
       try {
-        const latest = await fetchDocument(currentId);
+        const [latestDoc, latestComments] = await Promise.all([
+          fetchDocument(currentId),
+          fetchDocumentComments(currentId),
+        ]);
         if (!isMounted) return;
-        const latestContent = latest.content ?? '';
-        if (latestContent !== currentContent) {
+
+        const latestContent = latestDoc.content ?? '';
+        const contentChanged = latestContent !== currentContent;
+        const latestCommentsSig = computeCommentsSignature(latestComments);
+        const commentsChanged = latestCommentsSig !== displayedCommentsSig;
+
+        if (contentChanged && commentsChanged) {
           setHasNewVersion(true);
+          setRefreshReason('all');
+        } else if (contentChanged) {
+          setHasNewVersion(true);
+          setRefreshReason('content');
+        } else if (commentsChanged) {
+          setHasNewVersion(true);
+          setRefreshReason('comments');
         } else {
           setHasNewVersion(false);
+          setRefreshReason(null);
         }
       } catch {
         // Silently ignore background polling errors
@@ -187,18 +217,41 @@ export const ReaderPage: React.FC = () => {
       isMounted = false;
       clearInterval(intervalId);
     };
-  }, [document?.id, document?.content]);
+  }, [document?.id, document?.content, comments]);
+
+  // Also listen for reviewStore mutations (e.g. AI agent actions or WebSocket events)
+  useEffect(() => {
+    if (!docId) return;
+    const unsub = useReviewStore.subscribe((state, prevState) => {
+      if (state.documentId && state.documentId !== docId) return;
+      const prevSig = computeCommentsSignature(prevState.comments);
+      const currSig = computeCommentsSignature(state.comments);
+      if (currSig && currSig !== prevSig && currSig !== computeCommentsSignature(comments)) {
+        setHasNewVersion(true);
+        setRefreshReason('comments');
+      }
+    });
+    return () => unsub();
+  }, [docId, comments]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
     try {
-      await refetch();
+      await Promise.all([
+        refetch(),
+        document?.id
+          ? Promise.all([
+              queryClient.invalidateQueries({ queryKey: ['reader-comments', document.id] }),
+              queryClient.refetchQueries({ queryKey: ['reader-comments', document.id] }),
+              queryClient.invalidateQueries({ queryKey: ['reader-suggestions', document.id] }),
+              queryClient.refetchQueries({ queryKey: ['reader-suggestions', document.id] }),
+              queryClient.invalidateQueries({ queryKey: ['reader-tasks', document.id] }),
+              queryClient.refetchQueries({ queryKey: ['reader-tasks', document.id] }),
+            ])
+          : Promise.resolve(),
+      ]);
       setHasNewVersion(false);
-      if (showReviews && document?.id) {
-        queryClient.invalidateQueries({ queryKey: ['reader-comments', document.id] });
-        queryClient.invalidateQueries({ queryKey: ['reader-suggestions', document.id] });
-        queryClient.invalidateQueries({ queryKey: ['reader-tasks', document.id] });
-      }
+      setRefreshReason(null);
     } finally {
       setIsRefreshing(false);
     }
@@ -250,6 +303,8 @@ export const ReaderPage: React.FC = () => {
         const patchResult = applyUnifiedDiff(document.content ?? '', diff);
         if (patchResult.appliedCount > 0) {
           await updateDocument(document.id, { content: patchResult.newText });
+          setHasNewVersion(true);
+          setRefreshReason('content');
           queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
           queryClient.invalidateQueries({ queryKey: ['document'] });
         } else {
@@ -1045,11 +1100,16 @@ export const ReaderPage: React.FC = () => {
               }`}
               title={
                 hasNewVersion
-                  ? 'New version available on server — click to reload'
+                  ? refreshReason === 'comments'
+                    ? 'New comment responses available — click to reload'
+                    : refreshReason === 'content'
+                    ? 'New document version available — click to reload'
+                    : 'New version or comment responses available — click to reload'
                   : 'Reload document content'
               }
               data-testid="reader-refresh-btn"
               data-has-update={hasNewVersion ? 'true' : 'false'}
+              data-refresh-reason={refreshReason || ''}
             >
               <RotateCw
                 className={`w-3.5 h-3.5 ${
@@ -1112,6 +1172,37 @@ export const ReaderPage: React.FC = () => {
       <div className={`${containerWidthClass} px-4 md:px-8 pt-8 flex gap-8 items-start`}>
         {/* Document Article Body */}
         <main className={`flex-1 min-w-0 ${widthClass} transition-all`}>
+          {hasNewVersion && (
+            <div
+              data-testid="reader-refresh-banner"
+              className="mb-6 p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between gap-3 text-xs text-amber-800 dark:text-amber-200 animate-in fade-in slide-in-from-top-1 duration-200"
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-amber-500" />
+                </span>
+                <span className="font-medium" data-testid="reader-refresh-banner-message">
+                  {refreshReason === 'comments'
+                    ? 'New comment responses or review threads were added. Click Refresh to update the page.'
+                    : refreshReason === 'content'
+                    ? 'The document text has been updated on the server. Click Refresh to reload.'
+                    : 'New updates or comment responses available on the server. Click Refresh to reload.'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleRefresh}
+                disabled={isRefreshing}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-medium shadow-xs transition-colors cursor-pointer flex-shrink-0 disabled:opacity-50"
+                data-testid="reader-banner-refresh-btn"
+              >
+                <RotateCw className={`w-3 h-3 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
+              </button>
+            </div>
+          )}
+
           <article
             ref={articleRef}
             className={`prose dark:prose-invert max-w-none text-cme-text-base ${fontClass} leading-relaxed`}
@@ -1310,6 +1401,10 @@ export const ReaderPage: React.FC = () => {
           documentContent={document?.content}
           onApplyDiff={handleApplyDiffInReader}
           onApplyReplacement={handleApplyReplacementInReader}
+          onReviewAction={(actionType) => {
+            setHasNewVersion(true);
+            setRefreshReason(actionType.includes('comment') ? 'comments' : 'all');
+          }}
         />
       )}
 
