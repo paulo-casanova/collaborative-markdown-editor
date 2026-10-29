@@ -626,39 +626,39 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1.5 flex-shrink-0">
             <button
               onClick={() => setShowOutline(!showOutline)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+              className={`p-1.5 rounded-lg border transition-colors ${
                 showOutline
-                  ? 'bg-cme-primary text-white border-cme-primary'
+                  ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
                   : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
               }`}
-              title="Toggle Document Outline"
+              title={showOutline ? 'Hide Document Outline' : 'Show Document Outline'}
               data-testid="editor-outline-toggle"
             >
               <AlignLeft className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Outline</span>
+              <span className="sr-only">Outline</span>
             </button>
 
             <button
               onClick={() => setSidebarOpen(!isSidebarOpen)}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+              className={`relative p-1.5 rounded-lg border transition-colors ${
                 isSidebarOpen
-                  ? 'bg-cme-primary text-white border-cme-primary'
+                  ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
                   : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
               }`}
-              title="Toggle Review Panel"
+              title={isSidebarOpen ? 'Hide Review Panel' : 'Show Review Panel'}
               data-testid="toggle-reviews-btn"
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Review Panel</span>
+              <span className="sr-only">Review Panel</span>
               {comments.filter((c) => c.status === 'OPEN').length +
                 suggestions.filter((s) => s.status === 'PENDING').length +
                 tasks.filter((t) => !t.is_completed).length > 0 && (
                 <span
                   data-testid="editor-reviews-count"
-                  className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-white ml-0.5"
+                  className="absolute -top-1 -right-1 px-1 min-w-[14px] h-3.5 flex items-center justify-center rounded-full text-[9px] font-bold bg-amber-500 text-white"
                 >
                   {comments.filter((c) => c.status === 'OPEN').length +
                     suggestions.filter((s) => s.status === 'PENDING').length +
@@ -669,72 +669,67 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
             <button
               onClick={() => toggleDialogSidecar()}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+              className={`p-1.5 rounded-lg border transition-colors ${
                 dialogSidecarOpen
-                  ? 'bg-cme-primary text-white border-cme-primary'
+                  ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
                   : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
               }`}
               title="Toggle AI Dialog Sidecar (Ctrl+L)"
               data-testid="toggle-dialog-sidecar-btn"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">AI Dialog</span>
+              <span className="sr-only">AI Dialog</span>
             </button>
 
             {document.is_bundle && (
               <button
                 onClick={() => setShowAssets(!showAssets)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                className={`p-1.5 rounded-lg border transition-colors ${
                   showAssets
-                    ? 'bg-purple-600 text-white border-purple-600'
+                    ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
                     : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
                 }`}
                 title="Toggle Bundle Assets Media Drawer"
                 data-testid="editor-assets-toggle"
               >
                 <Package className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Assets</span>
+                <span className="sr-only">Assets</span>
               </button>
             )}
 
             <button
               onClick={() => setShowAcl(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover text-xs font-medium transition-colors"
+              className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover transition-colors"
               title="Manage Document Access Control & Permissions"
               data-testid="editor-access-btn"
             >
               <Shield className="w-3.5 h-3.5 text-blue-500" />
-              <span className="hidden sm:inline">Access</span>
+              <span className="sr-only">Access</span>
             </button>
 
             <button
               onClick={handleCopyPermalink}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-muted hover:text-cme-text-base transition-colors"
-              title="Copy Permalink to Document"
+              className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title={copiedPermalink ? 'Permalink Copied!' : 'Copy Permalink to Document'}
               data-testid="editor-copy-permalink-btn"
             >
               {copiedPermalink ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-500" />
-                  <span className="hidden sm:inline text-emerald-600 dark:text-emerald-400">Copied!</span>
-                </>
+                <Check className="w-3.5 h-3.5 text-emerald-500" />
               ) : (
-                <>
-                  <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-                  <span className="hidden sm:inline">Permalink</span>
-                </>
+                <Link2 className="w-3.5 h-3.5 text-indigo-500" />
               )}
+              <span className="sr-only">{copiedPermalink ? 'Copied!' : 'Permalink'}</span>
             </button>
 
             <Link
               to={`/docs/${document.id}`}
               onClick={() => setViewMode('read')}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
+              className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-base transition-colors"
               title="Switch to Reader View"
               data-testid="switch-to-reader-btn"
             >
-              <BookOpen className="w-3.5 h-3.5 text-cme-text-muted" />
-              <span className="hidden sm:inline">Reader</span>
+              <BookOpen className="w-3.5 h-3.5 text-cme-text-muted hover:text-cme-text-base" />
+              <span className="sr-only">Reader</span>
             </Link>
 
             {onClosePane && (

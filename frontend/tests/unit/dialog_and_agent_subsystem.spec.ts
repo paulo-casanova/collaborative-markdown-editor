@@ -611,6 +611,10 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
 
     expect(html).toContain('data-testid="toolbar-ask-agent-btn"');
     expect(html).toContain('Ask your AI agent about selected text');
+    expect(html).toContain('data-testid="suggesting-mode-toggle"');
+    expect(html).toContain('Direct Editing Mode');
+    expect(html).toContain('data-testid="toggle-in-text-reviews-btn"');
+    expect(html).toContain('Hide Reviews in Text');
   });
 
   it('stores line_start in context snapshot when Ask Agent is triggered with editor selection', () => {

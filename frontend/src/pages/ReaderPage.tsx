@@ -1095,7 +1095,7 @@ export const ReaderPage: React.FC = () => {
     <div className="h-full flex overflow-hidden bg-cme-bg-base text-cme-text-base">
       <div className="flex-1 overflow-y-auto min-w-0 pb-24">
         {/* Top Reader Controls Header */}
-      <header className="sticky top-0 z-20 bg-cme-bg-base/95 backdrop-blur-md border-b border-cme-border-base px-4 md:px-8 py-3 shadow-xs">
+      <header className="sticky top-0 z-20 bg-cme-bg-base/95 backdrop-blur-md border-b border-cme-border-base px-4 md:px-8 py-2.5 shadow-xs">
         <div className={`${containerWidthClass} flex items-center justify-between gap-4`}>
           {/* Left Metadata */}
           <div className="flex items-center gap-3 truncate">
@@ -1109,7 +1109,7 @@ export const ReaderPage: React.FC = () => {
           </div>
 
           {/* Right Toolbar Controls */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             {/* Font Style Switcher */}
             <div className="hidden md:flex items-center border border-cme-border-base rounded-lg p-0.5 bg-cme-bg-surface text-xs">
               <button
@@ -1168,22 +1168,22 @@ export const ReaderPage: React.FC = () => {
             {/* Review Overlay Toggle */}
             <button
               onClick={() => setShowReviews(!showReviews)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+              className={`p-1.5 rounded-lg border transition-colors ${
                 showReviews
                   ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
                   : 'border-cme-border-base bg-cme-bg-surface text-cme-text-base hover:bg-cme-bg-hover'
               }`}
               data-testid="review-overlay-toggle"
-              title="Toggle inline comments and review annotations"
+              title={showReviews ? 'Reviews: ON (Click to hide review annotations)' : 'Reviews: OFF (Click to show review annotations)'}
             >
               <MessageSquare className="w-3.5 h-3.5" />
-              <span>Reviews: {showReviews ? 'ON' : 'OFF'}</span>
+              <span className="sr-only">Reviews: {showReviews ? 'ON' : 'OFF'}</span>
             </button>
 
             {/* AI Dialog Sidecar Toggle */}
             <button
               onClick={() => toggleDialogSidecar()}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+              className={`p-1.5 rounded-lg border transition-colors ${
                 dialogSidecarOpen
                   ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
                   : 'border-cme-border-base bg-cme-bg-surface text-cme-text-base hover:bg-cme-bg-hover'
@@ -1192,14 +1192,14 @@ export const ReaderPage: React.FC = () => {
               title="Toggle AI Dialog Sidecar (Ctrl+L)"
             >
               <Sparkles className="w-3.5 h-3.5" />
-              <span>AI Dialog</span>
+              <span className="sr-only">AI Dialog</span>
             </button>
 
             {/* Refresh Document Button (Issue #19) */}
             <button
               onClick={handleRefresh}
               disabled={isRefreshing}
-              className={`relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+              className={`relative p-1.5 rounded-lg border transition-all ${
                 hasNewVersion
                   ? 'border-amber-500/60 bg-amber-500/10 text-amber-600 dark:text-amber-400 hover:bg-amber-500/20 shadow-xs'
                   : 'border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base'
@@ -1226,10 +1226,10 @@ export const ReaderPage: React.FC = () => {
                     : ''
                 }`}
               />
-              <span>Refresh</span>
+              <span className="sr-only">Refresh</span>
               {hasNewVersion && (
                 <span
-                  className="flex h-2 w-2 relative"
+                  className="absolute -top-0.5 -right-0.5 flex h-2 w-2"
                   data-testid="reader-refresh-badge"
                   title="Update available"
                 >
@@ -1242,33 +1242,28 @@ export const ReaderPage: React.FC = () => {
             {/* Copy Permalink */}
             <button
               onClick={handleCopyPermalink}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-muted hover:text-cme-text-base transition-colors"
-              title="Copy Permalink to Document"
+              className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title={copiedPermalink ? 'Permalink Copied!' : 'Copy Permalink to Document'}
               data-testid="reader-copy-permalink-btn"
             >
               {copiedPermalink ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-500" />
-                  <span className="text-emerald-600 dark:text-emerald-400">Copied!</span>
-                </>
+                <Check className="w-3.5 h-3.5 text-emerald-500" />
               ) : (
-                <>
-                  <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-                  <span>Permalink</span>
-                </>
+                <Link2 className="w-3.5 h-3.5 text-indigo-500" />
               )}
+              <span className="sr-only">{copiedPermalink ? 'Copied!' : 'Permalink'}</span>
             </button>
 
             {/* Switch to Edit Mode */}
             <Link
               to={`/documents/${document.id}`}
               onClick={() => setViewMode('edit')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
+              className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
               title="Open in Collaborative Editor"
               data-testid="switch-to-editor-btn"
             >
               <Edit3 className="w-3.5 h-3.5 text-cme-text-muted" />
-              <span>Edit</span>
+              <span className="sr-only">Edit</span>
             </Link>
           </div>
         </div>

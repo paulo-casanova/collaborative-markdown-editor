@@ -26,6 +26,7 @@ import {
   EyeOff,
   Tag,
   Sparkles,
+  Edit3,
 } from 'lucide-react';
 import { useReviewStore } from '../../stores/reviewStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -493,14 +494,22 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
         type="button"
         data-testid="suggesting-mode-toggle"
         onClick={() => toggleSuggestingMode()}
-        className={`px-2 py-0.5 rounded-md text-xs font-medium transition-colors ${
+        className={
+          btnClass(suggestingMode) +
+          (suggestingMode ? ' bg-emerald-600 text-white shadow-xs' : '')
+        }
+        title={
           suggestingMode
-            ? 'bg-emerald-600 text-white shadow-xs'
-            : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
-        }`}
-        title="Toggle Suggesting Mode"
+            ? 'Suggesting Mode: ON (Click to switch to direct editing)'
+            : 'Direct Editing Mode (Click to switch to suggesting mode)'
+        }
       >
-        {suggestingMode ? 'Suggesting' : 'Editing'}
+        {suggestingMode ? (
+          <GitPullRequest className="w-3.5 h-3.5 text-white" />
+        ) : (
+          <Edit3 className="w-3.5 h-3.5 text-cme-text-muted" />
+        )}
+        <span className="sr-only">{suggestingMode ? 'Suggesting' : 'Editing'}</span>
       </button>
 
       {/* In-Text Reviews Toggle */}
@@ -508,19 +517,15 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
         type="button"
         data-testid="toggle-in-text-reviews-btn"
         onClick={() => toggleInTextReviews()}
-        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium ml-auto transition-colors ${
-          showInTextReviews
-            ? 'bg-cme-primary text-white shadow-xs'
-            : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
-        }`}
+        className={`relative ${btnClass(showInTextReviews)} ml-auto`}
         title={showInTextReviews ? 'Hide Reviews in Text' : 'Show Reviews in Text'}
       >
         {showInTextReviews ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-        <span>In-Text Reviews</span>
+        <span className="sr-only">In-Text Reviews</span>
         {openReviewsCount > 0 && (
           <span
             data-testid="toolbar-review-badge"
-            className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ml-0.5 ${
+            className={`absolute -top-1 -right-1 px-1 min-w-[14px] h-3.5 flex items-center justify-center rounded-full text-[9px] font-bold ${
               showInTextReviews ? 'bg-white/20 text-white' : 'bg-amber-500 text-white'
             }`}
           >
