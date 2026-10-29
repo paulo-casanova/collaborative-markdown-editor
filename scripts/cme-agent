@@ -261,8 +261,10 @@ class CMEAgentDaemon:
         if doc_content:
             instructions.append("\n### Active Document Content:\n```markdown\n" + doc_content + "\n```")
 
+        line_start = context.get("line_start")
         if selected_text:
-            instructions.append("\n### Active Selection in Document:\n```markdown\n" + selected_text + "\n```")
+            loc_str = f" (starting at line {line_start})" if line_start else ""
+            instructions.append(f"\n### Active Selection in Document{loc_str}:\n```markdown\n" + selected_text + "\n```")
 
         comments = context.get("comments", [])
         if comments and isinstance(comments, list):
@@ -304,13 +306,13 @@ class CMEAgentDaemon:
             "",
             "1. DIRECT EDIT (change text directly with NO approval needed):",
             "   When the user asks you to fix, edit, change, rewrite, replace, or update text directly:",
-            "   Output a structured ```action block:",
+            "   Output a structured ```action block with the exact original_text and replacement_text:",
             "   ```action",
             "   {",
             "     \"action\": \"direct_edit\",",
-            f"     \"diff\": \"--- a/{doc_path or 'document.md'}\\n+++ b/{doc_path or 'document.md'}\\n@@ -1,3 +1,3 @@\\n-old text\\n+new text\\n\",",
-            "     \"original_text\": \"old text to replace\",",
-            "     \"replacement_text\": \"new replacement text\"",
+            "     \"original_text\": \"exact text currently in the document to replace (must match verbatim)\",",
+            "     \"replacement_text\": \"new text to substitute in place of original_text\",",
+            f"     \"diff\": \"--- a/{doc_path or 'document.md'}\\n+++ b/{doc_path or 'document.md'}\\n@@ -<line>,<count> +<line>,<count> @@\\n-old text\\n+new text\\n\"",
             "   }",
             "   ```",
             "   CME automatically applies this edit directly to the document without prompting the user for approval.",
@@ -389,7 +391,7 @@ class CMEAgentDaemon:
                 print(f"[AGENT] Failed to parse action block: {e}", file=sys.stderr)
 
         # 2. Check for unified diff if no direct_edit was explicitly emitted in action blocks
-        diff_match = re.search(r"```(?:diff)?\n(---.*?\n\+\+\+.*?\n@@.*?)```", full_content, re.DOTALL)
+        diff_match = re.search(r"```(?:diff)?\s*\n((?:---[^\n]*\n\+\+\+[^\n]*\n)?@@.*?)```", full_content, re.DOTALL)
         if diff_match and actions_emitted == 0:
             diff_text = diff_match.group(1).strip()
             lower_prompt = prompt.lower()
@@ -915,15 +917,24 @@ class CMEAgentDaemon:
         elif any(w in lower_p for w in ["direct", "change", "replace", "fix", "edit", "no approval", "correct", "refactor"]):
             orig = selected_text.strip() if selected_text else "Draft section with errors"
             rep = "Corrected section: verified by local agent"
-            diff_text = f"--- a/{doc_path}\n+++ b/{doc_path}\n@@ -1,3 +1,3 @@\n-{orig}\n+{rep}\n"
+            line_start = context.get("line_start", 1) or 1
+            orig_lines = orig.split("\n")
+            rep_lines = rep.split("\n")
+            diff_text = (
+                f"--- a/{doc_path}\n"
+                f"+++ b/{doc_path}\n"
+                f"@@ -{line_start},{len(orig_lines)} +{line_start},{len(rep_lines)} @@\n"
+                + "\n".join(f"-{l}" for l in orig_lines) + "\n"
+                + "\n".join(f"+{l}" for l in rep_lines) + "\n"
+            )
             action_markdown = (
                 f"\nI have applied the edits directly to your document (no approval needed):\n\n"
                 f"```action\n"
                 f"{{\n"
                 f'  "action": "direct_edit",\n'
-                f'  "diff": {json.dumps(diff_text)},\n'
                 f'  "original_text": {json.dumps(orig)},\n'
-                f'  "replacement_text": {json.dumps(rep)}\n'
+                f'  "replacement_text": {json.dumps(rep)},\n'
+                f'  "diff": {json.dumps(diff_text)}\n'
                 f"}}\n"
                 f"```\n"
             )

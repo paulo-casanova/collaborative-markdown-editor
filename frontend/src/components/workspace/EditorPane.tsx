@@ -31,6 +31,7 @@ import { DocumentOutline, findHeadingPosition, findHeadingElement } from '../nav
 import { ReviewSidebar } from '../review/ReviewSidebar';
 import { reconcileAnchor } from '../../review/textAnchoring';
 import { updateCachedDocumentHeadings } from '../../utils/linkValidator';
+import { computeDiffChanges, computeReplacementChange } from '../../utils/diffPatcher';
 import { BundleAssetsSidebar } from './BundleAssetsSidebar';
 import { AccessControlModal } from './AccessControlModal';
 import { DialogSidecar } from '../dialog/DialogSidecar';
@@ -270,10 +271,10 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         }
 
         if (from === -1 && orig) {
-          const idx = docText.indexOf(orig);
-          if (idx !== -1) {
-            from = idx;
-            to = idx + orig.length;
+          const change = computeReplacementChange(docText, orig, rep);
+          if (change) {
+            from = change.from;
+            to = change.to;
           }
         }
 
@@ -284,6 +285,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             effects: EditorView.scrollIntoView(from, { y: 'center' }),
           });
           view.focus();
+        } else {
+          console.warn('[EditorPane] handleApplyReplacement: target text not found in document, skipped to prevent misplacement.');
         }
       } catch (e) {
         console.warn('[EditorPane] handleApplyReplacement error:', e);
@@ -301,40 +304,17 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         const doc = view.state.doc;
         const docText = doc.toString();
 
-        const removed: string[] = [];
-        const added: string[] = [];
-        for (const line of diff.split('\n')) {
-          if (line.startsWith('-') && !line.startsWith('---')) {
-            removed.push(line.slice(1));
-          } else if (line.startsWith('+') && !line.startsWith('+++')) {
-            added.push(line.slice(1));
-          }
-        }
-        const origText = removed.join('\n');
-        const repText = added.join('\n');
+        const changes = computeDiffChanges(docText, diff);
 
-        let from = -1;
-        let to = -1;
-        if (origText) {
-          const idx = docText.indexOf(origText);
-          if (idx !== -1) {
-            from = idx;
-            to = idx + origText.length;
-          }
+        if (changes.length > 0) {
+          view.dispatch({
+            changes,
+            effects: EditorView.scrollIntoView(changes[0].from, { y: 'center' }),
+          });
+          view.focus();
+        } else {
+          console.warn('[EditorPane] handleApplyDiff: could not match diff hunks to document, skipped to prevent misplacement.');
         }
-
-        if (from === -1) {
-          const sel = view.state.selection.main;
-          from = sel.from;
-          to = sel.to;
-        }
-
-        view.dispatch({
-          changes: { from, to, insert: repText },
-          selection: { anchor: from + repText.length },
-          effects: EditorView.scrollIntoView(from, { y: 'center' }),
-        });
-        view.focus();
       } catch (err) {
         console.warn('[EditorPane] handleApplyDiff error:', err);
       }
@@ -896,6 +876,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             documentPath={document.path}
             documentContent={getDocumentMarkdown()}
             onApplyDiff={handleApplyDiff}
+            onApplyReplacement={handleApplyReplacement}
           />
         )}
 

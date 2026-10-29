@@ -34,6 +34,7 @@ interface DialogSidecarProps {
   documentPath?: string;
   documentContent?: string;
   onApplyDiff?: (diff: string) => void;
+  onApplyReplacement?: (orig: string, rep: string, anchor?: any) => void;
 }
 
 export const DialogSidecar: React.FC<DialogSidecarProps> = ({
@@ -42,42 +43,46 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   documentPath,
   documentContent,
   onApplyDiff,
+  onApplyReplacement,
 }) => {
   const { setDialogSidecarOpen } = useUIStore();
-  const {
-    dialogs,
-    activeDialogId,
-    messages,
-    isLoading,
-    isSending,
-    isGenerating,
-    generatingStartTime,
-    agentStatus,
-    streamingContent,
-    activeToolActivity,
-    diffProposals,
-    agentActions,
-    contextSnapshot,
-    clearContextSnapshot,
-    loadDialogs,
-    selectDialog,
-    createAndSelectDialog,
-    renameDialog,
-    deleteDialog,
-    resetDialogToMessage,
-    forkDialog,
-    sendMessage,
-    updateAgentActionStatus,
-    setPairingModalOpen,
-    refreshAgentStatus,
-  } = useDialogStore();
+  const dialogs = useDialogStore((s) => s.dialogs);
+  const activeDialogId = useDialogStore((s) => s.activeDialogId);
+  const messages = useDialogStore((s) => s.messages);
+  const isLoading = useDialogStore((s) => s.isLoading);
+  const isSending = useDialogStore((s) => s.isSending);
+  const isGenerating = useDialogStore((s) => s.isGenerating);
+  const generatingStartTime = useDialogStore((s) => s.generatingStartTime);
+  const agentStatus = useDialogStore((s) => s.agentStatus);
+  const streamingContent = useDialogStore((s) => s.streamingContent);
+  const activeToolActivity = useDialogStore((s) => s.activeToolActivity);
+  const diffProposals = useDialogStore((s) => s.diffProposals);
+  const agentActions = useDialogStore((s) => s.agentActions);
+  const contextSnapshot = useDialogStore((s) => s.contextSnapshot);
+  const clearContextSnapshot = useDialogStore((s) => s.clearContextSnapshot);
+  const loadDialogs = useDialogStore((s) => s.loadDialogs);
+  const selectDialog = useDialogStore((s) => s.selectDialog);
+  const createAndSelectDialog = useDialogStore((s) => s.createAndSelectDialog);
+  const renameDialog = useDialogStore((s) => s.renameDialog);
+  const deleteDialog = useDialogStore((s) => s.deleteDialog);
+  const resetDialogToMessage = useDialogStore((s) => s.resetDialogToMessage);
+  const forkDialog = useDialogStore((s) => s.forkDialog);
+  const sendMessage = useDialogStore((s) => s.sendMessage);
+  const updateAgentActionStatus = useDialogStore((s) => s.updateAgentActionStatus);
+  const setPairingModalOpen = useDialogStore((s) => s.setPairingModalOpen);
+  const refreshAgentStatus = useDialogStore((s) => s.refreshAgentStatus);
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [editingDialogId, setEditingDialogId] = useState<string | null>(null);
   const [editingTitleText, setEditingTitleText] = useState('');
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(() => {
+    if (isGenerating && generatingStartTime) {
+      return Math.max(1, Math.round((Date.now() - generatingStartTime) / 1000));
+    }
+    return 0;
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -224,15 +229,30 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
           switch (act.action) {
             case 'direct_edit': {
-              const diff =
-                payload.diff ||
-                (payload.original_text && payload.replacement_text
-                  ? `--- a/${documentPath || 'document.md'}\n+++ b/${documentPath || 'document.md'}\n@@ -1,1 +1,1 @@\n-${payload.original_text}\n+${payload.replacement_text}\n`
-                  : '');
-              if (diff && onApplyDiff) {
+              const orig = payload.original_text;
+              const rep = payload.replacement_text;
+              const diff = payload.diff;
+
+              if (orig && rep !== undefined && onApplyReplacement) {
+                onApplyReplacement(orig, rep, payload.anchor);
+                updateAgentActionStatus(act.id, 'applied');
+              } else if (diff && onApplyDiff) {
                 onApplyDiff(diff);
+                updateAgentActionStatus(act.id, 'applied');
+              } else if (orig && rep !== undefined && onApplyDiff) {
+                const origLines = orig.split('\n');
+                const repLines = rep.split('\n');
+                const formattedDiff =
+                  `--- a/${documentPath || 'document.md'}\n` +
+                  `+++ b/${documentPath || 'document.md'}\n` +
+                  `@@ -1,${origLines.length} +1,${repLines.length} @@\n` +
+                  origLines.map((l: string) => `-${l}`).join('\n') + '\n' +
+                  repLines.map((l: string) => `+${l}`).join('\n') + '\n';
+                onApplyDiff(formattedDiff);
+                updateAgentActionStatus(act.id, 'applied');
+              } else {
+                updateAgentActionStatus(act.id, 'failed', 'No diff or replacement text in action payload');
               }
-              updateAgentActionStatus(act.id, 'applied');
               break;
             }
 
@@ -789,7 +809,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                 <span className="w-1.5 h-1.5 rounded-full bg-cme-primary animate-bounce" />
               </span>
               <span className="text-xs text-cme-text-muted">
-                Waiting for model response ({elapsedSeconds}s)
+                Formulating response...
               </span>
             </div>
           </div>

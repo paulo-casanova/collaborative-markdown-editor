@@ -25,6 +25,7 @@ import { fetchCurrentUser } from '../api/auth';
 import { fetchNodePermissions } from '../api/permissions';
 import { useReviewStore } from '../stores/reviewStore';
 import { createDualAnchor, reconcileAnchor } from '../review/textAnchoring';
+import { applyUnifiedDiff, computeReplacementChange } from '../utils/diffPatcher';
 import { NewCommentModal } from '../components/review/NewCommentModal';
 import { NewSuggestionModal } from '../components/review/NewSuggestionModal';
 import {
@@ -244,32 +245,39 @@ export const ReaderPage: React.FC = () => {
 
   const handleApplyDiffInReader = useCallback(
     async (diff: string) => {
-      if (!document) return;
+      if (!document?.id) return;
       try {
-        const removed: string[] = [];
-        const added: string[] = [];
-        for (const line of diff.split('\n')) {
-          if (line.startsWith('-') && !line.startsWith('---')) {
-            removed.push(line.slice(1));
-          } else if (line.startsWith('+') && !line.startsWith('+++')) {
-            added.push(line.slice(1));
-          }
-        }
-        const origText = removed.join('\n');
-        const repText = added.join('\n');
-
-        let newContent = document.content ?? '';
-        if (origText && newContent.includes(origText)) {
-          newContent = newContent.replace(origText, repText);
+        const patchResult = applyUnifiedDiff(document.content ?? '', diff);
+        if (patchResult.appliedCount > 0) {
+          await updateDocument(document.id, { content: patchResult.newText });
+          queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+          queryClient.invalidateQueries({ queryKey: ['document'] });
         } else {
-          newContent = newContent + '\n\n' + repText;
+          console.warn('[ReaderPage] Could not match diff hunks to reader document, skipped.');
         }
-
-        await updateDocument(document.id, { content: newContent });
-        queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
-        queryClient.invalidateQueries({ queryKey: ['document'] });
       } catch (err) {
         console.warn('[ReaderPage] Failed to apply diff in reader mode:', err);
+      }
+    },
+    [document, queryClient]
+  );
+
+  const handleApplyReplacementInReader = useCallback(
+    async (orig: string, rep: string) => {
+      if (!document?.id) return;
+      try {
+        const docText = document.content ?? '';
+        const change = computeReplacementChange(docText, orig, rep);
+        if (change) {
+          const newContent = docText.slice(0, change.from) + change.insert + docText.slice(change.to);
+          await updateDocument(document.id, { content: newContent });
+          queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+          queryClient.invalidateQueries({ queryKey: ['document'] });
+        } else {
+          console.warn('[ReaderPage] Target replacement text not found in reader document, skipped.');
+        }
+      } catch (err) {
+        console.warn('[ReaderPage] Failed to apply replacement in reader mode:', err);
       }
     },
     [document, queryClient]
@@ -1301,6 +1309,7 @@ export const ReaderPage: React.FC = () => {
           documentPath={document?.path}
           documentContent={document?.content}
           onApplyDiff={handleApplyDiffInReader}
+          onApplyReplacement={handleApplyReplacementInReader}
         />
       )}
 

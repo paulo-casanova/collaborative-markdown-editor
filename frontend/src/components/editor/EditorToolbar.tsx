@@ -133,11 +133,25 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
 
   const handleToolbarAskAgent = () => {
     if (!hasSelection || !selectedText) return;
+
+    let lineStart: number | undefined;
+    if (editor && selectionRange) {
+      try {
+        const view = (editor as any).getView?.() || (editor as any).view;
+        if (view?.state?.doc) {
+          lineStart = view.state.doc.lineAt(selectionRange.from).number;
+        } else if (typeof (editor as any).state?.doc?.lineAt === 'function') {
+          lineStart = (editor as any).state.doc.lineAt(selectionRange.from).number;
+        }
+      } catch (_) {}
+    }
+
     useDialogStore.getState().setContextSnapshot({
       document_id: documentId,
       document_title: documentTitle,
       document_path: documentPath,
       selected_text: selectedText,
+      line_start: lineStart,
     });
     useUIStore.getState().setDialogSidecarOpen(true);
   };

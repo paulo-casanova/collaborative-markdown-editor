@@ -6,6 +6,7 @@ import { useDialogStore, sortDialogMessages } from '../../src/stores/dialogStore
 import * as dialogApi from '../../src/api/dialogs';
 import { DialogMessage } from '../../src/types/dialog';
 import { EditorToolbar } from '../../src/components/editor/EditorToolbar';
+import { computeReplacementChange } from '../../src/utils/diffPatcher';
 
 describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
   beforeEach(() => {
@@ -592,5 +593,35 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
 
     expect(html).toContain('data-testid="toolbar-ask-agent-btn"');
     expect(html).toContain('Ask your AI agent about selected text');
+  });
+
+  it('stores line_start in context snapshot when Ask Agent is triggered with editor selection', () => {
+    useDialogStore.getState().setContextSnapshot({
+      document_id: 'doc-1',
+      document_title: 'example.md',
+      selected_text: 'const a = 1;',
+      line_start: 42,
+    });
+
+    const snap = useDialogStore.getState().contextSnapshot;
+    expect(snap?.line_start).toBe(42);
+    expect(snap?.selected_text).toBe('const a = 1;');
+  });
+
+  it('verifies direct edit changes are accurately computed without selection fallback', () => {
+    const doc = [
+      'Line 1',
+      'Line 2: error here',
+      'Line 3',
+    ].join('\n');
+
+    const change = computeReplacementChange(doc, 'Line 2: error here', 'Line 2: fixed here', 2);
+    expect(change).not.toBeNull();
+    expect(change?.from).toBe(doc.indexOf('Line 2: error here'));
+    expect(change?.insert).toBe('Line 2: fixed here');
+
+    const patched = doc.slice(0, change!.from) + change!.insert + doc.slice(change!.to);
+    expect(patched).toContain('Line 2: fixed here');
+    expect(patched).not.toContain('error here');
   });
 });
