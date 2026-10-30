@@ -1,14 +1,9 @@
 import React, { useState } from 'react';
 import { X, Calendar, User, PlusCircle } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
-import { fetchCurrentUser } from '../../api/auth';
 import { useReviewStore } from '../../stores/reviewStore';
+import { AssigneeAutocomplete, UserOption } from './AssigneeAutocomplete';
 
-export interface CollaboratorOption {
-  id: string;
-  username: string;
-  display_name?: string;
-}
+export type CollaboratorOption = UserOption;
 
 interface NewTaskModalProps {
   isOpen: boolean;
@@ -30,12 +25,6 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
   const [dueDate, setDueDate] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const { data: currentUser } = useQuery({
-    queryKey: ['auth-me'],
-    queryFn: fetchCurrentUser,
-    enabled: isOpen,
-  });
 
   if (!isOpen) return null;
 
@@ -128,26 +117,12 @@ export const NewTaskModal: React.FC<NewTaskModalProps> = ({
                 <User className="w-3.5 h-3.5 text-cme-text-muted" />
                 <span>Assignee</span>
               </label>
-              <select
-                data-testid="task-assignee-select"
+              <AssigneeAutocomplete
                 value={assigneeId}
-                onChange={(e) => setAssigneeId(e.target.value)}
-                className="w-full px-2.5 py-1.5 text-xs bg-cme-bg-elevated border border-cme-border-base rounded-lg text-cme-text-base focus:outline-hidden focus:border-cme-primary"
-              >
-                <option value="">Unassigned</option>
-                {currentUser && (
-                  <option value={currentUser.user_id}>
-                    Assign to me (@{currentUser.username})
-                  </option>
-                )}
-                {collaborators
-                  .filter((c) => c.id !== currentUser?.user_id)
-                  .map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.display_name || c.username} (@{c.username})
-                    </option>
-                  ))}
-              </select>
+                onChange={(id) => setAssigneeId(id)}
+                collaborators={collaborators}
+                testId="task-assignee-select"
+              />
             </div>
 
             <div>
