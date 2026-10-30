@@ -693,4 +693,194 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(html).toContain('<pre><code class="language-python">');
     expect(html).toContain('<li><p>Item 1</p></li>');
   });
+
+  it('renders stop-prompt-btn and cancel-waiting-btn when isGenerating is true', () => {
+    const testDialog = {
+      id: 'dlg-stop-test',
+      user_id: 'u1',
+      title: 'Stop Test Dialog',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      message_count: 1,
+    };
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-stop-test',
+      dialogs: [testDialog],
+      messages: [],
+      isGenerating: true,
+      generatingStartTime: Date.now() - 5000,
+      agentStatus: {
+        online: true,
+        agent_name: 'Local Agent',
+        connected_at: new Date().toISOString(),
+        capabilities: [],
+      },
+    });
+
+    const html = renderToStaticMarkup(
+      React.createElement(DialogSidecar, {
+        documentId: 'doc-1',
+        documentTitle: 'test.md',
+      })
+    );
+
+    // Stop button in composer
+    expect(html).toContain('data-testid="stop-prompt-btn"');
+    expect(html).not.toContain('data-testid="send-prompt-btn"');
+
+    // Cancel waiting button in thinking banner
+    expect(html).toContain('data-testid="cancel-waiting-btn"');
+    expect(html).toContain('data-testid="agent-waiting-state"');
+  });
+
+  it('stopGeneration calls stopDialogPrompt API and resets isGenerating', async () => {
+    const stopSpy = vi.spyOn(dialogApi, 'stopDialogPrompt').mockResolvedValue(undefined);
+
+    const mockWs = {
+      readyState: 1, // OPEN
+      send: vi.fn(),
+      close: vi.fn(),
+    } as unknown as WebSocket;
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-stop-call',
+      isGenerating: true,
+      generatingStartTime: Date.now(),
+      streamingContent: 'Partial generation...',
+      activeToolActivity: { tool: 'grep', status: 'running' },
+      ws: mockWs,
+    });
+
+    await useDialogStore.getState().stopGeneration();
+
+    expect(mockWs.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: 'stop_prompt', dialog_id: 'dlg-stop-call' })
+    );
+    expect(stopSpy).toHaveBeenCalledWith('dlg-stop-call');
+
+    const state = useDialogStore.getState();
+    expect(state.isGenerating).toBe(false);
+    expect(state.generatingStartTime).toBeNull();
+    expect(state.streamingContent).toBe('');
+    expect(state.activeToolActivity).toBeNull();
+  });
+
+  it('resets isGenerating when agent disconnects (agent_status online: false)', () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-disconnect',
+      isGenerating: true,
+      generatingStartTime: Date.now(),
+      streamingContent: 'Waiting for stream...',
+      activeToolActivity: { tool: 'local_git', status: 'executing' },
+      agentStatus: {
+        online: true,
+        agent_name: 'Local Agent',
+        connected_at: new Date().toISOString(),
+        capabilities: [],
+      },
+    });
+
+    let onMessageHandler: any;
+    const mockWs = {
+      readyState: 1,
+      send: vi.fn(),
+      close: vi.fn(),
+      set onmessage(fn: any) {
+        onMessageHandler = fn;
+      },
+      get onmessage() {
+        return onMessageHandler;
+      },
+    };
+
+    const originalWindow = (global as any).window;
+    const originalWs = global.WebSocket;
+    (global as any).window = {
+      location: { protocol: 'http:', host: 'localhost:18080' },
+    };
+    (global as any).WebSocket = vi.fn().mockImplementation(() => mockWs);
+
+    try {
+      useDialogStore.getState().connectDialogWs('dlg-disconnect');
+
+      // Dispatch agent_status { online: false }
+      onMessageHandler({
+        data: JSON.stringify({
+          type: 'agent_status',
+          online: false,
+          user_id: 'u1',
+        }),
+      });
+
+      const state = useDialogStore.getState();
+      expect(state.agentStatus.online).toBe(false);
+      expect(state.isGenerating).toBe(false);
+      expect(state.generatingStartTime).toBeNull();
+      expect(state.activeToolActivity).toBeNull();
+      expect(state.streamingContent).toBe('');
+    } finally {
+      global.WebSocket = originalWs;
+      (global as any).window = originalWindow;
+    }
+  });
+
+  it('handles prompt_failed and prompt_stopped WebSocket events', () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-failed',
+      isGenerating: true,
+      generatingStartTime: Date.now(),
+      streamingContent: 'Unfinished content',
+      messages: [],
+    });
+
+    let onMessageHandler: any;
+    const mockWs = {
+      readyState: 1,
+      send: vi.fn(),
+      close: vi.fn(),
+      set onmessage(fn: any) {
+        onMessageHandler = fn;
+      },
+      get onmessage() {
+        return onMessageHandler;
+      },
+    };
+
+    const originalWindow = (global as any).window;
+    const originalWs = global.WebSocket;
+    (global as any).window = {
+      location: { protocol: 'http:', host: 'localhost:18080' },
+    };
+    (global as any).WebSocket = vi.fn().mockImplementation(() => mockWs);
+
+    try {
+      useDialogStore.getState().connectDialogWs('dlg-failed');
+
+      // Dispatch prompt_failed event
+      onMessageHandler({
+        data: JSON.stringify({
+          type: 'prompt_failed',
+          dialog_id: 'dlg-failed',
+          error: 'Agent disconnected while generating response',
+          message: {
+            id: 'm-fail-1',
+            dialog_id: 'dlg-failed',
+            role: 'assistant',
+            content: '⚠️ Agent disconnected',
+            created_at: new Date().toISOString(),
+          },
+        }),
+      });
+
+      const state = useDialogStore.getState();
+      expect(state.isGenerating).toBe(false);
+      expect(state.generatingStartTime).toBeNull();
+      expect(state.streamingContent).toBe('');
+      expect(state.messages.some((m) => m.id === 'm-fail-1')).toBe(true);
+    } finally {
+      global.WebSocket = originalWs;
+      (global as any).window = originalWindow;
+    }
+  });
 });

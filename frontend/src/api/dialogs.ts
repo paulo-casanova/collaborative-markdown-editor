@@ -107,6 +107,16 @@ export async function forkDialog(
   });
 }
 
+export async function stopDialogPrompt(dialogId: string): Promise<void> {
+  try {
+    await apiRequest<{ status: string; dialog_id: string }>(`/api/v1/dialogs/${dialogId}/stop`, {
+      method: 'POST',
+    });
+  } catch (err) {
+    console.warn(`[DialogAPI] stopDialogPrompt failed for ${dialogId}:`, err);
+  }
+}
+
 // =============================================================================
 // Document Dialog Preferences API
 // =============================================================================

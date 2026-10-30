@@ -1,4 +1,5 @@
 #include "cme/dialog/dialog_service.hpp"
+#include "cme/dialog/agent_manager.hpp"
 #include "cme/admin/admin_service.hpp"
 #include "cme/server/server.hpp"
 #include "cme/db/connection_pool.hpp"
@@ -277,6 +278,27 @@ int main() {
     assert(dialog_service.delete_dialog(alice_id, dialog_id).has_value());
     std::cout << "  [PASS] Dialog deletion cascaded successfully.\n";
 
+    // 1.8 AgentManager Unit Test
+    {
+        AgentManager mgr;
+        mgr.track_prompt_started("user_1", "dlg_1");
+        mgr.track_prompt_started("user_1", "dlg_2");
+        assert(mgr.is_prompt_pending("dlg_1") == true);
+        assert(mgr.is_prompt_pending("dlg_2") == true);
+        assert(mgr.is_prompt_pending("dlg_3") == false);
+
+        mgr.track_prompt_completed("dlg_1");
+        assert(mgr.is_prompt_pending("dlg_1") == false);
+        assert(mgr.is_prompt_pending("dlg_2") == true);
+
+        auto pending = mgr.get_and_clear_pending_dialogs("user_1");
+        assert(pending.size() == 1);
+        assert(pending[0] == "dlg_2");
+        assert(mgr.is_prompt_pending("dlg_2") == false);
+        assert(mgr.get_and_clear_pending_dialogs("user_1").empty());
+        std::cout << "  [PASS] AgentManager prompt tracking and cleanup verified.\n";
+    }
+
     // =========================================================================
     // 2. HTTP REST Endpoints Test
     // =========================================================================
@@ -524,6 +546,30 @@ int main() {
                                      {"Authorization: Bearer " + alice_token});
         assert(get_deleted.status_code == 404);
         std::cout << "  [PASS] DELETE /api/v1/dialogs/:id verified.\n";
+    }
+
+    // 2.11 POST /api/v1/dialogs/:id/stop
+    {
+        // Create dialog
+        nlohmann::json d_body = {{"title", "Stop Test Thread"}};
+        auto create_resp = http_curl("POST", base_url + "/api/v1/dialogs",
+                                     {"Content-Type: application/json", "Authorization: Bearer " + alice_token}, d_body.dump());
+        assert(create_resp.status_code == 201);
+        auto d_json = nlohmann::json::parse(create_resp.body);
+        std::string stop_dlg_id = d_json["id"].get<std::string>();
+
+        // Call stop endpoint
+        auto stop_resp = http_curl("POST", base_url + "/api/v1/dialogs/" + stop_dlg_id + "/stop",
+                                   {"Authorization: Bearer " + alice_token});
+        assert(stop_resp.status_code == 200);
+        auto stop_json = nlohmann::json::parse(stop_resp.body);
+        assert(stop_json["status"] == "stopped");
+        assert(stop_json["dialog_id"] == stop_dlg_id);
+
+        // Clean up
+        http_curl("DELETE", base_url + "/api/v1/dialogs/" + stop_dlg_id,
+                  {"Authorization: Bearer " + alice_token});
+        std::cout << "  [PASS] POST /api/v1/dialogs/:id/stop verified.\n";
     }
 
     std::cout << "[TEST] Stopping server...\n";

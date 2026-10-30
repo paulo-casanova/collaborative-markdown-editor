@@ -7,6 +7,8 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include <mutex>
 #include <functional>
 #include <chrono>
@@ -86,9 +88,31 @@ public:
      */
     void send_to_dialog(const std::string& dialog_id, const std::string& message);
 
+    /**
+     * @brief Marks that a prompt has started for a dialog and user.
+     */
+    void track_prompt_started(const std::string& user_id, const std::string& dialog_id);
+
+    /**
+     * @brief Marks that a prompt has completed or terminated for a dialog.
+     */
+    void track_prompt_completed(const std::string& dialog_id);
+
+    /**
+     * @brief Checks if a dialog currently has an active prompt running.
+     */
+    [[nodiscard]] bool is_prompt_pending(const std::string& dialog_id) const;
+
+    /**
+     * @brief Clears and returns all pending dialog_ids for a user (e.g. upon agent disconnect).
+     */
+    std::vector<std::string> get_and_clear_pending_dialogs(const std::string& user_id);
+
 private:
     mutable std::mutex mutex_;
     std::unordered_map<std::string, AgentConnectionInfo> agents_;
+    std::unordered_map<std::string, std::string> active_dialog_prompts_;
+    std::unordered_map<std::string, std::unordered_set<std::string>> user_active_dialogs_;
     PublishAgentFn publish_agent_fn_;
     PublishDialogFn publish_dialog_fn_;
 };

@@ -205,6 +205,60 @@ class TestCMEAgentCLIImprovements(unittest.IsolatedAsyncioTestCase):
         complete_msg = next(m for m in ws.sent_messages if m.get("type") == "prompt_complete")
         self.assertIn("Large payload processed cleanly!", complete_msg.get("content"))
 
+    async def test_stop_dialog_prompt_terminates_subprocess_and_task(self):
+        """Verifies that stopping a prompt kills any spawned command process and cancels the task."""
+        # Long running sleep command
+        sim_cmd = "python3 -c 'import time, sys; sys.stdout.write(\"started\\n\"); sys.stdout.flush(); time.sleep(10)'"
+
+        agent = CMEAgentDaemon("http://localhost:8080", token="tok", provider="command", command=sim_cmd)
+        ws = MockWebSocket()
+        dialog_id = "test_dlg_stop"
+
+        task = asyncio.create_task(
+            agent.handle_prompt_request(
+                ws,
+                {
+                    "dialog_id": dialog_id,
+                    "prompt": "Run long task",
+                    "dialog_history": [],
+                    "context": {},
+                }
+            )
+        )
+        agent.active_tasks[dialog_id] = task
+
+        # Allow process to spawn
+        for _ in range(50):
+            if dialog_id in agent.active_processes:
+                break
+            await asyncio.sleep(0.05)
+
+        self.assertIn(dialog_id, agent.active_processes)
+        proc = agent.active_processes[dialog_id]
+        self.assertIsNone(proc.returncode)
+
+        # Trigger stop_dialog_prompt
+        await agent._stop_dialog_prompt(ws, dialog_id)
+
+        # Allow cancelled task to complete unwind
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Check that process was killed
+        self.assertNotIn(dialog_id, agent.active_processes)
+        self.assertIsNotNone(proc.returncode)
+
+        # Check task was cancelled
+        self.assertTrue(task.done())
+        self.assertNotIn(dialog_id, agent.active_tasks)
+
+        # Check prompt_stopped event was sent to ws
+        stopped_msg = next((m for m in ws.sent_messages if m.get("type") == "prompt_stopped"), None)
+        self.assertIsNotNone(stopped_msg)
+        self.assertEqual(stopped_msg.get("dialog_id"), dialog_id)
+
 
 if __name__ == "__main__":
     unittest.main()

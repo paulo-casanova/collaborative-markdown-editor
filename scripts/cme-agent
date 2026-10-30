@@ -64,6 +64,8 @@ class CMEAgentDaemon:
         self.command = command
         self.stream_limit = stream_limit or int(os.environ.get("CME_AGENT_STREAM_LIMIT", 128 * 1024 * 1024))
         self.running = True
+        self.active_tasks: Dict[str, asyncio.Task] = {}
+        self.active_processes: Dict[str, asyncio.subprocess.Process] = {}
 
         # Canonicalize provider aliases for command-line agent
         if self.provider in ("cli", "claude", "cmd", "exec"):
@@ -387,7 +389,23 @@ class CMEAgentDaemon:
                             elif msg_type == "ping":
                                 await ws.send(json.dumps({"type": "pong"}))
                             elif msg_type == "prompt_request":
-                                asyncio.create_task(self.handle_prompt_request(ws, data))
+                                dialog_id = data.get("dialog_id", "")
+                                if dialog_id:
+                                    old_task = self.active_tasks.get(dialog_id)
+                                    if old_task and not old_task.done():
+                                        old_task.cancel()
+                                    task = asyncio.create_task(self.handle_prompt_request(ws, data))
+                                    self.active_tasks[dialog_id] = task
+                                    def _cleanup(t, did=dialog_id):
+                                        if self.active_tasks.get(did) is t:
+                                            self.active_tasks.pop(did, None)
+                                    task.add_done_callback(_cleanup)
+                                else:
+                                    asyncio.create_task(self.handle_prompt_request(ws, data))
+                            elif msg_type in ("stop_prompt", "cancel_prompt", "abort_prompt"):
+                                dialog_id = data.get("dialog_id", "")
+                                print(f"[AGENT] Received stop_prompt for dialog {dialog_id[:8]}...")
+                                await self._stop_dialog_prompt(ws, dialog_id)
                             else:
                                 print(f"[AGENT] Received unhandled frame type: {msg_type}")
                         except Exception as e:
@@ -402,6 +420,39 @@ class CMEAgentDaemon:
             except Exception as e:
                 print(f"[AGENT] Unexpected error: {e}", file=sys.stderr)
                 await asyncio.sleep(5.0)
+
+    async def _stop_dialog_prompt(self, ws, dialog_id: str):
+        if not dialog_id:
+            return
+        # 1. Terminate or kill running child process for this dialog
+        proc = self.active_processes.pop(dialog_id, None)
+        if proc:
+            try:
+                if proc.returncode is None:
+                    print(f"[AGENT] Terminating running child process for dialog {dialog_id[:8]}...")
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=1.0)
+                    except (asyncio.TimeoutError, Exception):
+                        proc.kill()
+            except Exception as e:
+                print(f"[AGENT] Error terminating process for dialog {dialog_id[:8]}: {e}", file=sys.stderr)
+
+        # 2. Cancel active asyncio task for this dialog
+        task = self.active_tasks.pop(dialog_id, None)
+        if task and not task.done():
+            print(f"[AGENT] Cancelling active task for dialog {dialog_id[:8]}...")
+            task.cancel()
+
+        # 3. Inform server that prompt was stopped
+        try:
+            await ws.send(json.dumps({
+                "type": "prompt_stopped",
+                "dialog_id": dialog_id,
+                "content": "[Stopped by user]"
+            }))
+        except Exception as e:
+            print(f"[AGENT] Error sending prompt_stopped event: {e}", file=sys.stderr)
 
     def _build_system_instructions(self, context: Dict[str, Any]) -> str:
         doc_id = context.get("document_id", "")
@@ -628,18 +679,26 @@ class CMEAgentDaemon:
             }))
             await asyncio.sleep(0.3)
 
-        if active_prov == "gemini":
-            await self._stream_gemini(ws, dialog_id, prompt, history, context)
-        elif active_prov == "ollama":
-            await self._stream_ollama(ws, dialog_id, prompt, history, context)
-        elif active_prov in ("openai", "custom") or self.api_base:
-            await self._stream_openai_compatible(ws, dialog_id, prompt, history, context)
-        elif active_prov == "anthropic":
-            await self._stream_anthropic(ws, dialog_id, prompt, history, context)
-        elif active_prov == "command":
-            await self._stream_command(ws, dialog_id, prompt, history, context)
-        else:
-            await self._stream_echo(ws, dialog_id, prompt, history, context)
+        try:
+            if active_prov == "gemini":
+                await self._stream_gemini(ws, dialog_id, prompt, history, context)
+            elif active_prov == "ollama":
+                await self._stream_ollama(ws, dialog_id, prompt, history, context)
+            elif active_prov in ("openai", "custom") or self.api_base:
+                await self._stream_openai_compatible(ws, dialog_id, prompt, history, context)
+            elif active_prov == "anthropic":
+                await self._stream_anthropic(ws, dialog_id, prompt, history, context)
+            elif active_prov == "command":
+                await self._stream_command(ws, dialog_id, prompt, history, context)
+            else:
+                await self._stream_echo(ws, dialog_id, prompt, history, context)
+        except asyncio.CancelledError:
+            print(f"[AGENT] Prompt execution cancelled for dialog {dialog_id[:8]}")
+            raise
+        except Exception as e:
+            print(f"[AGENT] Prompt execution error for dialog {dialog_id[:8]}: {e}", file=sys.stderr)
+        finally:
+            self.active_processes.pop(dialog_id, None)
 
     async def _stream_gemini(self, ws, dialog_id: str, prompt: str, history: List[Any], context: Dict[str, Any]):
         api_key = self._get_api_key("gemini")
@@ -1195,6 +1254,7 @@ class CMEAgentDaemon:
                 env=env,
                 limit=self.stream_limit,
             )
+            self.active_processes[dialog_id] = proc
 
             stdin_task = None
             if stdin_data is not None:
@@ -1345,6 +1405,15 @@ class CMEAgentDaemon:
             }))
             print(f"[PROMPT] Completed response for dialog {dialog_id[:8]}")
 
+        except asyncio.CancelledError:
+            if 'proc' in locals() and proc.returncode is None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
+            print(f"[AGENT] Command streaming cancelled for dialog {dialog_id[:8]}")
+            raise
         except Exception as e:
             if 'proc' in locals() and proc.returncode is None:
                 try:
@@ -1364,6 +1433,8 @@ class CMEAgentDaemon:
                 "dialog_id": dialog_id,
                 "content": error_text,
             }))
+        finally:
+            self.active_processes.pop(dialog_id, None)
 
 
 def main():

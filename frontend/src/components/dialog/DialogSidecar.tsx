@@ -18,6 +18,7 @@ import {
   RotateCcw,
   Loader2,
   Clock,
+  Square,
 } from 'lucide-react';
 import { useDialogStore } from '../../stores/dialogStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -82,6 +83,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   const updateAgentActionStatus = effectiveStore.updateAgentActionStatus;
   const setPairingModalOpen = effectiveStore.setPairingModalOpen;
   const refreshAgentStatus = effectiveStore.refreshAgentStatus;
+  const stopGeneration = effectiveStore.stopGeneration;
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -879,6 +881,16 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                 <Clock className="w-2.5 h-2.5 text-cme-primary/70" />
                 {elapsedSeconds}s
               </span>
+              <button
+                type="button"
+                onClick={() => void stopGeneration()}
+                className="ml-2 px-1.5 py-0.5 text-[10px] font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 rounded border border-rose-500/20 transition-colors flex items-center gap-1 cursor-pointer"
+                title="Stop request"
+                data-testid="cancel-waiting-btn"
+              >
+                <Square className="w-2.5 h-2.5 fill-current" />
+                Stop
+              </button>
             </div>
             <div className="flex items-center gap-2.5 max-w-[90%] rounded-xl px-4 py-2.5 bg-cme-bg-base border border-cme-border-base text-cme-text-muted shadow-sm">
               <span className="flex gap-1 items-center">
@@ -1013,25 +1025,30 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
             className="flex-1 resize-none px-3 py-2 text-xs bg-cme-bg-base border border-cme-border-base rounded-lg focus:outline-none focus:ring-1 focus:ring-cme-primary text-cme-text-base leading-relaxed disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-cme-bg-subtle"
             data-testid="dialog-prompt-input"
           />
-          <button
-            onClick={handleSend}
-            disabled={!activeDialogId || !inputPrompt.trim() || isSending || isGenerating}
-            className="p-2 rounded-lg bg-cme-primary text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 flex items-center justify-center"
-            title={
-              !activeDialogId
-                ? 'Select or create a dialog first'
-                : isGenerating
-                ? `Agent responding (${elapsedSeconds}s)`
-                : 'Send prompt (Enter)'
-            }
-            data-testid="send-prompt-btn"
-          >
-            {isGenerating ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
+          {isGenerating ? (
+            <button
+              onClick={() => void stopGeneration()}
+              className="p-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white transition-all shrink-0 flex items-center justify-center cursor-pointer shadow-sm"
+              title="Stop generating"
+              data-testid="stop-prompt-btn"
+            >
+              <Square className="w-4 h-4 fill-current" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!activeDialogId || !inputPrompt.trim() || isSending}
+              className="p-2 rounded-lg bg-cme-primary text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all shrink-0 flex items-center justify-center"
+              title={
+                !activeDialogId
+                  ? 'Select or create a dialog first'
+                  : 'Send prompt (Enter)'
+              }
+              data-testid="send-prompt-btn"
+            >
               <Send className="w-4 h-4" />
-            )}
-          </button>
+            </button>
+          )}
         </div>
       </div>
     </aside>

@@ -73,4 +73,45 @@ void AgentManager::send_to_dialog(const std::string& dialog_id, const std::strin
     }
 }
 
+void AgentManager::track_prompt_started(const std::string& user_id, const std::string& dialog_id) {
+    std::lock_guard lock(mutex_);
+    active_dialog_prompts_[dialog_id] = user_id;
+    user_active_dialogs_[user_id].insert(dialog_id);
+}
+
+void AgentManager::track_prompt_completed(const std::string& dialog_id) {
+    std::lock_guard lock(mutex_);
+    auto it = active_dialog_prompts_.find(dialog_id);
+    if (it != active_dialog_prompts_.end()) {
+        const std::string& user_id = it->second;
+        auto uit = user_active_dialogs_.find(user_id);
+        if (uit != user_active_dialogs_.end()) {
+            uit->second.erase(dialog_id);
+            if (uit->second.empty()) {
+                user_active_dialogs_.erase(uit);
+            }
+        }
+        active_dialog_prompts_.erase(it);
+    }
+}
+
+bool AgentManager::is_prompt_pending(const std::string& dialog_id) const {
+    std::lock_guard lock(mutex_);
+    return active_dialog_prompts_.find(dialog_id) != active_dialog_prompts_.end();
+}
+
+std::vector<std::string> AgentManager::get_and_clear_pending_dialogs(const std::string& user_id) {
+    std::lock_guard lock(mutex_);
+    std::vector<std::string> result;
+    auto uit = user_active_dialogs_.find(user_id);
+    if (uit != user_active_dialogs_.end()) {
+        for (const auto& dlg_id : uit->second) {
+            result.push_back(dlg_id);
+            active_dialog_prompts_.erase(dlg_id);
+        }
+        user_active_dialogs_.erase(uit);
+    }
+    return result;
+}
+
 } // namespace cme::dialog

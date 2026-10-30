@@ -61,6 +61,7 @@ interface DialogState {
   setPairingModalOpen: (open: boolean) => void;
   connectDialogWs: (dialogId: string) => void;
   disconnectDialogWs: () => void;
+  stopGeneration: () => Promise<void>;
   syncDocumentDialogPreference: (documentId: string) => Promise<void>;
 }
 
@@ -316,13 +317,23 @@ export const useDialogStore = create<DialogState>((set, get) => ({
           const type = data.type;
 
           if (type === 'agent_status') {
-            set({
-              agentStatus: {
-                online: Boolean(data.online),
-                agent_name: data.agent_name || (data.online ? 'Local Agent' : ''),
-                connected_at: data.online ? (data.connected_at || new Date().toISOString()) : null,
-                capabilities: data.capabilities || [],
-              },
+            const online = Boolean(data.online);
+            set((state) => {
+              const updates: Partial<DialogState> = {
+                agentStatus: {
+                  online,
+                  agent_name: data.agent_name || (online ? 'Local Agent' : ''),
+                  connected_at: online ? (data.connected_at || new Date().toISOString()) : null,
+                  capabilities: data.capabilities || [],
+                },
+              };
+              if (!online && state.isGenerating) {
+                updates.isGenerating = false;
+                updates.generatingStartTime = null;
+                updates.activeToolActivity = null;
+                updates.streamingContent = '';
+              }
+              return updates;
             });
           } else if (type === 'user_message') {
             if (data.message && data.dialog_id === get().activeDialogId) {
@@ -388,7 +399,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
                 set({ messages: sortDialogMessages(msgs), streamingContent: '', activeToolActivity: null });
               })();
             }
-          } else if (type === 'prompt_complete') {
+          } else if (type === 'prompt_complete' || type === 'prompt_stopped' || type === 'prompt_failed') {
             if (data.dialog_id === get().activeDialogId) {
               // Finalize message turn: clear streaming buffer and refresh message history
               const assistantMsg: DialogMessage | undefined = data.message;
@@ -440,6 +451,35 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       } catch {}
       set({ ws: null });
     }
+  },
+
+  stopGeneration: async () => {
+    const activeId = get().activeDialogId;
+    if (!activeId) return;
+
+    // Send stop event over WS immediately if open
+    const ws = get().ws;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        ws.send(JSON.stringify({ type: 'stop_prompt', dialog_id: activeId }));
+      } catch (err) {
+        console.warn('[DialogStore] Failed to send stop_prompt via WS:', err);
+      }
+    }
+
+    // Call REST endpoint to ensure backend and agent process are halted
+    try {
+      await dialogApi.stopDialogPrompt(activeId);
+    } catch (err) {
+      console.warn('[DialogStore] Failed to call stopDialogPrompt API:', err);
+    }
+
+    set({
+      isGenerating: false,
+      generatingStartTime: null,
+      activeToolActivity: null,
+      streamingContent: '',
+    });
   },
 
   syncDocumentDialogPreference: async (documentId: string) => {

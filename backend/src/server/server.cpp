@@ -4515,6 +4515,7 @@ Result<void> Server::start() {
 
             bool agent_online = agent_manager_ && agent_manager_->is_agent_online(user.user_id);
             if (role == "user" && agent_online) {
+                agent_manager_->track_prompt_started(user.user_id, dialog_id);
                 auto hist_res = dialog_service_->list_messages(user.user_id, dialog_id, 20);
                 nlohmann::json hist_arr = nlohmann::json::array();
                 if (hist_res.has_value()) {
@@ -4664,6 +4665,51 @@ Result<void> Server::start() {
             }
 
             send_json(res, "201 Created", fork_res.value().to_json());
+        });
+    });
+
+    app.post("/api/v1/dialogs/:id/stop", [this, get_auth_context, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto ctx = get_auth_context(req);
+        std::string dialog_id = url_decode(req->getParameter(0));
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+        res->onData([this, res, body, aborted, dialog_id, ctx](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+            auto auth_res = authenticate_request(ctx.auth_hdr, ctx.cookie_hdr, ctx.remote_user_hdr, ctx.remote_email_hdr, ctx.lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+            const auto& user = auth_res.value().value();
+
+            auto dlg_res = dialog_service_->get_dialog(user.user_id, dialog_id);
+            if (!dlg_res.has_value()) {
+                send_json(res, "404 Not Found", {{"error", "Dialog not found"}});
+                return;
+            }
+
+            if (agent_manager_) {
+                agent_manager_->track_prompt_completed(dialog_id);
+                nlohmann::json stop_req = {
+                    {"type", "stop_prompt"},
+                    {"dialog_id", dialog_id}
+                };
+                agent_manager_->send_to_agent(user.user_id, stop_req.dump());
+
+                nlohmann::json stop_evt = {
+                    {"type", "prompt_stopped"},
+                    {"dialog_id", dialog_id}
+                };
+                agent_manager_->send_to_dialog(dialog_id, stop_evt.dump());
+            }
+
+            send_json(res, "200 OK", {
+                {"status", "stopped"},
+                {"dialog_id", dialog_id}
+            });
         });
     });
 
@@ -5481,6 +5527,9 @@ Result<void> Server::start() {
                         }
                     } else if (type == "prompt_complete") {
                         std::string dialog_id = j.value("dialog_id", "");
+                        if (!dialog_id.empty() && agent_manager_) {
+                            agent_manager_->track_prompt_completed(dialog_id);
+                        }
                         std::string content = j.value("content", "");
                         nlohmann::json ctx = j.value("context_snapshot", nlohmann::json::object());
                         nlohmann::json complete_event = j;
@@ -5492,6 +5541,12 @@ Result<void> Server::start() {
                         }
                         if (!dialog_id.empty() && agent_manager_) {
                             agent_manager_->send_to_dialog(dialog_id, complete_event.dump());
+                        }
+                    } else if (type == "prompt_stopped" || type == "prompt_failed") {
+                        std::string dialog_id = j.value("dialog_id", "");
+                        if (!dialog_id.empty() && agent_manager_) {
+                            agent_manager_->track_prompt_completed(dialog_id);
+                            agent_manager_->send_to_dialog(dialog_id, std::string(message));
                         }
                     }
                 } catch (const std::exception& e) {
@@ -5505,7 +5560,9 @@ Result<void> Server::start() {
         .close = [&app, this](auto *ws, int /*code*/, std::string_view /*message*/) {
             auto *data = ws->getUserData();
             if (!data) return;
+            std::vector<std::string> pending_dialogs;
             if (agent_manager_) {
+                pending_dialogs = agent_manager_->get_and_clear_pending_dialogs(data->user_id);
                 agent_manager_->unregister_agent(data->user_id, static_cast<void*>(ws));
             }
             nlohmann::json status_evt = {
@@ -5514,6 +5571,24 @@ Result<void> Server::start() {
                 {"user_id", data->user_id}
             };
             app.publish("user:" + data->user_id, status_evt.dump(), uWS::OpCode::TEXT);
+
+            for (const auto& dlg_id : pending_dialogs) {
+                std::string err_text = "⚠️ **Agent Disconnected:** The local agent disconnected while generating a response. Please ensure your agent is running and try again.";
+                nlohmann::json fail_evt = {
+                    {"type", "prompt_failed"},
+                    {"dialog_id", dlg_id},
+                    {"error", "Agent disconnected while generating response"}
+                };
+                if (dialog_service_) {
+                    auto add_res = dialog_service_->add_message(data->user_id, dlg_id, "assistant", err_text, nlohmann::json::object());
+                    if (add_res.has_value()) {
+                        fail_evt["message"] = add_res.value().to_json();
+                    }
+                }
+                if (agent_manager_) {
+                    agent_manager_->send_to_dialog(dlg_id, fail_evt.dump());
+                }
+            }
         }
     });
 
@@ -5602,11 +5677,33 @@ Result<void> Server::start() {
             };
             ws->send(conn.dump(), uWS::OpCode::TEXT);
         },
-        .message = [](auto *ws, std::string_view message, uWS::OpCode opCode) {
+        .message = [this](auto *ws, std::string_view message, uWS::OpCode opCode) {
             if (opCode == uWS::OpCode::TEXT) {
                 if (message == "ping" || message == "{\"type\":\"ping\"}") {
                     ws->send("{\"type\":\"pong\"}", uWS::OpCode::TEXT);
+                    return;
                 }
+                try {
+                    auto j = nlohmann::json::parse(message);
+                    std::string type = j.value("type", "");
+                    if (type == "stop_prompt") {
+                        auto *data = ws->getUserData();
+                        if (data && agent_manager_) {
+                            agent_manager_->track_prompt_completed(data->dialog_id);
+                            nlohmann::json stop_req = {
+                                {"type", "stop_prompt"},
+                                {"dialog_id", data->dialog_id}
+                            };
+                            agent_manager_->send_to_agent(data->user_id, stop_req.dump());
+
+                            nlohmann::json stop_evt = {
+                                {"type", "prompt_stopped"},
+                                {"dialog_id", data->dialog_id}
+                            };
+                            agent_manager_->send_to_dialog(data->dialog_id, stop_evt.dump());
+                        }
+                    }
+                } catch (...) {}
             }
         },
         .drain = [](auto* /*ws*/) {},
