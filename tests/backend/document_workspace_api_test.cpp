@@ -96,7 +96,7 @@ int main() {
         pqxx::work tx(conn_res->get());
         tx.exec("DELETE FROM documents WHERE fs_path LIKE 'guides/%' OR fs_path LIKE 'docs/%' OR fs_path LIKE 'ops_dir/%' OR fs_path LIKE 'production_ops/%' OR fs_path LIKE 'standard_folder/%' OR fs_path LIKE 'Highway%';");
         tx.exec("DELETE FROM directory_metadata WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%';");
-        tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%' OR COALESCE(directory_path, '') = '';");
+        tx.exec("DELETE FROM permissions WHERE directory_path LIKE 'ops_dir%' OR directory_path LIKE 'production_ops%' OR directory_path LIKE 'standard_folder%' OR directory_path LIKE 'Highway%' OR (target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = '');");
         tx.exec("DELETE FROM users WHERE username = 'doc_author';");
         tx.exec("DELETE FROM teams WHERE name = 'doc_reviewers_team';");
         std::string pw_hash = cme::auth::hash_password_bcrypt("pass123", 10);
@@ -239,7 +239,7 @@ int main() {
             assert(conn_r.has_value());
             pqxx::work u_tx(conn_r->get());
             u_tx.exec("DELETE FROM documents WHERE fs_path = 'root_test_doc.md';");
-            u_tx.exec("DELETE FROM permissions WHERE COALESCE(directory_path, '') = '';");
+            u_tx.exec("DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = '';");
             u_tx.exec("DELETE FROM users WHERE username = 'regular_joe';");
             std::string pw_hash = cme::auth::hash_password_bcrypt("pass123", 10);
             auto r = u_tx.exec_params(

@@ -5355,6 +5355,13 @@ Result<void> Server::start() {
                                 std::cout << "[WARN] [EDIT_REJECTED] Rejected SyncStep2 from user '"
                                           << data->username << "' (client " << data->client_id
                                           << ") on document " << data->document_id << ": insufficient permissions\n";
+                                auto diff = room->compute_sync_step2({});
+                                std::string reply;
+                                reply.reserve(2 + diff.size());
+                                reply.push_back('\x00');
+                                reply.push_back('\x02'); // SyncStep2
+                                reply.append(reinterpret_cast<const char*>(diff.data()), diff.size());
+                                ws->send(reply, uWS::OpCode::BINARY);
                             }
                             break;
                         }
@@ -5403,6 +5410,13 @@ Result<void> Server::start() {
                                 std::cout << "[WARN] [EDIT_REJECTED] Rejected SyncUpdate from user '"
                                           << data->username << "' (client " << data->client_id
                                           << ") on document " << data->document_id << ": insufficient permissions\n";
+                                auto diff = room->compute_sync_step2({});
+                                std::string reply;
+                                reply.reserve(2 + diff.size());
+                                reply.push_back('\x00');
+                                reply.push_back('\x02'); // SyncStep2
+                                reply.append(reinterpret_cast<const char*>(diff.data()), diff.size());
+                                ws->send(reply, uWS::OpCode::BINARY);
                             }
                             break;
                         }

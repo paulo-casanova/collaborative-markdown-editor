@@ -596,5 +596,55 @@ Details here.`;
       expect(validateLinkTarget('Research.bundle#Methodology', currentDocMarkdown, currentDocPath).valid).toBe(true);
       expect(validateLinkTarget('#Unknown', currentDocMarkdown, currentDocPath).valid).toBe(false);
     });
+
+    it('correctly determines canEdit based on node permissions and admin status', () => {
+      const computeCanEdit = (user: any, docOwnerId: string | undefined, nodePerms: NodePermissions | undefined) => {
+        if (!user) return true;
+        if (user.is_system_admin || user.is_admin) return true;
+        if (docOwnerId && docOwnerId === user.id) return true;
+        if (nodePerms) {
+          if (nodePerms.can_manage) return true;
+          const eff = (nodePerms.effective_permission || '').toLowerCase();
+          return eff === 'edit' || eff === 'admin';
+        }
+        return true;
+      };
+
+      const regularUser = { id: 'u1', username: 'daniel', is_system_admin: false };
+      const adminUser = { id: 'u2', username: 'admin', is_system_admin: true };
+
+      // User with COMMENT permission cannot edit
+      const commentPerms: NodePermissions = {
+        target_type: 'DOCUMENT',
+        target_id: 'd1',
+        target_path: 'Test File.md',
+        owner: { id: '', name: '', display_name: '', is_team: false },
+        explicit_grants: [{ id: 1, grantee_type: 'EVERYONE', grantee_id: '', grantee_name: 'Everyone', access_level: 'COMMENT', inherited_from: '', is_inheritable: false }],
+        inherited_grants: [],
+        effective_permission: 'comment',
+        can_manage: false,
+      };
+      expect(computeCanEdit(regularUser, undefined, commentPerms)).toBe(false);
+
+      // System admin can always edit
+      expect(computeCanEdit(adminUser, undefined, commentPerms)).toBe(true);
+
+      // Document owner can edit even if general permission is comment
+      expect(computeCanEdit(regularUser, 'u1', commentPerms)).toBe(true);
+
+      // User with EDIT permission can edit
+      const editPerms: NodePermissions = {
+        ...commentPerms,
+        effective_permission: 'edit',
+      };
+      expect(computeCanEdit(regularUser, undefined, editPerms)).toBe(true);
+
+      // User with READ permission cannot edit
+      const readPerms: NodePermissions = {
+        ...commentPerms,
+        effective_permission: 'read',
+      };
+      expect(computeCanEdit(regularUser, undefined, readPerms)).toBe(false);
+    });
   });
 });

@@ -16,8 +16,10 @@ import {
   Link2,
   Check,
   Sparkles,
+  Lock,
 } from 'lucide-react';
 import { fetchDocument, moveDocument, updateDocument, convertDocument } from '../../api/documents';
+import { fetchNodePermissions } from '../../api/permissions';
 import { DocumentRecord } from '../../types/document';
 import { fetchCurrentUser } from '../../api/auth';
 import { useUIStore } from '../../stores/uiStore';
@@ -188,6 +190,48 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     tasks,
   } = useReviewStore();
 
+  const { data: user } = useQuery({
+    queryKey: ['auth-me'],
+    queryFn: fetchCurrentUser,
+    retry: false,
+  });
+
+  const {
+    data: document,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
+    queryKey: ['document', documentId],
+    queryFn: () => {
+      if (!documentId || documentId === 'by-path') {
+        return Promise.reject(new Error('Invalid document identifier'));
+      }
+      return fetchDocument(documentId);
+    },
+    enabled: Boolean(documentId && documentId !== 'by-path'),
+  });
+
+  const { data: nodePermissions } = useQuery({
+    queryKey: ['node-permissions', 'DOCUMENT', documentId],
+    queryFn: () => fetchNodePermissions({ target_type: 'DOCUMENT', target_id: documentId }),
+    enabled: Boolean(documentId && documentId !== 'by-path'),
+    retry: false,
+    staleTime: 30000,
+  });
+
+  const canEdit = useMemo(() => {
+    if (!user) return true;
+    if (user.is_system_admin || (user as any).is_admin) return true;
+    if (document?.owner_user_id && document.owner_user_id === user.id) return true;
+    if (nodePermissions) {
+      if (nodePermissions.can_manage) return true;
+      const eff = (nodePermissions.effective_permission || '').toLowerCase();
+      return eff === 'edit' || eff === 'admin';
+    }
+    return true;
+  }, [user, document?.owner_user_id, nodePermissions]);
+
   const handleScrollToAnchor = useCallback(
     (anchor: any) => {
       if (!anchor) return;
@@ -249,6 +293,10 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
   const handleApplyReplacement = useCallback(
     (orig: string, rep: string, anchor?: any) => {
+      if (!canEdit) {
+        console.warn('[EditorPane] handleApplyReplacement: editing is disabled for this user.');
+        return;
+      }
       try {
         const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
         if (!view || !view.state?.doc) return;
@@ -292,11 +340,15 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         console.warn('[EditorPane] handleApplyReplacement error:', e);
       }
     },
-    [editorInstance, provider]
+    [editorInstance, provider, canEdit]
   );
 
   const handleApplyDiff = useCallback(
     (diff: string) => {
+      if (!canEdit) {
+        console.warn('[EditorPane] handleApplyDiff: editing is disabled for this user.');
+        return;
+      }
       try {
         const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
         if (!view || !view.state?.doc) return;
@@ -319,7 +371,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         console.warn('[EditorPane] handleApplyDiff error:', err);
       }
     },
-    [editorInstance]
+    [editorInstance, canEdit]
   );
 
   useEffect(() => {
@@ -327,28 +379,6 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
       initDocument(documentId);
     }
   }, [isPrimary, documentId, initDocument]);
-
-  const { data: user } = useQuery({
-    queryKey: ['auth-me'],
-    queryFn: fetchCurrentUser,
-    retry: false,
-  });
-
-  const {
-    data: document,
-    isLoading,
-    isError,
-    error,
-  } = useQuery({
-    queryKey: ['document', documentId],
-    queryFn: () => {
-      if (!documentId || documentId === 'by-path') {
-        return Promise.reject(new Error('Invalid document identifier'));
-      }
-      return fetchDocument(documentId);
-    },
-    enabled: Boolean(documentId && documentId !== 'by-path'),
-  });
 
   const getDocumentMarkdown = useCallback((): string => {
     try {
@@ -610,18 +640,20 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
                 <h1 className="text-xl md:text-2xl font-bold tracking-tight text-cme-text-base truncate">
                   {document.title || 'Untitled Document'}
                 </h1>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTitleInput(document.title || '');
-                    setIsEditingTitle(true);
-                  }}
-                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-opacity flex-shrink-0"
-                  title="Rename document"
-                  data-testid="editor-title-rename-btn"
-                >
-                  <Edit2 className="w-3.5 h-3.5 text-cme-text-subtle hover:text-cme-primary" />
-                </button>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTitleInput(document.title || '');
+                      setIsEditingTitle(true);
+                    }}
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-opacity flex-shrink-0"
+                    title="Rename document"
+                    data-testid="editor-title-rename-btn"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-cme-text-subtle hover:text-cme-primary" />
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -759,21 +791,33 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               Bundle
             </Badge>
           )}
-          <button
-            type="button"
-            data-testid="convert-document-btn"
-            disabled={convertMutation.isPending}
-            onClick={() => {
-              if (document) {
-                convertMutation.mutate(document.id);
-              }
-            }}
-            className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-cme-text-muted hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-cme-border-base transition-colors"
-            title={document.is_bundle ? 'Convert bundle to document' : 'Convert document to bundle'}
-          >
-            <RefreshCw className={`w-3 h-3 text-purple-500 ${convertMutation.isPending ? 'animate-spin' : ''}`} />
-            <span>{document.is_bundle ? 'Convert to Doc' : 'Convert to Bundle'}</span>
-          </button>
+          {!canEdit && (
+            <span
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20"
+              title="You have comment-only permissions on this document. Direct editing is disabled."
+              data-testid="editor-readonly-badge"
+            >
+              <Lock className="w-3 h-3" />
+              {nodePermissions?.effective_permission?.toLowerCase() === 'read' ? 'Read-Only' : 'Comment-Only'}
+            </span>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              data-testid="convert-document-btn"
+              disabled={convertMutation.isPending}
+              onClick={() => {
+                if (document) {
+                  convertMutation.mutate(document.id);
+                }
+              }}
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium text-cme-text-muted hover:text-purple-600 hover:bg-purple-50 dark:hover:bg-purple-950/40 border border-cme-border-base transition-colors"
+              title={document.is_bundle ? 'Convert bundle to document' : 'Convert document to bundle'}
+            >
+              <RefreshCw className={`w-3 h-3 text-purple-500 ${convertMutation.isPending ? 'animate-spin' : ''}`} />
+              <span>{document.is_bundle ? 'Convert to Doc' : 'Convert to Bundle'}</span>
+            </button>
+          )}
           <span className="flex items-center gap-1 text-[11px]">
             <Clock className="w-3 h-3" />
             <span>{new Date(document.updated_at).toLocaleTimeString()}</span>
@@ -798,6 +842,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             initialContent={
               document.content || `# ${document.title || 'Document'}\n\nStart writing markdown here...`
             }
+            editable={canEdit}
             onChange={(content) => {
               setLiveContent(content);
               if (document?.path) {

@@ -119,24 +119,61 @@ Result<AccessLevel> PermissionEngine::check_permission(
         }
 
         AccessLevel effective_level = AccessLevel::None;
-        auto merge_level = [&](AccessLevel lvl) {
-            if (static_cast<uint8_t>(lvl) > static_cast<uint8_t>(effective_level)) {
-                effective_level = lvl;
+
+        struct GrantRow {
+            std::string grantee_type;
+            std::string grantee_id;
+            AccessLevel level;
+            bool is_inheritable;
+        };
+
+        auto resolve_grants = [&](const std::vector<GrantRow>& grants, bool is_direct_target) -> std::optional<AccessLevel> {
+            std::optional<AccessLevel> user_level;
+            std::optional<AccessLevel> team_level;
+            std::optional<AccessLevel> everyone_level;
+
+            for (const auto& g : grants) {
+                if (!is_direct_target && !g.is_inheritable) {
+                    continue;
+                }
+                if (g.grantee_type == "USER" && g.grantee_id == user_id) {
+                    if (!user_level.has_value() || static_cast<uint8_t>(g.level) > static_cast<uint8_t>(*user_level)) {
+                        user_level = g.level;
+                    }
+                } else if (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id)) {
+                    if (!team_level.has_value() || static_cast<uint8_t>(g.level) > static_cast<uint8_t>(*team_level)) {
+                        team_level = g.level;
+                    }
+                } else if (g.grantee_type == "EVERYONE") {
+                    if (!everyone_level.has_value() || static_cast<uint8_t>(g.level) > static_cast<uint8_t>(*everyone_level)) {
+                        everyone_level = g.level;
+                    }
+                }
             }
+
+            if (user_level.has_value()) return user_level;
+            if (team_level.has_value()) return team_level;
+            if (everyone_level.has_value()) return everyone_level;
+            return std::nullopt;
         };
 
         // 3. Document Ownership & Direct Document ACLs
+        std::string resolved_fs_path = fs_path;
         if (!document_id.empty()) {
+            std::optional<AccessLevel> doc_level;
             auto doc_row = tx.exec_params(
-                "SELECT owner_user_id::text, owner_team_id::text FROM documents WHERE id = $1::uuid",
+                "SELECT owner_user_id::text, owner_team_id::text, fs_path FROM documents WHERE id = $1::uuid",
                 document_id
             );
             if (!doc_row.empty()) {
+                if (resolved_fs_path.empty() && !doc_row[0][2].is_null()) {
+                    resolved_fs_path = doc_row[0][2].as<std::string>();
+                }
                 if (!doc_row[0][0].is_null() && doc_row[0][0].as<std::string>() == user_id) {
-                    merge_level(AccessLevel::Edit);
+                    doc_level = AccessLevel::Edit;
                 }
                 if (!doc_row[0][1].is_null() && effective_teams.contains(doc_row[0][1].as<std::string>())) {
-                    merge_level(AccessLevel::Edit);
+                    doc_level = AccessLevel::Edit;
                 }
             }
 
@@ -149,91 +186,103 @@ Result<AccessLevel> PermissionEngine::check_permission(
                 document_id
             );
 
+            std::vector<GrantRow> doc_grants;
             for (const auto& row : doc_acls) {
-                std::string grantee_type = row[0].as<std::string>();
-                std::string grantee_id = row[1].as<std::string>();
-                AccessLevel lvl = parse_access_level(row[2].as<std::string>());
+                doc_grants.push_back({
+                    .grantee_type = row[0].as<std::string>(),
+                    .grantee_id = row[1].as<std::string>(),
+                    .level = parse_access_level(row[2].as<std::string>()),
+                    .is_inheritable = false
+                });
+            }
 
-                if (grantee_type == "USER" && grantee_id == user_id) {
-                    merge_level(lvl);
-                } else if (grantee_type == "TEAM" && effective_teams.contains(grantee_id)) {
-                    merge_level(lvl);
-                } else if (grantee_type == "EVERYONE") {
-                    merge_level(lvl);
+            auto acl_match = resolve_grants(doc_grants, true);
+            if (acl_match.has_value()) {
+                if (!doc_level.has_value() || static_cast<uint8_t>(*acl_match) > static_cast<uint8_t>(*doc_level)) {
+                    doc_level = *acl_match;
                 }
+            }
+
+            // Explicit Document ACL / Ownership takes precedence over directory inheritance
+            if (doc_level.has_value()) {
+                return *doc_level;
             }
         }
 
-        // 4. Directory Hierarchy (Additive Inheritance from node up to root)
-        if (!fs_path.empty() || document_id.empty()) {
-            std::filesystem::path current_dir;
-            bool is_direct_dir = false;
-            if (!document_id.empty()) {
-                current_dir = std::filesystem::path(fs_path).parent_path();
-                is_direct_dir = false;
-            } else {
-                current_dir = std::filesystem::path(fs_path);
-                is_direct_dir = true;
+        // 4. Directory Hierarchy (Waterfall Inheritance from closest ancestor up to root)
+        std::filesystem::path current_dir;
+        bool is_direct_dir = false;
+        if (!document_id.empty()) {
+            if (!resolved_fs_path.empty()) {
+                current_dir = std::filesystem::path(resolved_fs_path).parent_path();
             }
-
-            while (true) {
-                std::string dir_str = current_dir.string();
-                if (dir_str == "." || dir_str == "/") dir_str = "";
-                while (!dir_str.empty() && (dir_str.front() == '/' || dir_str.front() == '\\')) dir_str.erase(0, 1);
-                while (!dir_str.empty() && (dir_str.back() == '/' || dir_str.back() == '\\')) dir_str.pop_back();
-
-                // Check directory ownership in directory_metadata
-                auto dir_meta = tx.exec_params(
-                    "SELECT owner_user_id::text, owner_team_id::text FROM directory_metadata WHERE directory_path = $1",
-                    dir_str
-                );
-                if (!dir_meta.empty()) {
-                    if (!dir_meta[0][0].is_null() && dir_meta[0][0].as<std::string>() == user_id) {
-                        merge_level(AccessLevel::Edit);
-                    }
-                    if (!dir_meta[0][1].is_null() && effective_teams.contains(dir_meta[0][1].as<std::string>())) {
-                        merge_level(AccessLevel::Edit);
-                    }
-                }
-
-                auto dir_acls = tx.exec_params(
-                    R"(
-                    SELECT grantee_type, COALESCE(grantee_id::text, ''), access_level, is_inheritable
-                    FROM permissions
-                    WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1
-                    )",
-                    dir_str
-                );
-
-                for (const auto& row : dir_acls) {
-                    std::string grantee_type = row[0].as<std::string>();
-                    std::string grantee_id = row[1].as<std::string>();
-                    AccessLevel lvl = parse_access_level(row[2].as<std::string>());
-                    bool is_inheritable = row[3].as<bool>();
-
-                    if (!is_direct_dir && !is_inheritable) {
-                        continue;
-                    }
-
-                    if (grantee_type == "USER" && grantee_id == user_id) {
-                        merge_level(lvl);
-                    } else if (grantee_type == "TEAM" && effective_teams.contains(grantee_id)) {
-                        merge_level(lvl);
-                    } else if (grantee_type == "EVERYONE") {
-                        merge_level(lvl);
-                    }
-                }
-
-                is_direct_dir = false;
-
-                if (dir_str.empty() || current_dir == "/" || current_dir == ".") {
-                    break;
-                }
-                current_dir = current_dir.parent_path();
-            }
+            is_direct_dir = false;
+        } else {
+            current_dir = std::filesystem::path(fs_path);
+            is_direct_dir = true;
         }
 
-        return effective_level;
+        while (true) {
+            std::string dir_str = current_dir.string();
+            if (dir_str == "." || dir_str == "/") dir_str = "";
+            while (!dir_str.empty() && (dir_str.front() == '/' || dir_str.front() == '\\')) dir_str.erase(0, 1);
+            while (!dir_str.empty() && (dir_str.back() == '/' || dir_str.back() == '\\')) dir_pop_back_safe:
+            while (!dir_str.empty() && (dir_str.back() == '/' || dir_str.back() == '\\')) dir_str.pop_back();
+
+            std::optional<AccessLevel> dir_level;
+
+            // Check directory ownership in directory_metadata
+            auto dir_meta = tx.exec_params(
+                "SELECT owner_user_id::text, owner_team_id::text FROM directory_metadata WHERE directory_path = $1",
+                dir_str
+            );
+            if (!dir_meta.empty()) {
+                if (!dir_meta[0][0].is_null() && dir_meta[0][0].as<std::string>() == user_id) {
+                    dir_level = AccessLevel::Edit;
+                }
+                if (!dir_meta[0][1].is_null() && effective_teams.contains(dir_meta[0][1].as<std::string>())) {
+                    dir_level = AccessLevel::Edit;
+                }
+            }
+
+            auto dir_acls = tx.exec_params(
+                R"(
+                SELECT grantee_type, COALESCE(grantee_id::text, ''), access_level, is_inheritable
+                FROM permissions
+                WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = $1
+                )",
+                dir_str
+            );
+
+            std::vector<GrantRow> dir_grants;
+            for (const auto& row : dir_acls) {
+                dir_grants.push_back({
+                    .grantee_type = row[0].as<std::string>(),
+                    .grantee_id = row[1].as<std::string>(),
+                    .level = parse_access_level(row[2].as<std::string>()),
+                    .is_inheritable = row[3].as<bool>()
+                });
+            }
+
+            auto match = resolve_grants(dir_grants, is_direct_dir);
+            if (match.has_value()) {
+                if (!dir_level.has_value() || static_cast<uint8_t>(*match) > static_cast<uint8_t>(*dir_level)) {
+                    dir_level = *match;
+                }
+            }
+
+            if (dir_level.has_value()) {
+                return *dir_level;
+            }
+
+            is_direct_dir = false;
+            if (dir_str.empty() || current_dir == "/" || current_dir == ".") {
+                break;
+            }
+            current_dir = current_dir.parent_path();
+        }
+
+        return AccessLevel::None;
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] Permission check failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
@@ -287,7 +336,7 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
             auto doc_row = tx.exec_params(
                 R"(
                 SELECT d.owner_user_id::text, u.username, COALESCE(u.display_name, u.username),
-                       d.owner_team_id::text, t.name
+                       d.owner_team_id::text, t.name, d.fs_path
                 FROM documents d
                 LEFT JOIN users u ON d.owner_user_id = u.id
                 LEFT JOIN teams t ON d.owner_team_id = t.id
@@ -296,6 +345,9 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
                 target_id
             );
             if (!doc_row.empty()) {
+                if (details.target_path.empty() && !doc_row[0][5].is_null()) {
+                    details.target_path = doc_row[0][5].as<std::string>();
+                }
                 if (!doc_row[0][0].is_null()) {
                     details.owner.id = doc_row[0][0].as<std::string>();
                     details.owner.name = doc_row[0][1].as<std::string>();
@@ -394,8 +446,9 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
         }
 
         // Ancestor Directory Inheritance Walk
-        if (!fs_path.empty()) {
-            std::filesystem::path current_dir = std::filesystem::path(fs_path).parent_path();
+        std::string walk_path = !details.target_path.empty() ? details.target_path : fs_path;
+        if (!walk_path.empty()) {
+            std::filesystem::path current_dir = std::filesystem::path(walk_path).parent_path();
             while (true) {
                 std::string dir_str = current_dir.string();
                 if (dir_str == ".") dir_str = "";
@@ -435,28 +488,82 @@ Result<PermissionEngine::PermissionDetails> PermissionEngine::get_permission_det
 
         details.can_manage = is_admin || is_owner;
 
-        // Effective level for current user
+        // Effective level for current user using waterfall:
+        // Superuser -> Direct Target (Owner / User > Team > Everyone) -> Nearest Ancestor Directory -> None
         AccessLevel eff_level = AccessLevel::None;
         if (is_admin) {
             eff_level = AccessLevel::Admin;
-        } else if (is_owner) {
-            eff_level = AccessLevel::Edit;
-        }
-        for (const auto& g : details.explicit_grants) {
-            if ((g.grantee_type == "USER" && g.grantee_id == user_id) ||
-                (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id)) ||
-                (g.grantee_type == "EVERYONE")) {
-                if (static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(eff_level)) {
-                    eff_level = g.access_level;
+        } else {
+            std::optional<AccessLevel> direct_level;
+            if (is_owner) {
+                direct_level = AccessLevel::Edit;
+            }
+            std::optional<AccessLevel> user_direct;
+            std::optional<AccessLevel> team_direct;
+            std::optional<AccessLevel> everyone_direct;
+
+            for (const auto& g : details.explicit_grants) {
+                if (g.grantee_type == "USER" && g.grantee_id == user_id) {
+                    if (!user_direct.has_value() || static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(*user_direct)) {
+                        user_direct = g.access_level;
+                    }
+                } else if (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id)) {
+                    if (!team_direct.has_value() || static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(*team_direct)) {
+                        team_direct = g.access_level;
+                    }
+                } else if (g.grantee_type == "EVERYONE") {
+                    if (!everyone_direct.has_value() || static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(*everyone_direct)) {
+                        everyone_direct = g.access_level;
+                    }
                 }
             }
-        }
-        for (const auto& g : details.inherited_grants) {
-            if ((g.grantee_type == "USER" && g.grantee_id == user_id) ||
-                (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id)) ||
-                (g.grantee_type == "EVERYONE")) {
-                if (static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(eff_level)) {
-                    eff_level = g.access_level;
+
+            std::optional<AccessLevel> match_direct = user_direct.has_value() ? user_direct : (team_direct.has_value() ? team_direct : everyone_direct);
+            if (match_direct.has_value()) {
+                if (!direct_level.has_value() || static_cast<uint8_t>(*match_direct) > static_cast<uint8_t>(*direct_level)) {
+                    direct_level = *match_direct;
+                }
+            }
+
+            if (direct_level.has_value()) {
+                eff_level = *direct_level;
+            } else {
+                // Inherited grants (ordered nearest ancestor first)
+                std::unordered_map<std::string, std::vector<GrantInfo>> grants_by_dir;
+                std::vector<std::string> ancestor_order;
+                for (const auto& g : details.inherited_grants) {
+                    if (!grants_by_dir.contains(g.inherited_from)) {
+                        ancestor_order.push_back(g.inherited_from);
+                    }
+                    grants_by_dir[g.inherited_from].push_back(g);
+                }
+
+                for (const auto& dir : ancestor_order) {
+                    std::optional<AccessLevel> user_inh;
+                    std::optional<AccessLevel> team_inh;
+                    std::optional<AccessLevel> everyone_inh;
+
+                    for (const auto& g : grants_by_dir[dir]) {
+                        if (g.grantee_type == "USER" && g.grantee_id == user_id) {
+                            if (!user_inh.has_value() || static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(*user_inh)) {
+                                user_inh = g.access_level;
+                            }
+                        } else if (g.grantee_type == "TEAM" && effective_teams.contains(g.grantee_id)) {
+                            if (!team_inh.has_value() || static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(*team_inh)) {
+                                team_inh = g.access_level;
+                            }
+                        } else if (g.grantee_type == "EVERYONE") {
+                            if (!everyone_inh.has_value() || static_cast<uint8_t>(g.access_level) > static_cast<uint8_t>(*everyone_inh)) {
+                                everyone_inh = g.access_level;
+                            }
+                        }
+                    }
+
+                    std::optional<AccessLevel> match_inh = user_inh.has_value() ? user_inh : (team_inh.has_value() ? team_inh : everyone_inh);
+                    if (match_inh.has_value()) {
+                        eff_level = *match_inh;
+                        break; // Nearest ancestor matched!
+                    }
                 }
             }
         }
@@ -569,7 +676,7 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
             auto doc_row = tx.exec_params(
                 R"(
                 SELECT d.owner_user_id::text, u.username, COALESCE(u.display_name, u.username),
-                       d.owner_team_id::text, t.name
+                       d.owner_team_id::text, t.name, d.fs_path
                 FROM documents d
                 LEFT JOIN users u ON d.owner_user_id = u.id
                 LEFT JOIN teams t ON d.owner_team_id = t.id
@@ -578,6 +685,9 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                 target_id
             );
             if (!doc_row.empty()) {
+                if (result.target_path.empty() && !doc_row[0][5].is_null()) {
+                    result.target_path = doc_row[0][5].as<std::string>();
+                }
                 if (result.subject_type == "USER" && !doc_row[0][0].is_null() && doc_row[0][0].as<std::string>() == subject_id) {
                     result.is_owner = true;
                     merge_effective(AccessLevel::Edit);
@@ -845,8 +955,12 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
         }
 
         // Ancestor Directory Inheritance Walk
-        if (!fs_path.empty()) {
-            std::filesystem::path current_dir = std::filesystem::path(fs_path).parent_path();
+        std::string walk_path = !result.target_path.empty() ? result.target_path : fs_path;
+        if (!walk_path.empty()) {
+            std::filesystem::path current_dir = std::filesystem::path(walk_path).parent_path();
+            bool direct_resolved = (result.effective_level != AccessLevel::None);
+            bool inherited_resolved = false;
+
             while (true) {
                 std::string dir_str = current_dir.string();
                 if (dir_str == ".") dir_str = "";
@@ -865,6 +979,7 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                     dir_str
                 );
 
+                bool matched_in_this_dir = false;
                 for (const auto& r : dir_acls) {
                     std::string g_type = r[1].as<std::string>();
                     std::string g_id = r[2].as<std::string>();
@@ -873,7 +988,10 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                     std::string from_str = dir_str.empty() ? "/" : dir_str;
 
                     if (g_type == "EVERYONE") {
-                        merge_effective(lvl);
+                        if (!direct_resolved && !inherited_resolved) {
+                            merge_effective(lvl);
+                            matched_in_this_dir = true;
+                        }
                         result.matched_rules.push_back({
                             .source = "INHERITED_GRANT",
                             .level = lvl,
@@ -886,7 +1004,10 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                         });
                     } else if (result.subject_type == "USER") {
                         if (g_type == "USER" && g_id == subject_id) {
-                            merge_effective(lvl);
+                            if (!direct_resolved && !inherited_resolved) {
+                                merge_effective(lvl);
+                                matched_in_this_dir = true;
+                            }
                             result.matched_rules.push_back({
                                 .source = "INHERITED_GRANT",
                                 .level = lvl,
@@ -898,7 +1019,10 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                                 .description = "Inherited from '" + from_str + "': " + std::string(to_string(lvl))
                             });
                         } else if (g_type == "TEAM" && effective_teams_set.contains(g_id)) {
-                            merge_effective(lvl);
+                            if (!direct_resolved && !inherited_resolved) {
+                                merge_effective(lvl);
+                                matched_in_this_dir = true;
+                            }
                             result.matched_rules.push_back({
                                 .source = "INHERITED_GRANT",
                                 .level = lvl,
@@ -912,7 +1036,10 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                         }
                     } else if (result.subject_type == "TEAM") {
                         if (g_type == "TEAM" && g_id == subject_id) {
-                            merge_effective(lvl);
+                            if (!direct_resolved && !inherited_resolved) {
+                                merge_effective(lvl);
+                                matched_in_this_dir = true;
+                            }
                             result.matched_rules.push_back({
                                 .source = "INHERITED_GRANT",
                                 .level = lvl,
@@ -925,6 +1052,10 @@ Result<PermissionEngine::TestPermissionResult> PermissionEngine::test_permission
                             });
                         }
                     }
+                }
+
+                if (matched_in_this_dir) {
+                    inherited_resolved = true;
                 }
 
                 if (dir_str.empty() || current_dir == "/" || current_dir == ".") {

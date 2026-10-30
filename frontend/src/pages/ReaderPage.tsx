@@ -17,6 +17,7 @@ import {
   RotateCw,
   Sparkles,
   History,
+  Lock,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -380,6 +381,18 @@ export const ReaderPage: React.FC = () => {
     }
     return true;
   }, [currentUser, document?.owner_user_id, nodePerms, selectedRevNumber]);
+
+  const canEdit = useMemo(() => {
+    if (!currentUser) return false;
+    if (currentUser.is_system_admin || currentUser.is_admin) return true;
+    if (document?.owner_user_id && document.owner_user_id === currentUser.id) return true;
+    if (nodePerms) {
+      if (nodePerms.can_manage) return true;
+      const eff = (nodePerms.effective_permission || '').toLowerCase();
+      return eff === 'edit' || eff === 'admin';
+    }
+    return false;
+  }, [currentUser, document?.owner_user_id, nodePerms]);
 
   useEffect(() => {
     if (docId) {
@@ -1386,11 +1399,15 @@ export const ReaderPage: React.FC = () => {
                 setViewMode('edit');
               }}
               className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
-              title="Open in Collaborative Editor"
+              title={canEdit ? "Open in Collaborative Editor" : "Open in Editor (View / Comment Only)"}
               data-testid="switch-to-editor-btn"
             >
-              <Edit3 className="w-3.5 h-3.5 text-cme-text-muted" />
-              <span className="sr-only">Edit</span>
+              {canEdit ? (
+                <Edit3 className="w-3.5 h-3.5 text-cme-text-muted" />
+              ) : (
+                <Lock className="w-3.5 h-3.5 text-amber-500" />
+              )}
+              <span className="sr-only">{canEdit ? 'Edit' : 'View in Editor'}</span>
             </Link>
           </div>
         </div>

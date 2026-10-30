@@ -367,6 +367,75 @@ int main() {
             assert(*perm_root == AccessLevel::None);
         }
 
+        // Test L: Document ACL Waterfall Precedence (Document COMMENT vs Inherited Root EDIT)
+        std::cout << "\n[TEST] Testing Document ACL Waterfall Precedence over Inherited Directory EDIT...\n";
+        {
+            pqxx::work l_tx(conn);
+            // 1. Grant Root directory EVERYONE -> EDIT
+            l_tx.exec(
+                "INSERT INTO permissions (target_type, directory_path, grantee_type, grantee_id, access_level, is_inheritable) "
+                "VALUES ('DIRECTORY', '', 'EVERYONE', NULL, 'EDIT', TRUE);"
+            );
+            // 2. Create document test/comment_only.md
+            auto r_doc = l_tx.exec(
+                "INSERT INTO documents (fs_path, title) VALUES ('test/comment_only.md', 'Comment Only Doc') RETURNING id::text;"
+            );
+            std::string c_doc_id = r_doc[0][0].as<std::string>();
+            // 3. Explicitly grant EVERYONE -> COMMENT on document
+            l_tx.exec_params(
+                "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level) "
+                "VALUES ('DOCUMENT', $1::uuid, 'EVERYONE', NULL, 'COMMENT');",
+                c_doc_id
+            );
+            l_tx.commit();
+
+            // Charlie should have COMMENT, NOT EDIT, because document explicit ACL takes precedence!
+            auto perm_c = PermissionEngine::check_permission(conn, charlie_id, c_doc_id, "test/comment_only.md");
+            assert(perm_c.has_value());
+            std::cout << "  - Charlie permission on test/comment_only.md: " << to_string(*perm_c) << "\n";
+            assert(*perm_c == AccessLevel::Comment);
+
+            // get_permission_details should report effective_level = COMMENT
+            auto details_c = PermissionEngine::get_permission_details(conn, charlie_id, "DOCUMENT", c_doc_id, "");
+            assert(details_c.has_value());
+            assert(details_c->effective_level == AccessLevel::Comment);
+            assert(!details_c->explicit_grants.empty());
+            assert(!details_c->inherited_grants.empty());
+
+            // 4. Also test User-specific restriction: Document has EVERYONE -> EDIT, but User has USER -> COMMENT
+            std::string u_doc_id;
+            {
+                pqxx::work u_tx(conn);
+                auto r_doc_u = u_tx.exec(
+                    "INSERT INTO documents (fs_path, title) VALUES ('test/user_restrict.md', 'User Restrict') RETURNING id::text;"
+                );
+                u_doc_id = r_doc_u[0][0].as<std::string>();
+                u_tx.exec_params(
+                    "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level) "
+                    "VALUES ('DOCUMENT', $1::uuid, 'EVERYONE', NULL, 'EDIT');",
+                    u_doc_id
+                );
+                u_tx.exec_params(
+                    "INSERT INTO permissions (target_type, target_id, grantee_type, grantee_id, access_level) "
+                    "VALUES ('DOCUMENT', $1::uuid, 'USER', $2::uuid, 'COMMENT');",
+                    u_doc_id, charlie_id
+                );
+                u_tx.commit();
+            }
+
+            auto perm_u = PermissionEngine::check_permission(conn, charlie_id, u_doc_id, "test/user_restrict.md");
+            assert(perm_u.has_value());
+            std::cout << "  - Charlie user-restricted permission on test/user_restrict.md: " << to_string(*perm_u) << "\n";
+            assert(*perm_u == AccessLevel::Comment);
+
+            // Clean up root grant and test docs
+            pqxx::work cl_tx(conn);
+            cl_tx.exec("DELETE FROM permissions WHERE target_type = 'DIRECTORY' AND COALESCE(directory_path, '') = '';");
+            cl_tx.exec_params("DELETE FROM permissions WHERE target_id IN ($1::uuid, $2::uuid);", c_doc_id, u_doc_id);
+            cl_tx.exec_params("DELETE FROM documents WHERE id IN ($1::uuid, $2::uuid);", c_doc_id, u_doc_id);
+            cl_tx.commit();
+        }
+
         std::cout << "\n[PASS] All db_permissions_dag_test test cases succeeded!\n";
 
         // Clean up test records
