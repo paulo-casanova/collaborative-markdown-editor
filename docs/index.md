@@ -4,7 +4,8 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 
 ## Documentation Index
 
-### 1. Project Implementation
+### 1. Architecture & Project Implementation
+* [System Architecture](Architecture.md): Complete technical specification of runtime components (Frontend, CME Server, AI Agent), communication channels, and protocols.
 * [Implementation Progress Log](implementation_log.md): Granular record of implemented phases, test runs, and verification criteria.
 
 ### 2. Database & Data Architecture
@@ -29,7 +30,7 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 * [Native Yjs CRDT C-FFI Architecture](crdt/yrs_ffi.md): Integration of `y-crdt` / `yrs` C-FFI (`libyrs`), `CrdtDoc` RAII model, and in-memory room coordination.
 * [In-Memory Room & Debounced Persistence](crdt/persistence.md): Debounced flusher lifecycle, date-partitioned snapshots, memory eviction, and transparent rehydration.
 
-### 6. Deployment & Operations *(Coming in Phase 7)*
+### 6. Deployment & Operations
+* [Building and Deploying CME](Building and Deploying.md): Step-by-step build instructions, deployment scenarios (Systemd standalone, Nginx/Caddy reverse proxy, Containerized, and AI companion sidecar), and maintenance runbooks.
 * **Configuration Reference**: Complete YAML schema and environment variable overrides.
-* **Deployment Topologies**: Embedded single-binary execution vs. Nginx reverse-proxy setup.
 * **Backup & Disaster Recovery**: Coordinated two-phase snapshotting, retention rotation, and recovery runbook.

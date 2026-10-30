@@ -4,73 +4,7 @@ This document provides a comprehensive operational guide for building, configuri
 
 ---
 
-## 1. Architecture Overview
-
-CME is architected as an enterprise-grade, low-latency, real-time collaborative editing platform engineered in C++20 and modern React/TypeScript.
-
-```mermaid
-flowchart TD
-    subgraph Clients["Client Layer"]
-        B["Browser (Vite + React 18)"]
-        CM["CodeMirror 6 + Live Preview"]
-        YJS_C["Yjs CRDT Client Engine"]
-        B --- CM
-        CM --- YJS_C
-    end
-
-    subgraph Gateway["Edge / Reverse Proxy (Optional)"]
-        RP["Reverse Proxy (Caddy / Nginx / Cloudflare)"]
-        SSO["SSO / OAuth2 / OIDC Auth Provider"]
-        RP -.->|Delegated Auth| SSO
-    end
-
-    subgraph Server["CME Server Daemon (C++20)"]
-        UWS["uWebSockets HTTP / WS Engine"]
-        RM["Collab Room Manager"]
-        PW["Persistence Worker (Debounced Auto-Save)"]
-        PE["Permissions Engine (RBAC DAG)"]
-        RS["Review & Text-Anchoring Service"]
-        AG["AI Agent WebSocket Gateway"]
-        UWS --- RM
-        UWS --- PE
-        UWS --- RS
-        UWS --- AG
-        RM --- PW
-    end
-
-    subgraph Storage["Persistence & Databases"]
-        PG[("PostgreSQL 14+\nRBAC, Revisions, Leases, Dialogs")]
-        FS[("POSIX Filesystem Storage\nMarkdown Content & Binary CRDT States")]
-        MOUNT["Virtual Prefix Mounts\n(/jcsat, /cme, /specs)"]
-        FS --- MOUNT
-    end
-
-    subgraph Agent["AI Agent Sidecar"]
-        CME_A["cme-agent (Python CLI)"]
-        LLM["LLMs (Claude, Gemini, Ollama)"]
-        CME_A --- LLM
-    end
-
-    Clients ==>|HTTPS / WSS| RP
-    RP ==>|X-Remote-User / WSS Upgrade| UWS
-    Clients -.->|Direct Port 8080| UWS
-    PW ==>|Atomic Writes & Snapshots| FS
-    PE ==>|ACLS & Waterfall Queries| PG
-    PW ==>|Revision History Insert| PG
-    CME_A <==>|Agent WS Protocol| AG
-```
-
-### Core Subsystems
-1. **Real-Time Collaborative Engine**: High-performance binary Yjs CRDT synchronization implemented over WebSocket via `uWebSockets`. Collaborative rooms operate in-memory with debounced disk persistence, preventing IO bottlenecks.
-2. **Dual-Store Persistence**:
-   - **POSIX Storage**: Markdown documents, bundle folders (`.bundle`), and binary CRDT states reside directly on the filesystem as standard `.md` files, ensuring interoperability with Git and external tools.
-   - **PostgreSQL**: Stores user identities, hashed credentials, permissions DAG, audit logs, AI dialogs, and immutable document revision histories.
-3. **Pluggable Mount System**: Virtual workspace prefixes (e.g., `cme/`, `jcsat/`) map dynamically to distinct physical directories on the host, enabling multi-repository editing.
-4. **Autonomous Agent Gateway**: Real-time sidecar bridge enabling LLM agents (Claude Code, Google Gemini, Ollama, OpenAI) to perform live diffs, suggestions, and threaded discussions.
-
----
-
-## 2. Prerequisites & Toolchain Requirements
+## Prerequisites & Toolchain Requirements
 
 ### Operating System
 * **Supported Platforms**: Linux (Ubuntu 22.04 LTS / 24.04 LTS, Debian 12+, Fedora 39+, RHEL 9+, Arch Linux).
@@ -119,7 +53,7 @@ sudo dnf install -y \
 
 ---
 
-## 3. Step-by-Step Build Instructions
+## Step-by-Step Build Instructions
 
 ### Step 3.1: Build the Frontend (Vite + React)
 The frontend must be compiled before running CME in embedded mode.
@@ -166,7 +100,7 @@ npm --prefix frontend run test:unit
 
 ---
 
-## 4. Database Setup & Migrations
+## Database Setup & Migrations
 
 CME uses PostgreSQL for relational data, access controls, and revision snapshots.
 
@@ -204,7 +138,7 @@ done
 
 ---
 
-## 5. Configuration Reference (`config.yaml`)
+## Configuration Reference (`config.yaml`)
 
 CME is configured via YAML (`config.yaml`) with command-line flag override support.
 
@@ -284,27 +218,27 @@ build/bin/cme-server \
 
 ---
 
-## 6. Deployment Scenarios
+## Deployment Scenarios
 
 ### Scenario A: Standalone Single-Host Deployment (Systemd)
 
 Best for single servers, internal development workstations, or isolated team appliances. CME serves the embedded UI and APIs from a single binary managed by `systemd`.
 
-#### 1. Create Dedicated Service User & Directories
+#### Create Dedicated Service User & Directories
 ```bash
 sudo useradd -r -s /usr/sbin/nologin -d /var/lib/cme cme
 sudo mkdir -p /var/lib/cme/storage /etc/cme /opt/cme/bin /opt/cme/ui
 sudo chown -R cme:cme /var/lib/cme /etc/cme /opt/cme
 ```
 
-#### 2. Install Binaries and Static Assets
+#### Install Binaries and Static Assets
 ```bash
 sudo cp build/bin/cme-server /opt/cme/bin/
 sudo cp -r frontend/dist/* /opt/cme/ui/
 sudo cp config.yaml /etc/cme/config.yaml
 ```
 
-#### 3. Systemd Unit File (`/etc/systemd/system/cme.service`)
+#### Systemd Unit File (`/etc/systemd/system/cme.service`)
 ```ini
 [Unit]
 Description=Collaborative Markdown Editor (CME) Daemon
@@ -335,7 +269,7 @@ PrivateTmp=true
 WantedBy=multi-user.target
 ```
 
-#### 4. Enable and Start Service
+#### Enable and Start Service
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now cme.service
@@ -528,7 +462,7 @@ flowchart LR
 
 The `cme-agent` Python CLI connects as an autonomous collaborative peer over WebSocket and REST APIs, offering AI document completions, inline suggestions, and review feedback.
 
-#### 1. Setup Virtual Environment & Install Requirements
+#### Setup Virtual Environment & Install Requirements
 ```bash
 cd /home/pasc/cme/cme-agent
 python3 -m venv .venv
@@ -536,10 +470,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-#### 2. Authenticating the Agent
+#### Authenticating the Agent
 Generate a Personal Access Token (`PAT`) from the CME UI or issue a delegated authorization header.
 
-#### 3. Run the Agent Companion
+#### Run the Agent Companion
 ```bash
 # Example: Pairing cme-agent with local Ollama
 cme-agent \
@@ -557,7 +491,7 @@ cme-agent \
 
 ---
 
-## 7. Operations, Backups & Maintenance
+## Operations, Backups & Maintenance
 
 ### Step 7.1: Health & Readiness Probes
 The server exposes an unauthenticated health probe at `GET /api/v1/health`:
@@ -633,13 +567,13 @@ echo "Backup complete: ${TARGET}"
 
 ---
 
-## 8. Troubleshooting FAQ
+## Troubleshooting FAQ
 
-### 1. "Session expired - reconnecting..." or Red Banner on Startup
+### "Session expired - reconnecting..." or Red Banner on Startup
 * **Cause**: Session token in browser localStorage has expired or reverse proxy is rejecting requests with `401 Unauthorized`.
 * **Fix**: Click the **Sign In** button on the red banner to open the credentials dialog, or refresh your SSO identity provider session.
 
-### 2. "Cannot acquire instance lease 'cme_server'"
+### "Cannot acquire instance lease 'cme_server'"
 * **Cause**: Another `cme-server` instance holds the leadership lease in PostgreSQL, or an unclean shutdown occurred within the last 10 seconds.
 * **Fix**: Wait 10 seconds for the lease TTL to expire, or inspect and clear the stale row:
   ```sql
@@ -647,10 +581,10 @@ echo "Backup complete: ${TARGET}"
   DELETE FROM instance_lease WHERE lease_name = 'cme_server';
   ```
 
-### 3. Document edits show "Comment-Only" or "Read-Only"
+### Document edits show "Comment-Only" or "Read-Only"
 * **Cause**: User's effective permission on the document or parent directory is `COMMENT` or `READ`.
 * **Fix**: A document owner or administrator can adjust access levels from the **Access Control (Permissions)** dialog or via `POST /api/v1/permissions`.
 
-### 4. WebSocket Fails to Connect Behind Nginx / Caddy
+### WebSocket Fails to Connect Behind Nginx / Caddy
 * **Cause**: Missing HTTP/1.1 or Connection Upgrade headers in reverse proxy.
 * **Fix**: Ensure proxy configuration forwards `Upgrade $http_upgrade` and `Connection "upgrade"`.
