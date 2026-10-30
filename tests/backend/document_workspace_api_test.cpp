@@ -310,6 +310,7 @@ int main() {
     srv_cfg.server.port = 18083;
     srv_cfg.storage.root_path = server_storage.string();
     srv_cfg.database.url = db_url;
+    srv_cfg.database.lease_enabled = false;
 
     auto server = std::make_shared<cme::server::Server>(srv_cfg);
     std::thread server_thread([server]() {
@@ -396,6 +397,32 @@ int main() {
         auto patch_json = nlohmann::json::parse(patch_resp.body);
         assert(patch_json["number_headers"] == true);
         std::cout << "  - PATCH /api/v1/documents/{id} updated number_headers metadata.\n";
+
+        // 2.5c GET /api/v1/documents/{id}/revisions
+        auto revs_resp = http_curl("GET", base_url + "/api/v1/documents/" + rest_doc_id + "/revisions", auth_header);
+        assert(revs_resp.status_code == 200);
+        auto revs_json = nlohmann::json::parse(revs_resp.body);
+        assert(revs_json.is_array());
+        assert(revs_json.size() >= 2);
+        assert(revs_json[0]["revision_number"] == 2);
+        assert(revs_json[0]["is_latest"] == true);
+        assert(revs_json[1]["revision_number"] == 1);
+        assert(revs_json[1]["is_latest"] == false);
+        std::cout << "  - GET /api/v1/documents/{id}/revisions returned revision summaries.\n";
+
+        // GET specific revision content
+        auto rev1_resp = http_curl("GET", base_url + "/api/v1/documents/" + rest_doc_id + "/revisions/1", auth_header);
+        assert(rev1_resp.status_code == 200);
+        auto rev1_json = nlohmann::json::parse(rev1_resp.body);
+        assert(rev1_json["revision_number"] == 1);
+        assert(rev1_json["content"] == "# Intro\nHello world");
+
+        auto rev2_resp = http_curl("GET", base_url + "/api/v1/documents/" + rest_doc_id + "/revisions/2", auth_header);
+        assert(rev2_resp.status_code == 200);
+        auto rev2_json = nlohmann::json::parse(rev2_resp.body);
+        assert(rev2_json["revision_number"] == 2);
+        assert(rev2_json["content"] == "# Intro\nCollaborative Live Edit");
+        std::cout << "  - GET /api/v1/documents/{id}/revisions/{rev} returned revision snapshots.\n";
     }
 
     // 2.6 PATCH /api/v1/documents/{id}/move

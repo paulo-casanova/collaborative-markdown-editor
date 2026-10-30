@@ -345,6 +345,23 @@ Result<DocumentRecord> DocumentService::create_document(
             .updated_at = row[0][6].as<std::string>()
         };
 
+        // Record initial Revision 1
+        std::string author = user.display_name.empty() ? user.username : user.display_name;
+        if (author.empty()) author = "Author";
+        if (!user.user_id.empty() && is_valid_uuid(user.user_id)) {
+            tx.exec_params(
+                "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content) "
+                "VALUES ($1::uuid, 1, $2::uuid, $3, $4);",
+                doc.id, user.user_id, author, req.content
+            );
+        } else {
+            tx.exec_params(
+                "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content) "
+                "VALUES ($1::uuid, 1, NULL, $2, $3);",
+                doc.id, author, req.content
+            );
+        }
+
         tx.commit();
         return doc;
     } catch (const std::exception& e) {
@@ -1101,6 +1118,45 @@ Result<DocumentRecord> DocumentService::update_document(
 
         std::string created_at = up_rows[0][0].as<std::string>();
         std::string updated_at = up_rows[0][1].as<std::string>();
+
+        // Record revision if content was updated
+        if (content.has_value()) {
+            auto rev_rows = tx.exec_params(
+                "SELECT revision_number, content FROM document_revisions "
+                "WHERE document_id = $1::uuid ORDER BY revision_number DESC LIMIT 1;",
+                doc_id
+            );
+
+            bool needs_rev = true;
+            int next_rev = 1;
+            if (!rev_rows.empty()) {
+                std::string last_content = rev_rows[0][1].as<std::string>();
+                if (last_content == final_content) {
+                    needs_rev = false;
+                } else {
+                    next_rev = rev_rows[0][0].as<int>() + 1;
+                }
+            }
+
+            if (needs_rev) {
+                std::string author = user.display_name.empty() ? user.username : user.display_name;
+                if (author.empty()) author = "Editor";
+                if (!user.user_id.empty() && is_valid_uuid(user.user_id)) {
+                    tx.exec_params(
+                        "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content) "
+                        "VALUES ($1::uuid, $2, $3::uuid, $4, $5);",
+                        doc_id, next_rev, user.user_id, author, final_content
+                    );
+                } else {
+                    tx.exec_params(
+                        "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content) "
+                        "VALUES ($1::uuid, $2, NULL, $3, $4);",
+                        doc_id, next_rev, author, final_content
+                    );
+                }
+            }
+        }
+
         tx.commit();
 
         std::cout << "[INFO] [SAVE] Successfully saved document " << doc_id
@@ -3273,6 +3329,234 @@ Result<nlohmann::json> DocumentService::get_assignable_principals(
         };
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] get_assignable_principals failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<DocumentRevision> DocumentService::record_revision(
+    const std::string& doc_id,
+    const std::string& content,
+    const std::string& author_id,
+    const std::string& author_name,
+    const nlohmann::json& metadata
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        // Check latest revision
+        auto rev_rows = tx.exec_params(
+            "SELECT id, revision_number, content, TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+            "FROM document_revisions "
+            "WHERE document_id = $1::uuid "
+            "ORDER BY revision_number DESC "
+            "LIMIT 1;",
+            doc_id
+        );
+
+        if (!rev_rows.empty()) {
+            std::string last_content = rev_rows[0][2].as<std::string>();
+            if (last_content == content) {
+                // Content identical, return existing latest revision
+                return DocumentRevision{
+                    .id = rev_rows[0][0].as<std::string>(),
+                    .document_id = doc_id,
+                    .revision_number = rev_rows[0][1].as<int>(),
+                    .author_id = author_id,
+                    .author_name = author_name,
+                    .content = content,
+                    .created_at = rev_rows[0][3].as<std::string>(),
+                    .byte_size = content.size(),
+                    .is_latest = true
+                };
+            }
+        }
+
+        int next_rev = rev_rows.empty() ? 1 : (rev_rows[0][1].as<int>() + 1);
+        std::string safe_author_name = author_name.empty() ? "Author" : author_name;
+
+        pqxx::result ins_rows;
+        if (!author_id.empty() && is_valid_uuid(author_id)) {
+            ins_rows = tx.exec_params(
+                "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content, metadata) "
+                "VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6::jsonb) "
+                "RETURNING id, TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+                doc_id, next_rev, author_id, safe_author_name, content, metadata.dump()
+            );
+        } else {
+            ins_rows = tx.exec_params(
+                "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content, metadata) "
+                "VALUES ($1::uuid, $2, NULL, $3, $4, $5::jsonb) "
+                "RETURNING id, TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+                doc_id, next_rev, safe_author_name, content, metadata.dump()
+            );
+        }
+
+        std::string rev_id = ins_rows[0][0].as<std::string>();
+        std::string created_at = ins_rows[0][1].as<std::string>();
+        tx.commit();
+
+        return DocumentRevision{
+            .id = rev_id,
+            .document_id = doc_id,
+            .revision_number = next_rev,
+            .author_id = author_id,
+            .author_name = safe_author_name,
+            .content = content,
+            .created_at = created_at,
+            .byte_size = content.size(),
+            .is_latest = true
+        };
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [REVISION] Failed to record revision: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<std::vector<DocumentRevision>> DocumentService::list_revisions(
+    const std::string& doc_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+
+    // Check read permission
+    auto doc_res = get_document_by_id(doc_id, user);
+    if (!doc_res.has_value()) {
+        return std::unexpected(doc_res.error());
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        auto rows = tx.exec_params(
+            "SELECT id, document_id, revision_number, COALESCE(author_id::text, ''), author_name, "
+            "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), LENGTH(content) "
+            "FROM document_revisions "
+            "WHERE document_id = $1::uuid "
+            "ORDER BY revision_number DESC;",
+            doc_id
+        );
+
+        if (rows.empty()) {
+            // Seed revision 1 from existing document
+            std::string author = user.display_name.empty() ? user.username : user.display_name;
+            if (author.empty()) author = "Author";
+            
+            std::string owner = (!doc_res->owner_user_id.empty() && is_valid_uuid(doc_res->owner_user_id))
+                ? doc_res->owner_user_id
+                : user.user_id;
+
+            pqxx::result ins_rows;
+            if (!owner.empty() && is_valid_uuid(owner)) {
+                ins_rows = tx.exec_params(
+                    "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content) "
+                    "VALUES ($1::uuid, 1, $2::uuid, $3, $4) "
+                    "RETURNING id, TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+                    doc_id, owner, author, doc_res->content
+                );
+            } else {
+                ins_rows = tx.exec_params(
+                    "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content) "
+                    "VALUES ($1::uuid, 1, NULL, $2, $3) "
+                    "RETURNING id, TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+                    doc_id, author, doc_res->content
+                );
+            }
+            tx.commit();
+
+            return std::vector<DocumentRevision>{
+                DocumentRevision{
+                    .id = ins_rows[0][0].as<std::string>(),
+                    .document_id = doc_id,
+                    .revision_number = 1,
+                    .author_id = owner,
+                    .author_name = author,
+                    .content = "",
+                    .created_at = ins_rows[0][1].as<std::string>(),
+                    .byte_size = doc_res->content.size(),
+                    .is_latest = true
+                }
+            };
+        }
+
+        std::vector<DocumentRevision> result;
+        result.reserve(rows.size());
+        int max_rev = rows[0][2].as<int>();
+
+        for (const auto& r : rows) {
+            int rev_num = r[2].as<int>();
+            result.push_back(DocumentRevision{
+                .id = r[0].as<std::string>(),
+                .document_id = r[1].as<std::string>(),
+                .revision_number = rev_num,
+                .author_id = r[3].as<std::string>(),
+                .author_name = r[4].as<std::string>(),
+                .content = "",
+                .created_at = r[5].as<std::string>(),
+                .byte_size = r[6].as<size_t>(),
+                .is_latest = (rev_num == max_rev)
+            });
+        }
+        return result;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [REVISION] Failed to list revisions: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<DocumentRevision> DocumentService::get_revision(
+    const std::string& doc_id,
+    int revision_number,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+
+    // Check read permission
+    auto doc_res = get_document_by_id(doc_id, user);
+    if (!doc_res.has_value()) {
+        return std::unexpected(doc_res.error());
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        auto rows = tx.exec_params(
+            "SELECT id, document_id, revision_number, COALESCE(author_id::text, ''), author_name, "
+            "       content, TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "       (revision_number = (SELECT MAX(revision_number) FROM document_revisions WHERE document_id = $1::uuid)) "
+            "FROM document_revisions "
+            "WHERE document_id = $1::uuid AND revision_number = $2;",
+            doc_id, revision_number
+        );
+
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        const auto& r = rows[0];
+        std::string content = r[5].as<std::string>();
+        return DocumentRevision{
+            .id = r[0].as<std::string>(),
+            .document_id = r[1].as<std::string>(),
+            .revision_number = r[2].as<int>(),
+            .author_id = r[3].as<std::string>(),
+            .author_name = r[4].as<std::string>(),
+            .content = content,
+            .created_at = r[6].as<std::string>(),
+            .byte_size = content.size(),
+            .is_latest = r[7].as<bool>()
+        };
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [REVISION] Failed to get revision: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
 }

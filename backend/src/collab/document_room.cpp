@@ -151,4 +151,37 @@ std::vector<PeerInfo> DocumentRoom::list_peers() const {
     return result;
 }
 
+void DocumentRoom::record_editor(const std::string& user_id, const std::string& display_name) {
+    std::lock_guard lock(mutex_);
+    if (!user_id.empty()) {
+        last_editor_id_ = user_id;
+    }
+    std::string name = display_name.empty() ? "Collaborator" : display_name;
+    if (recent_editors_.empty() || recent_editors_.back() != name) {
+        // Only add if not already in list or keep unique set
+        bool found = false;
+        for (const auto& ed : recent_editors_) {
+            if (ed == name) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            recent_editors_.push_back(std::move(name));
+        }
+    }
+}
+
+std::vector<std::string> DocumentRoom::get_and_clear_recent_editors() {
+    std::lock_guard lock(mutex_);
+    std::vector<std::string> editors = std::move(recent_editors_);
+    recent_editors_.clear();
+    return editors;
+}
+
+std::string DocumentRoom::last_editor_id() const {
+    std::lock_guard lock(mutex_);
+    return last_editor_id_;
+}
+
 } // namespace cme::collab

@@ -2108,6 +2108,85 @@ Result<void> Server::start() {
         res->end(raw_content);
     });
 
+    // GET /api/v1/documents/:id/revisions
+    app.get("/api/v1/documents/:id/revisions", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto revs_res = document_service_->list_revisions(doc_id, *auth_res.value());
+        if (!revs_res.has_value()) {
+            if (revs_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Document not found"}});
+            } else if (revs_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list revisions"}});
+            }
+            return;
+        }
+
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& r : *revs_res) {
+            out.push_back(r.to_json(false));
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    // GET /api/v1/documents/:id/revisions/:rev
+    app.get("/api/v1/documents/:id/revisions/:rev", [this](auto *res, auto *req) {
+        std::string doc_id = std::string(req->getParameter(0));
+        std::string rev_param = std::string(req->getParameter(1));
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        int rev_num = 0;
+        try {
+            rev_num = std::stoi(rev_param);
+        } catch (...) {
+            send_json(res, "400 Bad Request", {{"error", "Invalid revision number"}});
+            return;
+        }
+
+        auto rev_res = document_service_->get_revision(doc_id, rev_num, *auth_res.value());
+        if (!rev_res.has_value()) {
+            if (rev_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Revision not found"}});
+            } else if (rev_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to get revision"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", rev_res->to_json(true));
+    });
+
     // PATCH /api/v1/documents/:id/move
     app.patch("/api/v1/documents/:id/move", [this, check_barrier](auto *res, auto *req) {
         if (check_barrier(res)) return;
@@ -5250,6 +5329,7 @@ Result<void> Server::start() {
                                 auto apply_res = room->apply_client_update(update_data);
                                 if (apply_res.has_value()) {
                                     if (room->is_dirty()) {
+                                        room->record_editor(data->user_id, data->display_name.empty() ? data->username : data->display_name);
                                         std::string broadcast_msg;
                                         broadcast_msg.reserve(2 + sub_payload.size());
                                         broadcast_msg.push_back('\x00');
@@ -5303,6 +5383,7 @@ Result<void> Server::start() {
                                 auto apply_res = room->apply_client_update(update_data);
                                 if (apply_res.has_value()) {
                                     if (room->is_dirty()) {
+                                        room->record_editor(data->user_id, data->display_name.empty() ? data->username : data->display_name);
                                         ws->publish(data->topic, msg, uWS::OpCode::BINARY);
                                     } else {
                                         auto diff = room->compute_sync_step2({});

@@ -143,6 +143,10 @@ public:
     [[nodiscard]] size_t peer_count() const;
     [[nodiscard]] std::vector<PeerInfo> list_peers() const;
 
+    void record_editor(const std::string& user_id, const std::string& display_name);
+    [[nodiscard]] std::vector<std::string> get_and_clear_recent_editors();
+    [[nodiscard]] std::string last_editor_id() const;
+
     [[nodiscard]] CrdtDoc& doc() noexcept { return doc_; }
     [[nodiscard]] const CrdtDoc& doc() const noexcept { return doc_; }
 
@@ -161,6 +165,8 @@ private:
     std::chrono::system_clock::time_point last_flush_time_;
 
     std::unordered_map<std::string, PeerInfo> peers_;
+    std::vector<std::string> recent_editors_;
+    std::string last_editor_id_;
 };
 
 } // namespace cme::collab

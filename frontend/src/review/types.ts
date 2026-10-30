@@ -87,7 +87,7 @@ export interface SuggestionRecord {
   id: string;
   document_id: string;
   author: AuthorInfo;
-  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'ARCHIVED';
+  status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'ARCHIVED' | 'REVISION_DIFF';
   original_text: string;
   suggested_text: string;
   anchor: DualAnchor | any;

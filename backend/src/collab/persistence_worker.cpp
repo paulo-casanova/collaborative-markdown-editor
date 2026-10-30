@@ -145,7 +145,7 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
         }
     }
 
-    // 4. Update PostgreSQL updated_at timestamp
+    // 4. Update PostgreSQL updated_at timestamp & record revision
     if (db_pool_ && !room.document_id().empty() && is_valid_uuid(room.document_id())) {
         auto conn_res = db_pool_->acquire();
         if (conn_res.has_value()) {
@@ -155,8 +155,56 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
                     "UPDATE documents SET updated_at = NOW() WHERE id = $1::uuid;",
                     room.document_id()
                 );
+
+                // Check latest revision content
+                auto rev_rows = tx.exec_params(
+                    "SELECT revision_number, content FROM document_revisions "
+                    "WHERE document_id = $1::uuid ORDER BY revision_number DESC LIMIT 1;",
+                    room.document_id()
+                );
+
+                bool needs_rev = true;
+                int next_rev = 1;
+                if (!rev_rows.empty()) {
+                    std::string last_content = rev_rows[0][1].as<std::string>();
+                    if (last_content == snapshot.content) {
+                        needs_rev = false;
+                    } else {
+                        next_rev = rev_rows[0][0].as<int>() + 1;
+                    }
+                }
+
+                if (needs_rev) {
+                    auto editors = room.get_and_clear_recent_editors();
+                    std::string author_str = "Collaborator";
+                    if (!editors.empty()) {
+                        std::string combined;
+                        for (size_t i = 0; i < editors.size(); ++i) {
+                            if (i > 0) combined += ", ";
+                            combined += editors[i];
+                        }
+                        author_str = std::move(combined);
+                    }
+                    std::string author_id_str = room.last_editor_id();
+
+                    if (!author_id_str.empty() && is_valid_uuid(author_id_str)) {
+                        tx.exec_params(
+                            "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content) "
+                            "VALUES ($1::uuid, $2, $3::uuid, $4, $5);",
+                            room.document_id(), next_rev, author_id_str, author_str, snapshot.content
+                        );
+                    } else {
+                        tx.exec_params(
+                            "INSERT INTO document_revisions (document_id, revision_number, author_id, author_name, content) "
+                            "VALUES ($1::uuid, $2, NULL, $3, $4);",
+                            room.document_id(), next_rev, author_str, snapshot.content
+                        );
+                    }
+                }
                 tx.commit();
-            } catch (...) {}
+            } catch (const std::exception& e) {
+                std::cerr << "[WARN] Failed to record revision during persistence: " << e.what() << "\n";
+            }
         }
     }
 

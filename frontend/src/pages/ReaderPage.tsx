@@ -16,6 +16,7 @@ import {
   GitPullRequest,
   RotateCw,
   Sparkles,
+  History,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -27,14 +28,18 @@ import { createDualAnchor, reconcileAnchor } from '../review/textAnchoring';
 import { applyUnifiedDiff, computeReplacementChange } from '../utils/diffPatcher';
 import { NewCommentModal } from '../components/review/NewCommentModal';
 import { NewSuggestionModal } from '../components/review/NewSuggestionModal';
+import { DocumentHistoryModal } from '../components/history/DocumentHistoryModal';
 import {
   fetchDocument,
   fetchDocumentByPath,
+  fetchDocumentRevisions,
+  fetchDocumentRevision,
   findWorkspacePath,
   getWorkspaceFileUrl,
   isMarkdownPath,
   updateDocument,
 } from '../api/documents';
+import { computeRevisionDiffSuggestions } from '../utils/revisionDiff';
 import {
   acceptSuggestion,
   rejectSuggestion,
@@ -178,6 +183,86 @@ export const ReaderPage: React.FC = () => {
     enabled: Boolean(docId),
   });
 
+  // Document revision history & historical viewing state
+  const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const [selectedRevNumber, setSelectedRevNumber] = useState<number | null>(null);
+  const [showNextRevDiff, setShowNextRevDiff] = useState(true);
+
+  // Reset selected revision when document id changes
+  useEffect(() => {
+    setSelectedRevNumber(null);
+  }, [docId]);
+
+  // Query document revision history
+  const {
+    data: revisions = [],
+    isLoading: isLoadingRevisions,
+  } = useQuery({
+    queryKey: ['document-revisions', docId],
+    queryFn: () => (docId ? fetchDocumentRevisions(docId) : Promise.resolve([])),
+    enabled: Boolean(docId),
+  });
+
+  const isHistorical = selectedRevNumber !== null;
+
+  // Selected revision detail
+  const {
+    data: selectedRevisionDetail,
+    isLoading: isLoadingSelectedRevision,
+  } = useQuery({
+    queryKey: ['document-revision', docId, selectedRevNumber],
+    queryFn: () =>
+      docId && selectedRevNumber !== null
+        ? fetchDocumentRevision(docId, selectedRevNumber)
+        : Promise.resolve(null),
+    enabled: Boolean(docId && selectedRevNumber !== null),
+  });
+
+  // Next revision detail (to compute line diff against)
+  const nextRevNumber = useMemo(() => {
+    if (selectedRevNumber === null || !revisions.length) return null;
+    const higherRevs = revisions
+      .filter((r) => r.revision_number > selectedRevNumber)
+      .sort((a, b) => a.revision_number - b.revision_number);
+    return higherRevs.length > 0 ? higherRevs[0].revision_number : null;
+  }, [revisions, selectedRevNumber]);
+
+  const { data: nextRevisionDetail } = useQuery({
+    queryKey: ['document-revision', docId, nextRevNumber],
+    queryFn: () =>
+      docId && nextRevNumber !== null
+        ? fetchDocumentRevision(docId, nextRevNumber)
+        : Promise.resolve(null),
+    enabled: Boolean(docId && nextRevNumber !== null && isHistorical && showNextRevDiff),
+  });
+
+  const revisionDiffSuggestions = useMemo(() => {
+    if (!isHistorical || !showNextRevDiff || !selectedRevisionDetail || !nextRevisionDetail) {
+      return [];
+    }
+    return computeRevisionDiffSuggestions(
+      docId,
+      selectedRevisionDetail.content,
+      nextRevisionDetail.content,
+      nextRevisionDetail.revision_number,
+      {
+        id: nextRevisionDetail.author_id,
+        name: nextRevisionDetail.author_name,
+      },
+      nextRevisionDetail.created_at
+    );
+  }, [
+    isHistorical,
+    showNextRevDiff,
+    selectedRevisionDetail,
+    nextRevisionDetail,
+    docId,
+  ]);
+
+  const activeContent = isHistorical
+    ? (selectedRevisionDetail?.content ?? '')
+    : (document?.content ?? '');
+
   const queryClient = useQueryClient();
 
   // Poll server every 5 seconds to check if a new version or comments exist (Issue #19)
@@ -284,6 +369,7 @@ export const ReaderPage: React.FC = () => {
   });
 
   const canComment = useMemo(() => {
+    if (selectedRevNumber !== null) return false;
     if (!currentUser) return false;
     if (currentUser.is_system_admin || currentUser.is_admin) return true;
     if (document?.owner_user_id && document.owner_user_id === currentUser.id) return true;
@@ -293,7 +379,7 @@ export const ReaderPage: React.FC = () => {
       return eff === 'comment' || eff === 'edit' || eff === 'admin';
     }
     return true;
-  }, [currentUser, document?.owner_user_id, nodePerms]);
+  }, [currentUser, document?.owner_user_id, nodePerms, selectedRevNumber]);
 
   useEffect(() => {
     if (docId) {
@@ -663,9 +749,9 @@ export const ReaderPage: React.FC = () => {
 
   // Headings extracted for Table of Contents
   const headings = useMemo(() => {
-    if (!document?.content) return [];
-    return extractHeadingsFromMarkdown(document.content, numberHeaders);
-  }, [document?.content, numberHeaders]);
+    if (!activeContent) return [];
+    return extractHeadingsFromMarkdown(activeContent, numberHeaders);
+  }, [activeContent, numberHeaders]);
 
   const renderCommentCard = useCallback(
     (comment: CommentRecord) => {
@@ -922,6 +1008,7 @@ export const ReaderPage: React.FC = () => {
 
   const renderSuggestionCard = useCallback(
     (sugg: SuggestionRecord) => {
+      const isRevisionDiff = sugg.status === 'REVISION_DIFF';
       const isPending = (sugg.status || '').toLowerCase() === 'pending';
       const isAccepted = (sugg.status || '').toLowerCase() === 'accepted';
       const author = sugg.author || {
@@ -930,15 +1017,17 @@ export const ReaderPage: React.FC = () => {
         display_name: 'Reviewer',
         avatar_color: '#10b981',
       };
-      const authorName = author.display_name || author.username || 'Reviewer';
-      const authorColor = author.avatar_color || '#10b981';
+      const authorName = author.display_name || author.username || (isRevisionDiff ? 'Next Revision' : 'Reviewer');
+      const authorColor = author.avatar_color || (isRevisionDiff ? '#8b5cf6' : '#10b981');
       const initials = authorName.slice(0, 2).toUpperCase();
 
       return (
         <div
           key={sugg.id}
           className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 my-2.5 not-prose ${
-            isAccepted
+            isRevisionDiff
+              ? 'border-l-indigo-500'
+              : isAccepted
               ? 'border-l-emerald-500'
               : isPending
               ? 'border-l-amber-500'
@@ -946,6 +1035,7 @@ export const ReaderPage: React.FC = () => {
           }`}
           data-testid="suggestion-item"
           data-suggestion-id={sugg.id}
+          data-is-revision-diff={isRevisionDiff ? 'true' : 'false'}
         >
           {/* Diff Header */}
           <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
@@ -962,17 +1052,19 @@ export const ReaderPage: React.FC = () => {
               </span>
               <span
                 className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
-                  isAccepted
+                  isRevisionDiff
+                    ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'
+                    : isAccepted
                     ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
                     : isPending
                     ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
                     : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
                 }`}
               >
-                {sugg.status}
+                {isRevisionDiff ? 'Next Rev Diff' : sugg.status}
               </span>
             </div>
-            {isPending && (
+            {!isRevisionDiff && isPending && (
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
                   type="button"
@@ -996,18 +1088,22 @@ export const ReaderPage: React.FC = () => {
 
           {/* Unified Diff Block */}
           <div className="font-mono text-xs divide-y divide-cme-border-base/30 bg-cme-bg-surface">
-            <div className="diff-deletion flex items-start gap-2 px-2.5 py-1 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
-              <span className="select-none font-bold text-rose-500 flex-shrink-0">-</span>
-              <span className="line-through whitespace-pre-wrap break-all leading-relaxed">
-                {sugg.original_text}
-              </span>
-            </div>
-            <div className="diff-addition flex items-start gap-2 px-2.5 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
-              <span className="select-none font-bold text-emerald-500 flex-shrink-0">+</span>
-              <span className="whitespace-pre-wrap break-all leading-relaxed">
-                {sugg.suggested_text}
-              </span>
-            </div>
+            {Boolean(sugg.original_text) && (
+              <div className="diff-deletion flex items-start gap-2 px-2.5 py-1 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
+                <span className="select-none font-bold text-rose-500 flex-shrink-0">-</span>
+                <span className="line-through whitespace-pre-wrap break-all leading-relaxed">
+                  {sugg.original_text}
+                </span>
+              </div>
+            )}
+            {Boolean(sugg.suggested_text) && (
+              <div className="diff-addition flex items-start gap-2 px-2.5 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
+                <span className="select-none font-bold text-emerald-500 flex-shrink-0">+</span>
+                <span className="whitespace-pre-wrap break-all leading-relaxed">
+                  {sugg.suggested_text}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       );
@@ -1015,37 +1111,48 @@ export const ReaderPage: React.FC = () => {
     [handleAcceptSuggestion, handleRejectSuggestion]
   );
 
+  const effectiveSuggestions = useMemo(() => {
+    if (isHistorical) {
+      return showNextRevDiff ? revisionDiffSuggestions : [];
+    }
+    return showReviews ? suggestions : [];
+  }, [isHistorical, showNextRevDiff, revisionDiffSuggestions, showReviews, suggestions]);
+
+  const effectiveComments = useMemo(() => {
+    if (isHistorical) return [];
+    return showReviews ? comments : [];
+  }, [isHistorical, showReviews, comments]);
+
   // Render markdown content into rich blocks with IDs on headings
   const renderedContent = useMemo(() => {
-    if (!document?.content) return null;
+    if (!activeContent) return null;
     return renderMarkdown(
-      document.content,
+      activeContent,
       (code, id) => {
         navigator.clipboard.writeText(code);
         setCopiedCodeId(id);
         setTimeout(() => setCopiedCodeId(null), 2000);
       },
       copiedCodeId,
-      document.id || document.path || '',
-      document.content || '',
-      document.path || '',
+      document?.id || document?.path || '',
+      activeContent,
+      document?.path || '',
       numberHeaders,
-      showReviews ? comments : [],
+      effectiveComments,
       renderCommentCard,
-      showReviews ? suggestions : [],
+      effectiveSuggestions,
       renderSuggestionCard
     );
   }, [
+    activeContent,
     document?.id,
     document?.path,
-    document?.content,
     copiedCodeId,
     numberHeaders,
     linkValVer,
-    showReviews,
-    comments,
+    effectiveComments,
     renderCommentCard,
-    suggestions,
+    effectiveSuggestions,
     renderSuggestionCard,
   ]);
 
@@ -1254,10 +1361,30 @@ export const ReaderPage: React.FC = () => {
               <span className="sr-only">{copiedPermalink ? 'Copied!' : 'Permalink'}</span>
             </button>
 
+            {/* Revision History */}
+            <button
+              onClick={() => setHistoryModalOpen(true)}
+              className={`p-1.5 rounded-lg border transition-colors ${
+                isHistorical
+                  ? 'bg-indigo-500/10 border-indigo-500/40 text-indigo-600 dark:text-indigo-400 shadow-xs'
+                  : 'border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base'
+              }`}
+              title={`Revision History (${revisions.length} revision${revisions.length === 1 ? '' : 's'})${
+                isHistorical ? ` — Viewing v${selectedRevNumber}` : ''
+              }`}
+              data-testid="reader-history-btn"
+            >
+              <History className="w-3.5 h-3.5" />
+              <span className="sr-only">Revision History</span>
+            </button>
+
             {/* Switch to Edit Mode */}
             <Link
               to={`/documents/${document.id}`}
-              onClick={() => setViewMode('edit')}
+              onClick={() => {
+                setSelectedRevNumber(null);
+                setViewMode('edit');
+              }}
               className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-base transition-colors"
               title="Open in Collaborative Editor"
               data-testid="switch-to-editor-btn"
@@ -1304,12 +1431,87 @@ export const ReaderPage: React.FC = () => {
             </div>
           )}
 
+          {isHistorical && (
+            <div
+              data-testid="historical-revision-banner"
+              className="mb-6 p-4 rounded-xl border border-indigo-500/30 bg-indigo-500/5 dark:bg-indigo-500/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs shadow-xs animate-in fade-in slide-in-from-top-1 duration-200"
+            >
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex-shrink-0">
+                  <History className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-cme-text-base text-sm" data-testid="historical-banner-title">
+                      Viewing Revision v{selectedRevNumber}
+                    </span>
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium">
+                      Historical Snapshot
+                    </span>
+                  </div>
+                  <p className="text-cme-text-muted mt-0.5 text-xs">
+                    Edited by <strong className="text-cme-text-base">{selectedRevisionDetail?.author_name || 'Author'}</strong>
+                    {selectedRevisionDetail?.created_at && (
+                      <> on {new Date(selectedRevisionDetail.created_at).toLocaleString()}</>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {nextRevNumber !== null && (
+                  <label
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface text-cme-text-base text-xs cursor-pointer select-none hover:bg-cme-bg-hover transition-colors"
+                    title={`Highlight changes between v${selectedRevNumber} and v${nextRevNumber} inline`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={showNextRevDiff}
+                      onChange={(e) => setShowNextRevDiff(e.target.checked)}
+                      className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      data-testid="toggle-next-rev-diff"
+                    />
+                    <span>Show changes to v{nextRevNumber}</span>
+                  </label>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedRevNumber(null)}
+                  className="px-3 py-1.5 rounded-lg border border-indigo-500/40 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-medium text-xs transition-colors cursor-pointer"
+                  data-testid="return-to-latest-btn"
+                >
+                  Return to Latest
+                </button>
+                <Link
+                  to={`/documents/${document.id}`}
+                  onClick={() => {
+                    setSelectedRevNumber(null);
+                    setViewMode('edit');
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-cme-primary hover:bg-cme-primary/90 text-white font-medium text-xs transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  data-testid="edit-latest-from-history-btn"
+                  title="Editing is always performed on the latest version"
+                >
+                  <Edit3 className="w-3 h-3" />
+                  <span>Edit Latest Version</span>
+                </Link>
+              </div>
+            </div>
+          )}
+
           <article
             ref={articleRef}
             className={`prose dark:prose-invert max-w-none text-cme-text-base ${fontClass} leading-relaxed`}
             data-testid="reader-article"
           >
-            {renderedContent}
+            {isLoadingSelectedRevision ? (
+              <div className="py-16 flex flex-col items-center justify-center gap-3 text-cme-text-muted" data-testid="revision-loading-spinner">
+                <RotateCw className="w-6 h-6 animate-spin text-indigo-500" />
+                <span className="text-xs">Loading revision snapshot...</span>
+              </div>
+            ) : (
+              renderedContent
+            )}
           </article>
         </main>
 
@@ -1318,7 +1520,7 @@ export const ReaderPage: React.FC = () => {
           <div className="border border-cme-border-base rounded-2xl bg-cme-bg-surface overflow-hidden shadow-sm">
             <DocumentOutline
               headings={headings}
-              markdown={document.content}
+              markdown={activeContent}
               onSelectHeading={(id) => scrollTarget(id)}
             />
           </div>
@@ -1407,6 +1609,21 @@ export const ReaderPage: React.FC = () => {
       {/* Review Modals */}
       <NewSuggestionModal />
       <NewCommentModal />
+
+      {/* Revision History Modal */}
+      {document && (
+        <DocumentHistoryModal
+          isOpen={historyModalOpen}
+          onClose={() => setHistoryModalOpen(false)}
+          documentId={document.id}
+          documentTitle={document.title || 'Document'}
+          revisions={revisions}
+          selectedRevisionNumber={selectedRevNumber}
+          onSelectRevision={(revNum) => setSelectedRevNumber(revNum)}
+          onReturnToLatest={() => setSelectedRevNumber(null)}
+          isLoading={isLoadingRevisions}
+        />
+      )}
     </div>
   );
 };

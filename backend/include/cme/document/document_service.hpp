@@ -54,6 +54,39 @@ struct DocumentRecord {
 };
 
 /**
+ * @struct DocumentRevision
+ * @brief Immutable historical snapshot of document content and authorship.
+ */
+struct DocumentRevision {
+    std::string id;
+    std::string document_id;
+    int revision_number{1};
+    std::string author_id;
+    std::string author_name;
+    std::string content;
+    std::string created_at;
+    size_t byte_size{0};
+    bool is_latest{false};
+
+    [[nodiscard]] nlohmann::json to_json(bool include_content = true) const {
+        nlohmann::json j = {
+            {"id", id},
+            {"document_id", document_id},
+            {"revision_number", revision_number},
+            {"author_id", author_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(author_id)},
+            {"author_name", author_name},
+            {"created_at", created_at},
+            {"byte_size", byte_size > 0 ? byte_size : content.size()},
+            {"is_latest", is_latest}
+        };
+        if (include_content) {
+            j["content"] = content;
+        }
+        return j;
+    }
+};
+
+/**
  * @struct CreateDocumentRequest
  * @brief Request parameters for document instantiation.
  */
@@ -373,6 +406,34 @@ public:
      * @brief Lists available users and teams for permission assignment.
      */
     Result<nlohmann::json> get_assignable_principals(
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Records an immutable revision entry if content has changed.
+     */
+    Result<DocumentRevision> record_revision(
+        const std::string& doc_id,
+        const std::string& content,
+        const std::string& author_id,
+        const std::string& author_name,
+        const nlohmann::json& metadata = nlohmann::json::object()
+    );
+
+    /**
+     * @brief Lists all revisions for a document, ordered descending by revision number.
+     */
+    Result<std::vector<DocumentRevision>> list_revisions(
+        const std::string& doc_id,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Fetches a specific revision of a document by revision number.
+     */
+    Result<DocumentRevision> get_revision(
+        const std::string& doc_id,
+        int revision_number,
         const auth::UserIdentity& user
     );
 

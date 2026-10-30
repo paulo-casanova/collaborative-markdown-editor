@@ -475,5 +475,36 @@ export async function fetchDirectoryDashboard(path: string): Promise<DirectoryDa
   return apiRequest<DirectoryDashboard>(`/api/v1/workspaces/directory-details?path=${encodeURIComponent(path || '')}`);
 }
 
+export interface DocumentRevisionSummary {
+  id: string;
+  document_id: string;
+  revision_number: number;
+  author_id: string | null;
+  author_name: string;
+  created_at: string;
+  byte_size: number;
+  is_latest: boolean;
+}
+
+export interface DocumentRevisionDetail extends DocumentRevisionSummary {
+  content: string;
+}
+
+export async function fetchDocumentRevisions(documentId: string): Promise<DocumentRevisionSummary[]> {
+  try {
+    return await apiRequest<DocumentRevisionSummary[]>(`/api/v1/documents/${documentId}/revisions`);
+  } catch (err) {
+    console.warn(`[DocumentAPI] fetchDocumentRevisions failed for ${documentId}:`, err);
+    return [];
+  }
+}
+
+export async function fetchDocumentRevision(
+  documentId: string,
+  revisionNumber: number
+): Promise<DocumentRevisionDetail> {
+  return await apiRequest<DocumentRevisionDetail>(`/api/v1/documents/${documentId}/revisions/${revisionNumber}`);
+}
+
 export * from './reviews';
 
