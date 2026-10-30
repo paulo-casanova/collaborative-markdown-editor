@@ -19,6 +19,7 @@ import {
   Loader2,
   Clock,
   Square,
+  WifiOff,
 } from 'lucide-react';
 import { useDialogStore } from '../../stores/dialogStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -84,6 +85,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   const setPairingModalOpen = effectiveStore.setPairingModalOpen;
   const refreshAgentStatus = effectiveStore.refreshAgentStatus;
   const stopGeneration = effectiveStore.stopGeneration;
+  const wsStatus = effectiveStore.wsStatus;
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -588,6 +590,24 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           </div>
         )}
 
+        {/* Stream Reconnecting / Disconnected Pill */}
+        {activeDialogId && wsStatus !== 'connected' && (
+          <span
+            className="flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-medium border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0"
+            title={
+              wsStatus === 'connecting'
+                ? 'Dialog stream reconnecting...'
+                : 'Dialog stream disconnected. Reconnecting with fallback polling...'
+            }
+            data-testid="dialog-ws-disconnected-badge"
+          >
+            <WifiOff className="w-3 h-3 animate-pulse" />
+            <span className="hidden sm:inline">
+              {wsStatus === 'connecting' ? 'Reconnecting...' : 'Disconnected'}
+            </span>
+          </span>
+        )}
+
         {/* Agent Presence Pill */}
         <button
           onClick={() => setPairingModalOpen(true)}
@@ -881,6 +901,11 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                 <Clock className="w-2.5 h-2.5 text-cme-primary/70" />
                 {elapsedSeconds}s
               </span>
+              {wsStatus !== 'connected' && (
+                <span className="text-[10px] text-amber-600 dark:text-amber-400 font-normal">
+                  (stream disconnected, polling...)
+                </span>
+              )}
               <button
                 type="button"
                 onClick={() => void stopGeneration()}

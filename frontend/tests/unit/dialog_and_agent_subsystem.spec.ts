@@ -883,4 +883,210 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
       (global as any).window = originalWindow;
     }
   });
+
+  it('reconnects dialog WebSocket with backoff when socket closes', () => {
+    vi.useFakeTimers();
+    let closeHandler: any;
+    let openHandler: any;
+
+    let wsInstanceCount = 0;
+    const mockWsInstances: any[] = [];
+
+    const mockWsFactory = () => {
+      wsInstanceCount++;
+      const instance = {
+        readyState: 1,
+        send: vi.fn(),
+        close: vi.fn(),
+        set onopen(fn: any) {
+          openHandler = fn;
+        },
+        get onopen() {
+          return openHandler;
+        },
+        set onclose(fn: any) {
+          closeHandler = fn;
+        },
+        get onclose() {
+          return closeHandler;
+        },
+        set onmessage(fn: any) {},
+        get onmessage() {
+          return () => {};
+        },
+        set onerror(fn: any) {},
+        get onerror() {
+          return () => {};
+        },
+      };
+      mockWsInstances.push(instance);
+      return instance;
+    };
+
+    const originalWindow = (global as any).window;
+    const originalWs = global.WebSocket;
+    (global as any).window = {
+      location: { protocol: 'http:', host: 'localhost:18080' },
+    };
+    (global as any).WebSocket = vi.fn().mockImplementation(mockWsFactory);
+
+    try {
+      useDialogStore.setState({ activeDialogId: 'dlg-recon' });
+      useDialogStore.getState().connectDialogWs('dlg-recon');
+
+      expect(wsInstanceCount).toBe(1);
+      expect(useDialogStore.getState().wsStatus).toBe('connecting');
+
+      // Trigger socket open
+      if (openHandler) openHandler();
+      expect(useDialogStore.getState().wsStatus).toBe('connected');
+
+      // Trigger socket drop
+      if (closeHandler) closeHandler();
+      expect(useDialogStore.getState().wsStatus).toBe('connecting');
+
+      // Advance timers for backoff delay
+      vi.advanceTimersByTime(3000);
+
+      // Verify reconnection occurred
+      expect(wsInstanceCount).toBe(2);
+    } finally {
+      useDialogStore.getState().disconnectDialogWs();
+      vi.useRealTimers();
+      global.WebSocket = originalWs;
+      (global as any).window = originalWindow;
+    }
+  });
+
+  it('reconcileMessages fetches messages and clears isGenerating if assistant reply exists', async () => {
+    const userMsg: DialogMessage = {
+      id: 'm-user-1',
+      dialog_id: 'dlg-rec',
+      user_id: 'u1',
+      role: 'user',
+      content: 'Explain CRDTs',
+      created_at: new Date(Date.now() - 5000).toISOString(),
+    };
+    const assistantMsg: DialogMessage = {
+      id: 'm-asst-1',
+      dialog_id: 'dlg-rec',
+      user_id: '',
+      role: 'assistant',
+      content: 'CRDTs allow conflict-free replicated edits.',
+      created_at: new Date(Date.now() - 1000).toISOString(),
+    };
+
+    vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue([userMsg, assistantMsg]);
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-rec',
+      isGenerating: true,
+      generatingStartTime: Date.now() - 5000,
+      messages: [userMsg],
+      streamingContent: 'partial...',
+      activeToolActivity: { tool: 'search', status: 'done' },
+    });
+
+    await useDialogStore.getState().reconcileMessages('dlg-rec');
+
+    const state = useDialogStore.getState();
+    expect(state.isGenerating).toBe(false);
+    expect(state.generatingStartTime).toBeNull();
+    expect(state.streamingContent).toBe('');
+    expect(state.activeToolActivity).toBeNull();
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[1].id).toBe('m-asst-1');
+  });
+
+  it('reconcileMessages keeps isGenerating true if no assistant reply has arrived yet', async () => {
+    const userMsg: DialogMessage = {
+      id: 'm-user-2',
+      dialog_id: 'dlg-rec-pending',
+      user_id: 'u1',
+      role: 'user',
+      content: 'Thinking in progress...',
+      created_at: new Date().toISOString(),
+    };
+
+    vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue([userMsg]);
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-rec-pending',
+      isGenerating: true,
+      generatingStartTime: Date.now() - 2000,
+      messages: [userMsg],
+    });
+
+    await useDialogStore.getState().reconcileMessages('dlg-rec-pending');
+
+    const state = useDialogStore.getState();
+    expect(state.isGenerating).toBe(true);
+    expect(state.generatingStartTime).not.toBeNull();
+    expect(state.messages).toHaveLength(1);
+  });
+
+  it('times out pending prompt after timeout period and appends visible error message', async () => {
+    vi.useFakeTimers();
+
+    const userMsg: DialogMessage = {
+      id: 'm-user-timeout',
+      dialog_id: 'dlg-timeout',
+      user_id: 'u1',
+      role: 'user',
+      content: 'Slow task that hangs',
+      created_at: new Date(Date.now() - 95000).toISOString(),
+    };
+
+    vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue([userMsg]);
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-timeout',
+      isGenerating: true,
+      generatingStartTime: Date.now() - 95000,
+      messages: [userMsg],
+      agentStatus: { online: true, agent_name: 'TestAgent', connected_at: null, capabilities: [] },
+    });
+
+    // Start fallback prompt polling
+    const { startPendingPromptPolling, stopPendingPromptPolling } = await import('../../src/stores/dialogStore');
+    startPendingPromptPolling('dlg-timeout');
+
+    // Advance by polling interval (3000ms)
+    await vi.advanceTimersByTimeAsync(3500);
+
+    const state = useDialogStore.getState();
+    expect(state.isGenerating).toBe(false);
+    expect(state.generatingStartTime).toBeNull();
+    const timeoutMsg = state.messages.find((m) => m.content.includes('Request Timed Out'));
+    expect(timeoutMsg).toBeDefined();
+    expect(timeoutMsg?.role).toBe('assistant');
+
+    stopPendingPromptPolling();
+    vi.useRealTimers();
+  });
+
+  it('renders dialog-ws-disconnected-badge and polling text in DialogSidecar when socket is disconnected', () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-offline-ui',
+      dialogs: [
+        {
+          id: 'dlg-offline-ui',
+          user_id: 'u1',
+          title: 'Offline Test Thread',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      wsStatus: 'disconnected',
+      isGenerating: true,
+      generatingStartTime: Date.now() - 4000,
+      messages: [],
+      agentStatus: { online: true, agent_name: 'LocalAgent', connected_at: null, capabilities: [] },
+    });
+
+    const html = renderToStaticMarkup(React.createElement(DialogSidecar, {}));
+    expect(html).toContain('data-testid="dialog-ws-disconnected-badge"');
+    expect(html).toContain('Disconnected');
+    expect(html).toContain('stream disconnected, polling...');
+  });
 });

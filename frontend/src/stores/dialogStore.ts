@@ -28,6 +28,81 @@ export const sortDialogMessages = (messages: DialogMessage[]): DialogMessage[] =
   });
 };
 
+export type DialogWsStatus = 'connected' | 'connecting' | 'disconnected';
+
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectAttempts = 0;
+let isExplicitDisconnect = false;
+let pollIntervalTimer: ReturnType<typeof setInterval> | null = null;
+const PROMPT_TIMEOUT_MS = 90_000;
+const POLL_INTERVAL_MS = 3_000;
+
+export const stopPendingPromptPolling = () => {
+  if (pollIntervalTimer) {
+    clearInterval(pollIntervalTimer);
+    pollIntervalTimer = null;
+  }
+};
+
+export const startPendingPromptPolling = (dialogId: string) => {
+  stopPendingPromptPolling();
+
+  pollIntervalTimer = setInterval(async () => {
+    const state = useDialogStore.getState();
+    if (!state.isGenerating || state.activeDialogId !== dialogId) {
+      stopPendingPromptPolling();
+      return;
+    }
+
+    const now = Date.now();
+    const startTime = state.generatingStartTime || now;
+
+    // Timeout check: visible error in conversation
+    if (now - startTime > PROMPT_TIMEOUT_MS) {
+      stopPendingPromptPolling();
+      const timeoutMsg: DialogMessage = {
+        id: `timeout-error-${Date.now()}`,
+        dialog_id: dialogId,
+        user_id: '',
+        role: 'assistant',
+        content:
+          '⚠️ **Request Timed Out:** The AI agent did not respond within 90 seconds. Please check that your local agent companion is running and connected, then try again.',
+        created_at: new Date().toISOString(),
+      };
+      useDialogStore.setState((s) => ({
+        messages: sortDialogMessages([...s.messages, timeoutMsg]),
+        isGenerating: false,
+        generatingStartTime: null,
+        activeToolActivity: null,
+        streamingContent: '',
+      }));
+      return;
+    }
+
+    // Fallback polling tick: fetch and reconcile
+    await useDialogStore.getState().reconcileMessages(dialogId);
+  }, POLL_INTERVAL_MS);
+};
+
+export const scheduleReconnect = (dialogId: string) => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  useDialogStore.setState({ wsStatus: 'connecting' });
+  const baseDelay = Math.min(1000 * Math.pow(1.5, reconnectAttempts), 15000);
+  const jitter = Math.random() * 300;
+  const delay = baseDelay + jitter;
+  reconnectAttempts++;
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    if (!isExplicitDisconnect && useDialogStore.getState().activeDialogId === dialogId) {
+      useDialogStore.getState().connectDialogWs(dialogId);
+    }
+  }, delay);
+};
+
 interface DialogState {
   dialogs: Dialog[];
   activeDialogId: string | null;
@@ -44,6 +119,7 @@ interface DialogState {
   contextSnapshot: ContextSnapshot | null;
   pairingModalOpen: boolean;
   ws: WebSocket | null;
+  wsStatus: DialogWsStatus;
 
   // Actions
   loadDialogs: () => Promise<void>;
@@ -52,6 +128,7 @@ interface DialogState {
   renameDialog: (dialogId: string, newTitle: string) => Promise<void>;
   deleteDialog: (dialogId: string) => Promise<void>;
   sendMessage: (content: string, overrideSnapshot?: ContextSnapshot) => Promise<void>;
+  reconcileMessages: (dialogId: string) => Promise<void>;
   resetDialogToMessage: (messageId: string, inclusive?: boolean) => Promise<void>;
   forkDialog: (upToMessageId?: string, customTitle?: string) => Promise<Dialog | null>;
   setContextSnapshot: (snapshot: ContextSnapshot | null) => void;
@@ -86,6 +163,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   contextSnapshot: null,
   pairingModalOpen: false,
   ws: null,
+  wsStatus: 'disconnected',
 
   loadDialogs: async () => {
     try {
@@ -214,6 +292,10 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       activeToolActivity: null,
     }));
 
+    if (isOnline) {
+      startPendingPromptPolling(activeId);
+    }
+
     try {
       const msg = await dialogApi.postMessage(activeId, content, snapshot, 'user');
       set((state) => {
@@ -221,6 +303,11 @@ export const useDialogStore = create<DialogState>((set, get) => ({
           (m) => m.id !== tempId && m.id !== msg.id
         );
         const shouldGenerate = msg.agent_dispatched ?? state.agentStatus.online;
+        if (shouldGenerate) {
+          startPendingPromptPolling(activeId);
+        } else {
+          stopPendingPromptPolling();
+        }
         return {
           messages: sortDialogMessages([...filtered, msg]),
           isSending: false,
@@ -230,12 +317,69 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       });
     } catch (err) {
       console.warn('[DialogStore] Failed to send message:', err);
+      stopPendingPromptPolling();
       set((state) => ({
         messages: state.messages.filter((m) => m.id !== tempId),
         isSending: false,
         isGenerating: false,
         generatingStartTime: null,
       }));
+    }
+  },
+
+  reconcileMessages: async (dialogId: string) => {
+    try {
+      const messages = await dialogApi.fetchMessages(dialogId);
+      if (get().activeDialogId !== dialogId) return;
+
+      const sorted = sortDialogMessages(messages);
+
+      let shouldClearGenerating = false;
+      const currentState = get();
+
+      if (currentState.isGenerating && sorted.length > 0) {
+        const lastMsg = sorted[sorted.length - 1];
+        if (lastMsg.role === 'assistant' || lastMsg.role === 'system') {
+          shouldClearGenerating = true;
+        } else {
+          const userMsgs = sorted.filter((m) => m.role === 'user');
+          const lastUser = userMsgs[userMsgs.length - 1];
+          if (lastUser) {
+            const userTime = new Date(lastUser.created_at).getTime() || 0;
+            const hasReply = sorted.some(
+              (m) =>
+                (m.role === 'assistant' || m.role === 'system') &&
+                new Date(m.created_at).getTime() >= userTime
+            );
+            if (hasReply) {
+              shouldClearGenerating = true;
+            }
+          }
+        }
+      }
+
+      // Preserve any pending optimistic user message that has not arrived from backend yet
+      const optimistic = currentState.messages.filter(
+        (m) => m.id.startsWith('temp-user-') && !sorted.some((s) => s.content === m.content)
+      );
+
+      set({
+        messages: sortDialogMessages([...sorted, ...optimistic]),
+        ...(shouldClearGenerating
+          ? {
+              isGenerating: false,
+              generatingStartTime: null,
+              activeToolActivity: null,
+              streamingContent: '',
+            }
+          : {}),
+      });
+
+      if (shouldClearGenerating) {
+        stopPendingPromptPolling();
+      }
+    } catch (err) {
+      console.warn(`[DialogStore] Failed to reconcile messages for ${dialogId}:`, err);
     }
   },
 
@@ -301,7 +445,24 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   connectDialogWs: (dialogId: string) => {
     if (typeof window === 'undefined') return;
 
-    get().disconnectDialogWs();
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    isExplicitDisconnect = false;
+
+    // Disconnect any existing WS cleanly without triggering onclose reconnect
+    const prevWs = get().ws;
+    if (prevWs) {
+      try {
+        prevWs.onclose = null;
+        prevWs.onerror = null;
+        prevWs.close();
+      } catch {}
+      set({ ws: null });
+    }
+
+    set({ wsStatus: 'connecting' });
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
@@ -310,6 +471,13 @@ export const useDialogStore = create<DialogState>((set, get) => ({
 
     try {
       const ws = new WebSocket(wsUrl);
+
+      ws.onopen = () => {
+        set({ wsStatus: 'connected' });
+        reconnectAttempts = 0;
+        // Reconcile messages after (re)connect
+        void get().reconcileMessages(dialogId);
+      };
 
       ws.onmessage = (event) => {
         try {
@@ -328,6 +496,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
                 },
               };
               if (!online && state.isGenerating) {
+                stopPendingPromptPolling();
                 updates.isGenerating = false;
                 updates.generatingStartTime = null;
                 updates.activeToolActivity = null;
@@ -401,6 +570,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
             }
           } else if (type === 'prompt_complete' || type === 'prompt_stopped' || type === 'prompt_failed') {
             if (data.dialog_id === get().activeDialogId) {
+              stopPendingPromptPolling();
               // Finalize message turn: clear streaming buffer and refresh message history
               const assistantMsg: DialogMessage | undefined = data.message;
               set((state) => {
@@ -434,26 +604,46 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       };
 
       ws.onclose = () => {
-        set({ ws: null });
+        set({ ws: null, wsStatus: 'disconnected' });
+        if (!isExplicitDisconnect && get().activeDialogId === dialogId) {
+          scheduleReconnect(dialogId);
+        }
       };
 
       set({ ws });
     } catch (err) {
       console.warn('[DialogWS] Failed to initiate WebSocket connection:', err);
+      set({ ws: null, wsStatus: 'disconnected' });
+      if (!isExplicitDisconnect && get().activeDialogId === dialogId) {
+        scheduleReconnect(dialogId);
+      }
     }
   },
 
   disconnectDialogWs: () => {
+    isExplicitDisconnect = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    reconnectAttempts = 0;
+    stopPendingPromptPolling();
+
     const ws = get().ws;
     if (ws) {
       try {
+        ws.onclose = null;
+        ws.onerror = null;
         ws.close();
       } catch {}
-      set({ ws: null });
+      set({ ws: null, wsStatus: 'disconnected' });
+    } else {
+      set({ wsStatus: 'disconnected' });
     }
   },
 
   stopGeneration: async () => {
+    stopPendingPromptPolling();
     const activeId = get().activeDialogId;
     if (!activeId) return;
 
@@ -496,3 +686,24 @@ export const useDialogStore = create<DialogState>((set, get) => ({
     }
   },
 }));
+
+// (2) When tab becomes visible or receives window focus, reconnect socket and reconcile messages
+if (typeof document !== 'undefined') {
+  const handleVisibilityOrFocus = () => {
+    if (document.visibilityState === 'visible') {
+      const activeId = useDialogStore.getState().activeDialogId;
+      if (!activeId) return;
+
+      const ws = useDialogStore.getState().ws;
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        useDialogStore.getState().connectDialogWs(activeId);
+      }
+      void useDialogStore.getState().reconcileMessages(activeId);
+    }
+  };
+
+  document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', handleVisibilityOrFocus);
+  }
+}
