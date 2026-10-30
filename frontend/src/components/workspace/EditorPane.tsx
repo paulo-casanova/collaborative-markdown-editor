@@ -232,6 +232,18 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     return true;
   }, [user, document?.owner_user_id, nodePermissions]);
 
+  const canComment = useMemo(() => {
+    if (!user) return false;
+    if (user.is_system_admin || (user as any).is_admin) return true;
+    if (document?.owner_user_id && document.owner_user_id === user.id) return true;
+    if (nodePermissions) {
+      if (nodePermissions.can_manage) return true;
+      const eff = (nodePermissions.effective_permission || '').toLowerCase();
+      return eff === 'comment' || eff === 'edit' || eff === 'admin';
+    }
+    return false;
+  }, [user, document?.owner_user_id, nodePermissions]);
+
   const handleScrollToAnchor = useCallback(
     (anchor: any) => {
       if (!anchor) return;
@@ -843,6 +855,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               document.content || `# ${document.title || 'Document'}\n\nStart writing markdown here...`
             }
             editable={canEdit}
+            canComment={canComment}
             onChange={(content) => {
               setLiveContent(content);
               if (document?.path) {

@@ -175,6 +175,7 @@ interface CollaborativeEditorProps {
   onChange?: (content: string) => void;
   onCursorLineChange?: (line: number) => void;
   editable?: boolean;
+  canComment?: boolean;
   onEditorReady?: (editor: any) => void;
   autoFocus?: boolean | 'start' | 'end' | 'all';
   documentId?: string;
@@ -226,6 +227,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
   onChange,
   onCursorLineChange,
   editable = true,
+  canComment = true,
   onEditorReady,
   autoFocus = false,
   documentId,
@@ -381,7 +383,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       lineNumbersCompartmentRef.current.of(showLineNumbers ? lineNumbers() : []),
       markdown(),
       createLivePreviewPlugin(isDark, documentPath),
-      createInlineReviewPlugin(provider, isDark),
+      createInlineReviewPlugin(provider, isDark, canComment),
       cmeEditorTheme,
       remoteCursorClassPlugin,
       EditorView.lineWrapping,
@@ -509,7 +511,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       setEditor(null);
       adapterRef.current = null;
     };
-  }, [provider, editable, isDark]);
+  }, [provider, editable, isDark, canComment]);
 
   return (
     <div className="collaborative-editor-root rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm flex flex-col flex-1 h-full min-h-0 relative">
@@ -537,7 +539,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       </div>
 
       {/* Floating Selection Menu */}
-      {editable && (
+      {(editable || canComment) && (
         <FloatingReviewMenu
           editor={editor as any}
           provider={provider}

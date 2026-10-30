@@ -379,7 +379,7 @@ export const ReaderPage: React.FC = () => {
       const eff = (nodePerms.effective_permission || '').toLowerCase();
       return eff === 'comment' || eff === 'edit' || eff === 'admin';
     }
-    return true;
+    return false;
   }, [currentUser, document?.owner_user_id, nodePerms, selectedRevNumber]);
 
   const canEdit = useMemo(() => {
@@ -815,42 +815,44 @@ export const ReaderPage: React.FC = () => {
                 {isResolved ? 'Resolved' : 'Open'}
               </span>
             </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
-              <button
-                type="button"
-                onClick={() => {
-                  if (editingCommentId === comment.id) {
-                    setEditingCommentId(null);
-                  } else {
-                    setEditingCommentId(comment.id);
-                    setEditingCommentText(comment.content);
-                  }
-                }}
-                className="p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors cursor-pointer"
-                data-testid="edit-comment-btn"
-                title="Edit comment"
-              >
-                <Pencil className="w-3 h-3" />
-              </button>
-              <button
-                type="button"
-                onClick={() => handleToggleCommentStatus(comment.id, comment.status)}
-                className="px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer"
-                data-testid="resolve-comment-btn"
-                title="Toggle resolved status"
-              >
-                {isResolved ? 'Reopen' : '✓ Resolve'}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleDeleteComment(comment.id)}
-                className="p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors cursor-pointer"
-                data-testid="delete-comment-btn"
-                title="Delete comment"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
+            {canComment && (
+              <div className="flex items-center gap-1 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingCommentId === comment.id) {
+                      setEditingCommentId(null);
+                    } else {
+                      setEditingCommentId(comment.id);
+                      setEditingCommentText(comment.content);
+                    }
+                  }}
+                  className="p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors cursor-pointer"
+                  data-testid="edit-comment-btn"
+                  title="Edit comment"
+                >
+                  <Pencil className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleCommentStatus(comment.id, comment.status)}
+                  className="px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer"
+                  data-testid="resolve-comment-btn"
+                  title="Toggle resolved status"
+                >
+                  {isResolved ? 'Reopen' : '✓ Resolve'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteComment(comment.id)}
+                  className="p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors cursor-pointer"
+                  data-testid="delete-comment-btn"
+                  title="Delete comment"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Anchored Quote if present */}
@@ -922,21 +924,23 @@ export const ReaderPage: React.FC = () => {
                             {new Date(reply.created_at).toLocaleDateString()}
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (editingCommentId === reply.id) {
-                              setEditingCommentId(null);
-                            } else {
-                              setEditingCommentId(reply.id);
-                              setEditingCommentText(reply.content);
-                            }
-                          }}
-                          className="p-0.5 text-cme-text-muted hover:text-cme-text-base rounded cursor-pointer"
-                          title="Edit reply"
-                        >
-                          <Pencil className="w-2.5 h-2.5" />
-                        </button>
+                        {canComment && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (editingCommentId === reply.id) {
+                                setEditingCommentId(null);
+                              } else {
+                                setEditingCommentId(reply.id);
+                                setEditingCommentText(reply.content);
+                              }
+                            }}
+                            className="p-0.5 text-cme-text-muted hover:text-cme-text-base rounded cursor-pointer"
+                            title="Edit reply"
+                          >
+                            <Pencil className="w-2.5 h-2.5" />
+                          </button>
+                        )}
                       </div>
                       {editingCommentId === reply.id ? (
                         <div className="pt-1 space-y-1.5">
@@ -977,37 +981,40 @@ export const ReaderPage: React.FC = () => {
           )}
 
           {/* Inline Reply Form */}
-          <div className="px-2.5 py-1 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-1.5">
-            <input
-              type="text"
-              placeholder="Write a reply..."
-              value={replyInputs[comment.id] || ''}
-              onChange={(e) =>
-                setReplyInputs((prev) => ({ ...prev, [comment.id]: e.target.value }))
-              }
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleReplyComment(comment.id);
+          {canComment && (
+            <div className="px-2.5 py-1 bg-cme-bg-surface border-t border-cme-border-base flex items-center gap-1.5">
+              <input
+                type="text"
+                placeholder="Write a reply..."
+                value={replyInputs[comment.id] || ''}
+                onChange={(e) =>
+                  setReplyInputs((prev) => ({ ...prev, [comment.id]: e.target.value }))
                 }
-              }}
-              className="reply-input flex-1 px-2 py-0.5 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary"
-              data-testid="inline-reply-input"
-            />
-            <button
-              type="button"
-              onClick={() => handleReplyComment(comment.id)}
-              disabled={isSubmittingReply[comment.id]}
-              className="reply-submit-btn px-2.5 py-0.5 rounded-md bg-cme-primary hover:bg-cme-primary/90 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50"
-              data-testid="inline-reply-submit-btn"
-            >
-              {isSubmittingReply[comment.id] ? '...' : 'Reply'}
-            </button>
-          </div>
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleReplyComment(comment.id);
+                  }
+                }}
+                className="reply-input flex-1 px-2 py-0.5 rounded-md border border-cme-border-base bg-cme-bg-surface text-xs text-cme-text-base focus:outline-none focus:border-cme-primary"
+                data-testid="inline-reply-input"
+              />
+              <button
+                type="button"
+                onClick={() => handleReplyComment(comment.id)}
+                disabled={isSubmittingReply[comment.id]}
+                className="reply-submit-btn px-2.5 py-0.5 rounded-md bg-cme-primary hover:bg-cme-primary/90 text-white font-medium text-xs transition-colors cursor-pointer disabled:opacity-50"
+                data-testid="inline-reply-submit-btn"
+              >
+                {isSubmittingReply[comment.id] ? '...' : 'Reply'}
+              </button>
+            </div>
+          )}
         </div>
       );
     },
     [
+      canComment,
       editingCommentId,
       editingCommentText,
       replyInputs,

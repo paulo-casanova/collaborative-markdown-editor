@@ -14,7 +14,7 @@ import { RELOAD_KEY } from '../../api/client';
 
 export const AppShell: React.FC = () => {
   const { initThemeListener } = useThemeStore();
-  const { setViewMode, isSessionExpired } = useUIStore();
+  const { setViewMode, isSessionExpired, setLoginModalOpen } = useUIStore();
   const hasDirtyTabs = useWorkspaceStore((state) => state.tabs.some((t) => t.isDirty));
   const navigate = useNavigate();
   const location = useLocation();
@@ -144,10 +144,19 @@ export const AppShell: React.FC = () => {
           <div className="flex items-center gap-2 shrink-0 ml-3">
             <button
               onClick={() => {
+                setLoginModalOpen(true);
+              }}
+              className="px-2.5 py-1 bg-white text-rose-600 rounded font-semibold hover:bg-rose-50 transition-colors shadow-sm cursor-pointer"
+              data-testid="session-reload-btn"
+            >
+              Sign In
+            </button>
+            <button
+              onClick={() => {
                 if (hasDirtyTabs) {
                   if (
                     !confirm(
-                      'You have unsaved changes that may be lost on reload. Continue to sign in?'
+                      'You have unsaved changes that may be lost on reload. Continue to reload?'
                     )
                   ) {
                     return;
@@ -160,10 +169,10 @@ export const AppShell: React.FC = () => {
                   window.location.reload();
                 }
               }}
-              className="px-2.5 py-1 bg-white text-rose-600 rounded font-semibold hover:bg-rose-50 transition-colors shadow-sm"
-              data-testid="session-reload-btn"
+              className="px-2 py-1 bg-rose-700 hover:bg-rose-800 text-white rounded text-xs transition-colors cursor-pointer"
+              title="Reload page to refresh reverse proxy session"
             >
-              Sign in again
+              Reload
             </button>
           </div>
         </div>

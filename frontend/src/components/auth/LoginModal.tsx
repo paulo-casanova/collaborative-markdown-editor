@@ -21,6 +21,7 @@ export const LoginModal: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['trash-items'] });
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       useUIStore.getState().setViewMode('read');
+      useUIStore.getState().setSessionExpired(false);
       setLoginModalOpen(false);
       setUsername('');
       setPassword('');

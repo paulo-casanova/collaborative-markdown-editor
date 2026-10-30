@@ -207,7 +207,8 @@ export class InlineCommentThreadWidget extends WidgetType {
   constructor(
     public comment: CommentRecord,
     public range: { start: number; end: number },
-    public isDark: boolean = false
+    public isDark: boolean = false,
+    public canComment: boolean = true
   ) {
     super();
   }
@@ -219,7 +220,8 @@ export class InlineCommentThreadWidget extends WidgetType {
       this.comment.content === other.comment.content &&
       this.comment.replies?.length === other.comment.replies?.length &&
       this.range.start === other.range.start &&
-      this.range.end === other.range.end
+      this.range.end === other.range.end &&
+      this.canComment === other.canComment
     );
   }
 
@@ -272,46 +274,49 @@ export class InlineCommentThreadWidget extends WidgetType {
     `;
     header.appendChild(authorGroup);
 
-    const actionButtons = document.createElement('div');
-    actionButtons.className = 'action-buttons flex items-center gap-1 flex-shrink-0';
+    let editBtn: HTMLButtonElement | null = null;
+    if (this.canComment) {
+      const actionButtons = document.createElement('div');
+      actionButtons.className = 'action-buttons flex items-center gap-1 flex-shrink-0';
 
-    const editBtn = document.createElement('button');
-    editBtn.type = 'button';
-    editBtn.className =
-      'edit-btn px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover active:scale-95 text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer';
-    editBtn.setAttribute('data-testid', 'edit-comment-btn');
-    editBtn.title = 'Edit comment';
-    editBtn.textContent = '✏️ Edit';
-    actionButtons.appendChild(editBtn);
+      editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className =
+        'edit-btn px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover active:scale-95 text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer';
+      editBtn.setAttribute('data-testid', 'edit-comment-btn');
+      editBtn.title = 'Edit comment';
+      editBtn.textContent = '✏️ Edit';
+      actionButtons.appendChild(editBtn);
 
-    const resolveBtn = document.createElement('button');
-    resolveBtn.type = 'button';
-    resolveBtn.className =
-      'resolve-btn px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover active:scale-95 text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer';
-    resolveBtn.setAttribute('data-testid', 'resolve-comment-btn');
-    resolveBtn.title = 'Toggle resolved status';
-    resolveBtn.textContent = isResolved ? 'Reopen' : '✓ Resolve';
-    resolveBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      useReviewStore.getState().toggleCommentStatus(this.comment.id);
-    });
-    actionButtons.appendChild(resolveBtn);
+      const resolveBtn = document.createElement('button');
+      resolveBtn.type = 'button';
+      resolveBtn.className =
+        'resolve-btn px-1.5 py-0.5 rounded border border-cme-border-base hover:bg-cme-bg-hover active:scale-95 text-cme-text-muted hover:text-cme-text-base text-[10px] leading-tight font-medium transition-colors cursor-pointer';
+      resolveBtn.setAttribute('data-testid', 'resolve-comment-btn');
+      resolveBtn.title = 'Toggle resolved status';
+      resolveBtn.textContent = isResolved ? 'Reopen' : '✓ Resolve';
+      resolveBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        useReviewStore.getState().toggleCommentStatus(this.comment.id);
+      });
+      actionButtons.appendChild(resolveBtn);
 
-    const deleteBtn = document.createElement('button');
-    deleteBtn.type = 'button';
-    deleteBtn.className =
-      'delete-btn px-1 py-0.5 rounded hover:bg-rose-500/10 active:scale-95 text-cme-text-muted hover:text-rose-500 text-[10px] leading-tight transition-colors cursor-pointer';
-    deleteBtn.setAttribute('data-testid', 'delete-comment-btn');
-    deleteBtn.title = 'Delete comment';
-    deleteBtn.textContent = '🗑';
-    deleteBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (window.confirm('Delete this comment thread?')) {
-        useReviewStore.getState().deleteComment(this.comment.id);
-      }
-    });
-    actionButtons.appendChild(deleteBtn);
-    header.appendChild(actionButtons);
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className =
+        'delete-btn px-1 py-0.5 rounded hover:bg-rose-500/10 active:scale-95 text-cme-text-muted hover:text-rose-500 text-[10px] leading-tight transition-colors cursor-pointer';
+      deleteBtn.setAttribute('data-testid', 'delete-comment-btn');
+      deleteBtn.title = 'Delete comment';
+      deleteBtn.textContent = '🗑';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (window.confirm('Delete this comment thread?')) {
+          useReviewStore.getState().deleteComment(this.comment.id);
+        }
+      });
+      actionButtons.appendChild(deleteBtn);
+      header.appendChild(actionButtons);
+    }
 
     // Root Comment Content
     let isEditing = false;
@@ -384,15 +389,17 @@ export class InlineCommentThreadWidget extends WidgetType {
     editForm.appendChild(editTextarea);
     editForm.appendChild(editBtnRow);
 
-    editBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      isEditing = !isEditing;
-      updateEditDisplay();
-      if (isEditing) {
-        editTextarea.value = this.comment.content || '';
-        editTextarea.focus();
-      }
-    });
+    if (editBtn) {
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        isEditing = !isEditing;
+        updateEditDisplay();
+        if (isEditing) {
+          editTextarea.value = this.comment.content || '';
+          editTextarea.focus();
+        }
+      });
+    }
 
     // Threaded Replies
     const repliesContainer = document.createElement('div');
@@ -434,7 +441,9 @@ export class InlineCommentThreadWidget extends WidgetType {
       rEditBtn.setAttribute('data-testid', 'inline-reply-edit-btn');
 
       replyHeaderRow.appendChild(replyMeta);
-      replyHeaderRow.appendChild(rEditBtn);
+      if (this.canComment) {
+        replyHeaderRow.appendChild(rEditBtn);
+      }
 
       const replyBody = document.createElement('div');
       replyBody.className = 'text-cme-text-base prose prose-xs dark:prose-invert max-w-none leading-relaxed';
@@ -585,7 +594,9 @@ export class InlineCommentThreadWidget extends WidgetType {
     if (replies.length > 0) {
       card.appendChild(repliesContainer);
     }
-    card.appendChild(replyForm);
+    if (this.canComment) {
+      card.appendChild(replyForm);
+    }
     container.appendChild(card);
     return container;
   }
@@ -603,16 +614,17 @@ interface ReviewDecoItem {
  */
 export function createInlineReviewPlugin(
   provider?: CmeCollabProvider | null,
-  isDark: boolean = false
+  isDark: boolean = false,
+  canComment: boolean = true
 ): Extension {
   return StateField.define<DecorationSet>({
     create(state) {
-      return buildInlineReviewDecorations(state, provider, isDark);
+      return buildInlineReviewDecorations(state, provider, isDark, canComment);
     },
     update(decorations, tr) {
       const forced = tr.effects.some((e) => e.is(forceReviewRebuild));
       if (tr.docChanged || forced) {
-        return buildInlineReviewDecorations(tr.state, provider, isDark);
+        return buildInlineReviewDecorations(tr.state, provider, isDark, canComment);
       }
       return decorations.map(tr.changes);
     },
@@ -623,7 +635,8 @@ export function createInlineReviewPlugin(
 function buildInlineReviewDecorations(
   state: EditorState,
   provider?: CmeCollabProvider | null,
-  isDark: boolean = false
+  isDark: boolean = false,
+  canComment: boolean = true
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
@@ -722,7 +735,12 @@ function buildInlineReviewDecorations(
       from: widgetPos,
       to: widgetPos,
       deco: Decoration.widget({
-        widget: new InlineCommentThreadWidget(comment, { start: safeStart, end: safeEnd }, isDark),
+        widget: new InlineCommentThreadWidget(
+          comment,
+          { start: safeStart, end: safeEnd },
+          isDark,
+          canComment
+        ),
         side: 1,
         block: true,
       }),
