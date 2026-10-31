@@ -402,46 +402,139 @@ export const ReaderPage: React.FC = () => {
     }
   }, [docId, initDocument]);
 
+  const documentRef = useRef(document);
+  documentRef.current = document;
+
+  const latestContentRef = useRef<string>(document?.content ?? '');
+  useEffect(() => {
+    if (document?.content !== undefined) {
+      latestContentRef.current = document.content;
+    }
+  }, [document?.content]);
+
+  const editQueueRef = useRef<Promise<any>>(Promise.resolve());
+
   const handleApplyDiffInReader = useCallback(
-    async (diff: string) => {
-      if (!document?.id) return;
-      try {
-        const patchResult = applyUnifiedDiff(document.content ?? '', diff);
-        if (patchResult.appliedCount > 0) {
-          await updateDocument(document.id, { content: patchResult.newText });
-          setHasNewVersion(true);
-          setRefreshReason('content');
-          queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
-          queryClient.invalidateQueries({ queryKey: ['document'] });
-        } else {
-          console.warn('[ReaderPage] Could not match diff hunks to reader document, skipped.');
+    (diff: string): Promise<boolean> => {
+      const runEdit = async (): Promise<boolean> => {
+        const currentDoc = documentRef.current;
+        const targetDocId = currentDoc?.id;
+        if (!targetDocId) {
+          console.warn('[ReaderPage] No active document ID for applying diff');
+          return false;
         }
-      } catch (err) {
-        console.warn('[ReaderPage] Failed to apply diff in reader mode:', err);
-      }
+
+        try {
+          // Refetch latest document content from server so sequential edits build on the latest persisted text
+          let currentContent = latestContentRef.current;
+          try {
+            const freshDoc = await fetchDocument(targetDocId);
+            if (freshDoc?.content !== undefined) {
+              currentContent = freshDoc.content;
+              latestContentRef.current = freshDoc.content;
+            }
+          } catch (fetchErr) {
+            console.warn('[ReaderPage] Could not fetch latest doc before diff, falling back to cached content:', fetchErr);
+          }
+
+          const patchResult = applyUnifiedDiff(currentContent, diff);
+          if (patchResult.appliedCount > 0) {
+            const updatedDoc = await updateDocument(targetDocId, { content: patchResult.newText });
+            const resultingContent = updatedDoc.content ?? patchResult.newText;
+            latestContentRef.current = resultingContent;
+
+            // Immediately update React Query caches so reader UI updates without waiting for background queries
+            queryClient.setQueryData(['doc-reader', rawTarget], (old: any) => {
+              if (!old) return updatedDoc;
+              return { ...old, ...updatedDoc, content: resultingContent };
+            });
+            queryClient.setQueryData(['document', targetDocId], (old: any) => {
+              if (!old) return updatedDoc;
+              return { ...old, ...updatedDoc, content: resultingContent };
+            });
+
+            queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+            queryClient.invalidateQueries({ queryKey: ['document'] });
+            setHasNewVersion(true);
+            setRefreshReason('content');
+            return true;
+          } else {
+            console.warn('[ReaderPage] Could not match diff hunks to reader document, skipped.');
+            return false;
+          }
+        } catch (err) {
+          console.warn('[ReaderPage] Failed to apply diff in reader mode:', err);
+          return false;
+        }
+      };
+
+      const nextPromise = editQueueRef.current.then(runEdit, runEdit);
+      editQueueRef.current = nextPromise.catch(() => false);
+      return nextPromise;
     },
-    [document, queryClient]
+    [rawTarget, queryClient]
   );
 
   const handleApplyReplacementInReader = useCallback(
-    async (orig: string, rep: string) => {
-      if (!document?.id) return;
-      try {
-        const docText = document.content ?? '';
-        const change = computeReplacementChange(docText, orig, rep);
-        if (change) {
-          const newContent = docText.slice(0, change.from) + change.insert + docText.slice(change.to);
-          await updateDocument(document.id, { content: newContent });
+    (orig: string, rep: string): Promise<boolean> => {
+      const runEdit = async (): Promise<boolean> => {
+        const currentDoc = documentRef.current;
+        const targetDocId = currentDoc?.id;
+        if (!targetDocId) {
+          console.warn('[ReaderPage] No active document ID for applying replacement');
+          return false;
+        }
+
+        try {
+          // Refetch latest document content from server so sequential edits build on the latest persisted text
+          let currentContent = latestContentRef.current;
+          try {
+            const freshDoc = await fetchDocument(targetDocId);
+            if (freshDoc?.content !== undefined) {
+              currentContent = freshDoc.content;
+              latestContentRef.current = freshDoc.content;
+            }
+          } catch (fetchErr) {
+            console.warn('[ReaderPage] Could not fetch latest doc before edit, falling back to cached content:', fetchErr);
+          }
+
+          const change = computeReplacementChange(currentContent, orig, rep);
+          if (!change) {
+            console.warn('[ReaderPage] Target replacement text not found in reader document, skipped.');
+            return false;
+          }
+
+          const newContent = currentContent.slice(0, change.from) + change.insert + currentContent.slice(change.to);
+          const updatedDoc = await updateDocument(targetDocId, { content: newContent });
+          const resultingContent = updatedDoc.content ?? newContent;
+          latestContentRef.current = resultingContent;
+
+          // Immediately update React Query caches so reader UI updates without waiting for background queries
+          queryClient.setQueryData(['doc-reader', rawTarget], (old: any) => {
+            if (!old) return updatedDoc;
+            return { ...old, ...updatedDoc, content: resultingContent };
+          });
+          queryClient.setQueryData(['document', targetDocId], (old: any) => {
+            if (!old) return updatedDoc;
+            return { ...old, ...updatedDoc, content: resultingContent };
+          });
+
           queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
           queryClient.invalidateQueries({ queryKey: ['document'] });
-        } else {
-          console.warn('[ReaderPage] Target replacement text not found in reader document, skipped.');
+          setHasNewVersion(true);
+          setRefreshReason('content');
+          return true;
+        } catch (err) {
+          console.warn('[ReaderPage] Failed to apply replacement in reader mode:', err);
+          return false;
         }
-      } catch (err) {
-        console.warn('[ReaderPage] Failed to apply replacement in reader mode:', err);
-      }
+      };
+
+      const nextPromise = editQueueRef.current.then(runEdit, runEdit);
+      editQueueRef.current = nextPromise.catch(() => false);
+      return nextPromise;
     },
-    [document, queryClient]
+    [rawTarget, queryClient]
   );
 
   const prevPendingComment = useRef(pendingCommentSelection);
@@ -1559,7 +1652,7 @@ export const ReaderPage: React.FC = () => {
           documentId={document?.id}
           documentTitle={document?.title}
           documentPath={document?.path}
-          documentContent={document?.content}
+          documentContent={latestContentRef.current || document?.content}
           onApplyDiff={handleApplyDiffInReader}
           onApplyReplacement={handleApplyReplacementInReader}
           onReviewAction={(actionType) => {

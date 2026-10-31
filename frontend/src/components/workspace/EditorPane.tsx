@@ -304,14 +304,14 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   );
 
   const handleApplyReplacement = useCallback(
-    (orig: string, rep: string, anchor?: any) => {
+    (orig: string, rep: string, anchor?: any): boolean => {
       if (!canEdit) {
         console.warn('[EditorPane] handleApplyReplacement: editing is disabled for this user.');
-        return;
+        return false;
       }
       try {
         const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
-        if (!view || !view.state?.doc) return;
+        if (!view || !view.state?.doc) return false;
 
         const doc = view.state.doc;
         const docText = doc.toString();
@@ -345,25 +345,28 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             effects: EditorView.scrollIntoView(from, { y: 'center' }),
           });
           view.focus();
+          return true;
         } else {
           console.warn('[EditorPane] handleApplyReplacement: target text not found in document, skipped to prevent misplacement.');
+          return false;
         }
       } catch (e) {
         console.warn('[EditorPane] handleApplyReplacement error:', e);
+        return false;
       }
     },
     [editorInstance, provider, canEdit]
   );
 
   const handleApplyDiff = useCallback(
-    (diff: string) => {
+    (diff: string): boolean => {
       if (!canEdit) {
         console.warn('[EditorPane] handleApplyDiff: editing is disabled for this user.');
-        return;
+        return false;
       }
       try {
         const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
-        if (!view || !view.state?.doc) return;
+        if (!view || !view.state?.doc) return false;
 
         const doc = view.state.doc;
         const docText = doc.toString();
@@ -376,11 +379,14 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             effects: EditorView.scrollIntoView(changes[0].from, { y: 'center' }),
           });
           view.focus();
+          return true;
         } else {
           console.warn('[EditorPane] handleApplyDiff: could not match diff hunks to document, skipped to prevent misplacement.');
+          return false;
         }
       } catch (err) {
         console.warn('[EditorPane] handleApplyDiff error:', err);
+        return false;
       }
     },
     [editorInstance, canEdit]
