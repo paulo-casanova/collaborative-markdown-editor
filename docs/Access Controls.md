@@ -263,20 +263,136 @@ SELECT team_id::text FROM effective_teams;
 ### Core Classes & Responsibilities
 
 #### 1. `cme::db::PermissionEngine`
-Located in [`backend/src/db/permission_engine.cpp`](file:///home/pasc/cme/backend/src/db/permission_engine.cpp), this is the low-level engine executing database queries:
-* **`get_effective_teams(tx, user_id)`**: Executes the recursive CTE to resolve all ancestor teams for a given user.
-* **`check_permission(tx, user_id, target_type, target_id, path)`**: Executes the 5-stage evaluation waterfall and returns the cumulative `AccessLevel` enum (`NONE`, `READ`, `COMMENT`, `EDIT`, `ADMIN`).
-* **`get_permission_details(tx, user_id, target_type, target_id, path)`**: Returns a comprehensive diagnostic bundle including:
+Defined in `backend/include/cme/db/permission_engine.hpp` and implemented in `backend/src/db/permission_engine.cpp` ([GitHub source](https://github.com/paulo-casanova/collaborative-markdown-editor/blob/master/backend/include/cme/db/permission_engine.hpp)).
+
+This is the low-level engine executing database queries and evaluating ACL rules:
+
+```cpp
+namespace cme::db {
+
+class PermissionEngine {
+public:
+    // Resolves all ancestor teams transitively via recursive CTE
+    static Result<std::vector<std::string>> get_effective_teams(
+        pqxx::connection& conn,
+        const std::string& user_id
+    );
+
+    // Resolves human-readable team names for display
+    static Result<std::vector<std::string>> get_effective_team_names(
+        pqxx::connection& conn,
+        const std::string& user_id
+    );
+
+    // Evaluates the 5-stage waterfall to determine effective AccessLevel
+    static Result<AccessLevel> check_permission(
+        pqxx::connection& conn,
+        const std::string& user_id,
+        const std::string& document_id,
+        const std::string& fs_path
+    );
+
+    // Returns a full diagnostic bundle (effective level, can_manage, explicit & inherited grants)
+    static Result<PermissionDetails> get_permission_details(
+        pqxx::connection& conn,
+        const std::string& user_id,
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& fs_path
+    );
+
+    // Evaluates simulation for the test permissions endpoint
+    static Result<TestPermissionResult> test_permission(
+        pqxx::connection& conn,
+        const std::string& subject_type,
+        const std::string& subject_id,
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& fs_path
+    );
+};
+
+} // namespace cme::db
+```
+
+* **`get_effective_teams(conn, user_id)`**: Executes the recursive CTE to resolve all direct and transitive ancestor teams for a given user.
+* **`check_permission(conn, user_id, document_id, fs_path)`**: Executes the 5-stage evaluation waterfall and returns the cumulative `AccessLevel` enum (`NONE`, `READ`, `COMMENT`, `EDIT`, `ADMIN`).
+* **`get_permission_details(conn, user_id, target_type, target_id, fs_path)`**: Returns a comprehensive diagnostic bundle including:
   * `effective_level`: The resolved access level.
-  * `can_manage`: Boolean indicating whether the caller may edit ACLs.
+  * `can_manage`: Boolean indicating whether the caller may edit ACLs (owners and system admins).
   * `explicit_grants`: Vector of grants assigned directly to this node.
   * `inherited_grants`: Vector of grants inherited from ancestor folders, including source directory paths.
   * `owner_user_id` / `owner_team_id`: Provenance information.
-* **`delete_node_permission(tx, permission_id, requesting_user_id)`**: Validates caller authority (`can_manage`) and safely deletes an explicit permission entry.
-* **`transfer_node_ownership(tx, target_type, target_id, path, new_owner_user_id, new_owner_team_id, requesting_user_id)`**: Safely transfers ownership to a new user or team.
+* **`test_permission(...)`**: Dry-run simulator matching the rules waterfall without mutating database state.
 
-#### 2. `cme::service::DocumentService`
-Located in [`backend/src/service/document_service.cpp`](file:///home/pasc/cme/backend/src/service/document_service.cpp), coordinates business logic and access control enforcement:
+#### 2. `cme::document::DocumentService`
+Defined in `backend/include/cme/document/document_service.hpp` and implemented in `backend/src/document/document_service.cpp` ([GitHub source](https://github.com/paulo-casanova/collaborative-markdown-editor/blob/master/backend/include/cme/document/document_service.hpp)).
+
+Coordinates high-level business logic, authorization verification, and audit logging:
+
+```cpp
+namespace cme::document {
+
+class DocumentService {
+public:
+    // Generates the hierarchical workspace tree filtered by user READ permissions
+    Result<nlohmann::json> get_workspace_tree(const auth::UserIdentity& user);
+
+    // Resolves explicit and inherited permissions, owner, and provenance for a node
+    Result<nlohmann::json> get_node_permissions(
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& dir_path,
+        const auth::UserIdentity& user
+    );
+
+    // Grants or updates an explicit permission on a document or directory
+    Result<nlohmann::json> set_node_permission(
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& dir_path,
+        const std::string& grantee_type,
+        const std::string& grantee_id,
+        const std::string& access_level,
+        bool is_inheritable,
+        const auth::UserIdentity& user
+    );
+
+    // Removes an explicit permission grant (requires can_manage = true)
+    Result<void> delete_node_permission(
+        int64_t permission_id,
+        const auth::UserIdentity& user
+    );
+
+    // Transfers ownership of a document or directory (requires ownership or admin)
+    Result<void> transfer_node_ownership(
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& dir_path,
+        const std::string& new_owner_user_id,
+        const std::string& new_owner_team_id,
+        const auth::UserIdentity& user
+    );
+
+    // Tests what ACLs apply to a specific user or team on a node
+    Result<nlohmann::json> test_node_permission(
+        const std::string& target_type,
+        const std::string& target_id,
+        const std::string& dir_path,
+        const std::string& subject_type,
+        const std::string& subject_id,
+        const auth::UserIdentity& user
+    );
+
+    // Lists available users and teams for permission assignment
+    Result<nlohmann::json> get_assignable_principals(
+        const auth::UserIdentity& user
+    );
+};
+
+} // namespace cme::document
+```
+
 * Wraps all read, write, update, and delete actions with `check_permission`.
 * Enforces `can_manage` delegation: only node owners and system administrators may alter permissions or transfer ownership.
 * Emits structured audit log events into PostgreSQL upon authorization mutations.

@@ -326,7 +326,7 @@ server {
 
 ## 8. Backend C++ Architecture & Interfaces
 
-The authentication subsystem is implemented under `cme::auth` in [`backend/src/auth/`](file:///home/pasc/cme/backend/src/auth/):
+The authentication subsystem is implemented under `cme::auth` in `backend/src/auth/` ([GitHub source](https://github.com/paulo-casanova/collaborative-markdown-editor/tree/master/backend/src/auth)):
 
 ```mermaid
 classDiagram
@@ -377,15 +377,15 @@ classDiagram
 
 ### Core Components:
 
-1. **[`IAuthProvider`](file:///home/pasc/cme/backend/include/cme/auth/auth_provider.hpp)**:
+1. **`IAuthProvider`** (`backend/include/cme/auth/auth_provider.hpp`):
    * Polymorphic interface defining authentication strategies (`challenge` or `delegated`).
-2. **[`DelegatedAuthProvider`](file:///home/pasc/cme/backend/src/auth/auth_provider.cpp)**:
+2. **`DelegatedAuthProvider`** (`backend/src/auth/auth_provider.cpp`):
    * Extracts user identity from headers, executes validation against configured `required_headers`, and performs Just-In-Time (JIT) provisioning in PostgreSQL.
-3. **[`SessionManager`](file:///home/pasc/cme/backend/src/auth/session_manager.cpp)**:
+3. **`SessionManager`** (`backend/src/auth/session_manager.cpp`):
    * Handles cryptorandom token generation, SHA-256 digest hashing, session database insertion, validation waterfalls, and session termination.
-4. **[`FileAdminProvider`](file:///home/pasc/cme/backend/src/auth/admin_provider.cpp)**:
+4. **`FileAdminProvider`** (`backend/src/auth/admin_provider.cpp`):
    * Parses line-delimited or CSV files of admin usernames. Inspects file `mtime` on requests and hot-reloads dynamically without requiring process restarts.
-5. **[`CommandAdminProvider`](file:///home/pasc/cme/backend/src/auth/admin_provider.cpp)**:
+5. **`CommandAdminProvider`** (`backend/src/auth/admin_provider.cpp`):
    * Executes external verification scripts (e.g., LDAP/AD queries) with sanitized username substitutions and thread-safe in-memory caching.
 
 ---
