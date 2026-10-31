@@ -183,7 +183,7 @@ sequenceDiagram
         SM->>DB: INSERT INTO sessions (token_hash, user_id, expires_at)
         DB-->>SM: OK
         SM-->>Srv: Return raw token & expiration
-        Srv-->>Client: 200 OK + Set-Cookie: cme_session=<token>; HttpOnly; SameSite=Lax
+        Srv-->>Client: 200 OK (Set-Cookie: cme_session token)
     end
 ```
 
