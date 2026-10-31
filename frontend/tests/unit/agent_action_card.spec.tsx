@@ -135,4 +135,27 @@ describe('AgentActionCard', () => {
     expect(failedHtml).toContain('Failed');
     expect(failedHtml).toContain('Error: Target text not found in document');
   });
+
+  it('renders Jump to edit button and clickable direct-edit-applied-box when onJumpToEdit is provided', () => {
+    const action: AgentAction = {
+      id: 'act-jump-test',
+      dialog_id: 'dlg-1',
+      action: 'direct_edit',
+      payload: {
+        original_text: 'old text',
+        replacement_text: 'new text',
+      },
+      status: 'applied',
+      timestamp: Date.now(),
+    };
+
+    const onJumpToEdit = vi.fn();
+    const html = renderToStaticMarkup(<AgentActionCard action={action} onJumpToEdit={onJumpToEdit} />);
+
+    expect(html).toContain('data-testid="jump-to-edit-btn"');
+    expect(html).toContain('Jump to edit');
+    expect(html).toContain('data-testid="direct-edit-applied-box"');
+    expect(html).toContain('Click to jump to this edit in document');
+    expect(html).toContain('jump ↗');
+  });
 });

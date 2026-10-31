@@ -427,4 +427,26 @@ body,
   color: #c53030;
 }
 
+/* Direct Edit Jump Animation */
+@keyframes cme-edit-flash {
+  0% {
+    background-color: rgba(16, 185, 129, 0.35);
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.5);
+    border-radius: 4px;
+  }
+  60% {
+    background-color: rgba(16, 185, 129, 0.2);
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.3);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.cme-edit-highlight {
+  animation: cme-edit-flash 2.5s ease-out forwards;
+}
+
+
 

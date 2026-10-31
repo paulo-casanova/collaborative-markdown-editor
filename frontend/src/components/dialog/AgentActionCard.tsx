@@ -9,14 +9,16 @@ import {
   Check,
   AlertCircle,
   Loader2,
+  ArrowUpRight,
 } from 'lucide-react';
 import { AgentAction } from '../../types/dialog';
 
 interface AgentActionCardProps {
   action: AgentAction;
+  onJumpToEdit?: (action: AgentAction) => void;
 }
 
-export const AgentActionCard: React.FC<AgentActionCardProps> = ({ action }) => {
+export const AgentActionCard: React.FC<AgentActionCardProps> = ({ action, onJumpToEdit }) => {
   const { action: actionType, payload, status, error } = action;
 
   const renderActionDetails = () => {
@@ -27,19 +29,63 @@ export const AgentActionCard: React.FC<AgentActionCardProps> = ({ action }) => {
         const rep = payload.replacement_text;
         return (
           <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-xs text-cme-text-muted">
-              <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                Direct edit applied
-              </span>
-              <span>— no manual approval needed</span>
+            <div className="flex items-center justify-between gap-1.5 text-xs text-cme-text-muted">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="font-medium text-emerald-600 dark:text-emerald-400 shrink-0">
+                  Direct edit applied
+                </span>
+                <span className="truncate hidden sm:inline text-cme-text-subtle">
+                  {onJumpToEdit ? '— click box to jump' : '— no manual approval needed'}
+                </span>
+              </div>
+              {onJumpToEdit && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onJumpToEdit(action);
+                  }}
+                  className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition-colors shrink-0 cursor-pointer"
+                  title="Jump to edit in document"
+                  data-testid="jump-to-edit-btn"
+                >
+                  <ArrowUpRight className="w-3 h-3" />
+                  <span>Jump to edit</span>
+                </button>
+              )}
             </div>
             {orig && rep ? (
-              <div className="bg-zinc-950/80 rounded p-2 font-mono text-[11px] text-zinc-200 space-y-1">
+              <div
+                onClick={() => onJumpToEdit?.(action)}
+                className={`bg-zinc-950/80 rounded p-2 font-mono text-[11px] text-zinc-200 space-y-1 ${
+                  onJumpToEdit
+                    ? 'cursor-pointer hover:ring-1 hover:ring-emerald-500/50 hover:bg-zinc-900 transition-all group/box'
+                    : ''
+                }`}
+                title={onJumpToEdit ? 'Click to jump to this edit in document' : undefined}
+                data-testid="direct-edit-applied-box"
+              >
                 <div className="text-rose-400 line-through truncate">- {orig}</div>
-                <div className="text-emerald-400 truncate">+ {rep}</div>
+                <div className="text-emerald-400 truncate flex items-center justify-between">
+                  <span>+ {rep}</span>
+                  {onJumpToEdit && (
+                    <span className="text-[10px] text-emerald-500/70 group-hover/box:text-emerald-400 flex items-center gap-0.5 shrink-0 ml-1">
+                      jump ↗
+                    </span>
+                  )}
+                </div>
               </div>
             ) : diff ? (
-              <div className="bg-zinc-950/80 rounded p-2 font-mono text-[11px] text-zinc-200 max-h-36 overflow-y-auto whitespace-pre">
+              <div
+                onClick={() => onJumpToEdit?.(action)}
+                className={`bg-zinc-950/80 rounded p-2 font-mono text-[11px] text-zinc-200 max-h-36 overflow-y-auto whitespace-pre ${
+                  onJumpToEdit
+                    ? 'cursor-pointer hover:ring-1 hover:ring-emerald-500/50 hover:bg-zinc-900 transition-all'
+                    : ''
+                }`}
+                title={onJumpToEdit ? 'Click to jump to this edit in document' : undefined}
+                data-testid="direct-edit-applied-box"
+              >
                 {diff.split('\n').slice(0, 8).join('\n')}
               </div>
             ) : null}
@@ -197,7 +243,13 @@ export const AgentActionCard: React.FC<AgentActionCardProps> = ({ action }) => {
       className="rounded-lg border border-cme-border-base bg-cme-bg-base overflow-hidden my-2 shadow-sm text-xs"
       data-testid={`agent-action-card-${action.id}`}
     >
-      <div className="px-3 py-2 bg-cme-bg-subtle border-b border-cme-border-base flex items-center justify-between">
+      <div
+        onClick={actionType === 'direct_edit' && onJumpToEdit ? () => onJumpToEdit(action) : undefined}
+        className={`px-3 py-2 bg-cme-bg-subtle border-b border-cme-border-base flex items-center justify-between ${
+          actionType === 'direct_edit' && onJumpToEdit ? 'cursor-pointer hover:bg-cme-bg-hover transition-colors' : ''
+        }`}
+        title={actionType === 'direct_edit' && onJumpToEdit ? 'Click to jump to this edit in document' : undefined}
+      >
         <div className="flex items-center gap-1.5 font-semibold text-cme-text-base">
           {meta.icon}
           <span>{meta.title}</span>

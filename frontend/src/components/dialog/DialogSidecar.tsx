@@ -39,6 +39,7 @@ interface DialogSidecarProps {
   onApplyDiff?: (diff: string) => Promise<boolean | void> | boolean | void;
   onApplyReplacement?: (orig: string, rep: string, anchor?: any) => Promise<boolean | void> | boolean | void;
   onReviewAction?: (actionType: string, payload: any) => void;
+  onJumpToEdit?: (action: any) => void;
 }
 
 export const DialogSidecar: React.FC<DialogSidecarProps> = ({
@@ -49,6 +50,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   onApplyDiff,
   onApplyReplacement,
   onReviewAction,
+  onJumpToEdit,
 }) => {
   const { setDialogSidecarOpen } = useUIStore();
   const storeState = useDialogStore();
@@ -800,7 +802,13 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           });
         }, [messages, agentActions, diffProposals]).map((item) => {
           if (item.kind === 'action') {
-            return <AgentActionCard key={item.data.id} action={item.data} />;
+            return (
+              <AgentActionCard
+                key={item.data.id}
+                action={item.data}
+                onJumpToEdit={onJumpToEdit}
+              />
+            );
           }
           if (item.kind === 'diff') {
             return (

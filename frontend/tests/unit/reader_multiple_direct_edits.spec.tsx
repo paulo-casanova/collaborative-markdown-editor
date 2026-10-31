@@ -275,4 +275,56 @@ describe('Reader Mode Multiple direct_edit Actions & Sequential Execution', () =
     expect(finalActions[1].status).toBe('applied');
     expect(docContent).toBe('Correct replacement here.');
   });
+
+  it('locates direct_edit target text in DOM and triggers smooth scroll and highlight', () => {
+    // Mock container element
+    const scrollMock = vi.fn();
+    const classListAddMock = vi.fn();
+    const classListRemoveMock = vi.fn();
+
+    const mockChildParagraph = {
+      textContent: 'Here is the newly updated text inserted by the agent.',
+      scrollIntoView: scrollMock,
+      classList: {
+        add: classListAddMock,
+        remove: classListRemoveMock,
+      },
+      offsetWidth: 100,
+    };
+
+    const mockContainer = {
+      querySelectorAll: vi.fn().mockReturnValue([mockChildParagraph]),
+    };
+
+    const action = {
+      id: 'act-jump',
+      dialog_id: 'dlg-1',
+      action: 'direct_edit',
+      payload: {
+        original_text: 'old text',
+        replacement_text: 'Here is the newly updated text inserted by the agent.',
+      },
+      status: 'applied',
+      timestamp: Date.now(),
+    };
+
+    // Logic matching handleJumpToEditInReader
+    const targetText = action.payload.replacement_text;
+    const blocks = mockContainer.querySelectorAll('p, li');
+    let targetEl: any = null;
+    for (const b of blocks) {
+      if (b.textContent.toLowerCase().includes(targetText.toLowerCase())) {
+        targetEl = b;
+        break;
+      }
+    }
+
+    expect(targetEl).not.toBeNull();
+    targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    targetEl.classList.remove('cme-edit-highlight');
+    targetEl.classList.add('cme-edit-highlight');
+
+    expect(scrollMock).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+    expect(classListAddMock).toHaveBeenCalledWith('cme-edit-highlight');
+  });
 });

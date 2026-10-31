@@ -557,6 +557,96 @@ export const ReaderPage: React.FC = () => {
   }, [pendingSuggestionSelection, docId, queryClient]);
 
   const articleRef = useRef<HTMLElement>(null);
+
+  const handleJumpToEditInReader = useCallback(
+    (action: any) => {
+      const payload = action?.payload || {};
+      const rep = payload.replacement_text;
+      const orig = payload.original_text;
+      const diff = payload.diff;
+      const anchor = payload.anchor;
+
+      const container = articleRef.current;
+      if (!container) return;
+
+      // Extract search target text
+      let targetText = '';
+      if (rep && typeof rep === 'string' && rep.trim()) {
+        targetText = rep.trim();
+      } else if (diff && typeof diff === 'string') {
+        const addedLines = diff
+          .split('\n')
+          .filter((l: string) => l.startsWith('+') && !l.startsWith('+++'))
+          .map((l: string) => l.slice(1).trim())
+          .filter((l: string) => l.length >= 3);
+        if (addedLines.length > 0) {
+          targetText = addedLines[0];
+        }
+      } else if (anchor?.quote?.exact) {
+        targetText = String(anchor.quote.exact).trim();
+      } else if (orig && typeof orig === 'string' && orig.trim()) {
+        targetText = orig.trim();
+      }
+
+      if (!targetText) return;
+
+      const findTargetEl = (): HTMLElement | null => {
+        const primarySearch = targetText.split('\n')[0].trim().toLowerCase();
+        if (!primarySearch) return null;
+
+        // 1. Check for text node match using TreeWalker
+        if (typeof window !== 'undefined' && window.document) {
+          const walker = window.document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+          let node: Node | null;
+          while ((node = walker.nextNode())) {
+            const val = (node.nodeValue || '').toLowerCase();
+            if (val.includes(primarySearch)) {
+              return (node.parentElement as HTMLElement) || null;
+            }
+          }
+        }
+
+        // 2. Check block elements textContent
+        const blocks = container.querySelectorAll(
+          'p, li, blockquote, pre, tr, h1, h2, h3, h4, h5, h6, .callout, div'
+        );
+        for (const block of Array.from(blocks)) {
+          const text = (block.textContent || '').toLowerCase();
+          if (text.includes(primarySearch)) {
+            return block as HTMLElement;
+          }
+        }
+
+        // 3. Fallback: first 3 words
+        const words = primarySearch.split(/\s+/).filter(Boolean);
+        if (words.length >= 3) {
+          const phrase = words.slice(0, 3).join(' ');
+          for (const block of Array.from(blocks)) {
+            if ((block.textContent || '').toLowerCase().includes(phrase)) {
+              return block as HTMLElement;
+            }
+          }
+        }
+
+        return null;
+      };
+
+      const targetEl = findTargetEl();
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        targetEl.classList.remove('cme-edit-highlight');
+        // Trigger reflow to restart animation if clicked repeatedly
+        void targetEl.offsetWidth;
+        targetEl.classList.add('cme-edit-highlight');
+        setTimeout(() => {
+          targetEl.classList.remove('cme-edit-highlight');
+        }, 2600);
+      } else {
+        console.warn('[ReaderPage] Could not find edit text in rendered document to jump to:', targetText);
+      }
+    },
+    []
+  );
   const floatingMenuRef = useRef<HTMLDivElement>(null);
   const [floatingMenuPos, setFloatingMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [readerSelectedText, setReaderSelectedText] = useState('');
@@ -1655,6 +1745,7 @@ export const ReaderPage: React.FC = () => {
           documentContent={latestContentRef.current || document?.content}
           onApplyDiff={handleApplyDiffInReader}
           onApplyReplacement={handleApplyReplacementInReader}
+          onJumpToEdit={handleJumpToEditInReader}
           onReviewAction={(actionType) => {
             setHasNewVersion(true);
             setRefreshReason(actionType.includes('comment') ? 'comments' : 'all');

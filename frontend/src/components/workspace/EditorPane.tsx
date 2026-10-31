@@ -303,6 +303,99 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     [editorInstance, provider]
   );
 
+  const handleJumpToEdit = useCallback(
+    (action: any) => {
+      const payload = action?.payload || {};
+      const rep = payload.replacement_text;
+      const orig = payload.original_text;
+      const diff = payload.diff;
+      const anchor = payload.anchor;
+
+      const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
+      if (!view || !view.state?.doc) return;
+
+      const doc = view.state.doc;
+      const docText = doc.toString();
+
+      let targetFrom = -1;
+      let targetTo = -1;
+
+      // 1. If replacement_text exists in current doc, find it
+      if (rep && typeof rep === 'string' && rep.trim()) {
+        const trimmed = rep.trim();
+        const idx = docText.indexOf(trimmed);
+        if (idx !== -1) {
+          targetFrom = idx;
+          targetTo = idx + trimmed.length;
+        } else {
+          const firstLine = trimmed.split('\n')[0].trim();
+          if (firstLine.length >= 4) {
+            const lIdx = docText.indexOf(firstLine);
+            if (lIdx !== -1) {
+              targetFrom = lIdx;
+              targetTo = lIdx + firstLine.length;
+            }
+          }
+        }
+      }
+
+      // 2. If diff exists, extract added lines
+      if (targetFrom === -1 && diff && typeof diff === 'string') {
+        const addedLines = diff
+          .split('\n')
+          .filter((l: string) => l.startsWith('+') && !l.startsWith('+++'))
+          .map((l: string) => l.slice(1).trim())
+          .filter((l: string) => l.length >= 3);
+        for (const line of addedLines) {
+          const idx = docText.indexOf(line);
+          if (idx !== -1) {
+            targetFrom = idx;
+            targetTo = idx + line.length;
+            break;
+          }
+        }
+      }
+
+      // 3. Fall back to anchor if available
+      if (targetFrom === -1 && anchor) {
+        const reconciled = reconcileAnchor(
+          anchor,
+          provider?.ydoc || docText,
+          provider?.ydoc ? provider.ydoc.getText('content') : undefined
+        );
+        if (reconciled?.range) {
+          targetFrom = Math.max(0, Math.min(reconciled.range.start, doc.length));
+          targetTo = Math.max(targetFrom, Math.min(reconciled.range.end, doc.length));
+        }
+      }
+
+      // 4. Fall back to original_text location
+      if (targetFrom === -1 && orig && typeof orig === 'string' && orig.trim()) {
+        const idx = docText.indexOf(orig.trim());
+        if (idx !== -1) {
+          targetFrom = idx;
+          targetTo = idx + orig.trim().length;
+        }
+      }
+
+      if (targetFrom >= 0) {
+        view.dispatch({
+          selection: { anchor: targetFrom, head: targetTo >= targetFrom ? targetTo : targetFrom },
+          effects: EditorView.scrollIntoView(targetFrom, { y: 'center', yMargin: 40 }),
+        });
+        view.focus();
+        requestAnimationFrame(() => {
+          if (view?.dom?.isConnected) {
+            view.dispatch({
+              effects: EditorView.scrollIntoView(targetFrom, { y: 'center', yMargin: 40 }),
+            });
+          }
+        });
+      }
+    },
+    [editorInstance, provider]
+  );
+
   const handleApplyReplacement = useCallback(
     (orig: string, rep: string, anchor?: any): boolean => {
       if (!canEdit) {
@@ -936,6 +1029,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
             documentContent={getDocumentMarkdown()}
             onApplyDiff={handleApplyDiff}
             onApplyReplacement={handleApplyReplacement}
+            onJumpToEdit={handleJumpToEdit}
           />
         )}
 
