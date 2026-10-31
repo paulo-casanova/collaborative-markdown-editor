@@ -2,6 +2,7 @@ export interface HealthResponse {
   status: string;
   version: string;
   uptime_seconds: number;
+  authn_provider?: string;
   timestamp?: string;
   database?: {
     status: string;

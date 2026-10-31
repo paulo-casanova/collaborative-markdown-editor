@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { Shield, LogOut, Key, Users, Settings, ChevronDown, LogIn } from 'lucide-react';
-import { fetchCurrentUser, logoutUser } from '../../api/auth';
+import { Shield, LogOut, Key, Users, Settings, ChevronDown, LogIn, RefreshCw } from 'lucide-react';
+import { fetchCurrentUser, logoutUser, getStoredAuthnProvider } from '../../api/auth';
 import { useUIStore } from '../../stores/uiStore';
 import { Badge } from '../common/Badge';
+import { RELOAD_KEY } from '../../api/client';
 
 export const UserProfilePill: React.FC = () => {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -49,14 +50,28 @@ export const UserProfilePill: React.FC = () => {
     );
   }
 
+  const isDelegated = (user?.authn_provider || getStoredAuthnProvider()) === 'delegated';
+
   if (isError || !user) {
     return (
       <button
-        onClick={() => setLoginModalOpen(true)}
-        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-cme-primary text-white hover:bg-cme-primary-hover transition-colors shadow-sm"
+        onClick={() => {
+          if (isDelegated) {
+            if (typeof sessionStorage !== 'undefined') {
+              sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
+            }
+            if (typeof window !== 'undefined' && window.location) {
+              window.location.reload();
+            }
+          } else {
+            setLoginModalOpen(true);
+          }
+        }}
+        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full bg-cme-primary text-white hover:bg-cme-primary-hover transition-colors shadow-sm cursor-pointer"
+        title={isDelegated ? 'Reload page to authenticate with reverse proxy' : 'Sign In to CME'}
       >
-        <LogIn className="w-3.5 h-3.5" />
-        <span>Sign In</span>
+        {isDelegated ? <RefreshCw className="w-3.5 h-3.5" /> : <LogIn className="w-3.5 h-3.5" />}
+        <span>{isDelegated ? 'Reload Page' : 'Sign In'}</span>
       </button>
     );
   }

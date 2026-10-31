@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { AlertCircle } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { AlertCircle, RefreshCw } from 'lucide-react';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { LoginModal } from '../auth/LoginModal';
@@ -11,6 +12,7 @@ import { useThemeStore } from '../../stores/themeStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { RELOAD_KEY } from '../../api/client';
+import { fetchCurrentUser, getStoredAuthnProvider } from '../../api/auth';
 
 export const AppShell: React.FC = () => {
   const { initThemeListener } = useThemeStore();
@@ -18,6 +20,32 @@ export const AppShell: React.FC = () => {
   const hasDirtyTabs = useWorkspaceStore((state) => state.tabs.some((t) => t.isDirty));
   const navigate = useNavigate();
   const location = useLocation();
+
+  const { data: user } = useQuery({
+    queryKey: ['auth-me'],
+    queryFn: fetchCurrentUser,
+    retry: false,
+  });
+
+  const isDelegated = (user?.authn_provider || getStoredAuthnProvider()) === 'delegated';
+
+  const handleReload = () => {
+    if (hasDirtyTabs) {
+      if (
+        !confirm(
+          'You have unsaved changes that may be lost on reload. Continue to reload?'
+        )
+      ) {
+        return;
+      }
+    }
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
+    }
+    if (typeof window !== 'undefined' && window.location) {
+      window.location.reload();
+    }
+  };
 
   useEffect(() => {
     const cleanup = initThemeListener();
@@ -138,42 +166,43 @@ export const AppShell: React.FC = () => {
             <span className="truncate">
               {hasDirtyTabs
                 ? 'Your authentication session has expired and you have unsaved changes. Please copy your edits before reloading.'
-                : 'Your authentication session has expired. Sign in again to restore access.'}
+                : isDelegated
+                  ? 'Your session has expired. Reload the page to sign in via your identity provider.'
+                  : 'Your authentication session has expired. Sign in again to restore access.'}
             </span>
           </div>
           <div className="flex items-center gap-2 shrink-0 ml-3">
-            <button
-              onClick={() => {
-                setLoginModalOpen(true);
-              }}
-              className="px-2.5 py-1 bg-white text-rose-600 rounded font-semibold hover:bg-rose-50 transition-colors shadow-sm cursor-pointer"
-              data-testid="session-reload-btn"
-            >
-              Sign In
-            </button>
-            <button
-              onClick={() => {
-                if (hasDirtyTabs) {
-                  if (
-                    !confirm(
-                      'You have unsaved changes that may be lost on reload. Continue to reload?'
-                    )
-                  ) {
-                    return;
-                  }
-                }
-                if (typeof sessionStorage !== 'undefined') {
-                  sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
-                }
-                if (typeof window !== 'undefined' && window.location) {
-                  window.location.reload();
-                }
-              }}
-              className="px-2 py-1 bg-rose-700 hover:bg-rose-800 text-white rounded text-xs transition-colors cursor-pointer"
-              title="Reload page to refresh reverse proxy session"
-            >
-              Reload
-            </button>
+            {isDelegated ? (
+              <button
+                onClick={handleReload}
+                className="px-3 py-1 bg-white text-rose-600 rounded font-semibold hover:bg-rose-50 transition-colors shadow-sm cursor-pointer flex items-center gap-1.5"
+                data-testid="session-reload-btn"
+                title="Reload page to re-authenticate with your identity provider"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Reload</span>
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => {
+                    setLoginModalOpen(true);
+                  }}
+                  className="px-2.5 py-1 bg-white text-rose-600 rounded font-semibold hover:bg-rose-50 transition-colors shadow-sm cursor-pointer"
+                  data-testid="session-signin-btn"
+                >
+                  Sign In
+                </button>
+                <button
+                  onClick={handleReload}
+                  className="px-2 py-1 bg-rose-700 hover:bg-rose-800 text-white rounded text-xs transition-colors cursor-pointer"
+                  data-testid="session-reload-btn"
+                  title="Reload page"
+                >
+                  Reload
+                </button>
+              </>
+            )}
           </div>
         </div>
       )}

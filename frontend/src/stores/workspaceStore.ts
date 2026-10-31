@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { useStore } from 'zustand';
+import { createStore } from 'zustand/vanilla';
 import { persist } from 'zustand/middleware';
 
 export interface WorkspaceTab {
@@ -40,7 +41,7 @@ interface WorkspaceState {
   closeSplit: () => void;
 }
 
-export const useWorkspaceStore = create<WorkspaceState>()(
+const workspaceStore = createStore<WorkspaceState>()(
   persist(
     (set, get) => ({
       tabs: [],
@@ -287,3 +288,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     }
   )
 );
+
+(workspaceStore as any).getServerState = () => workspaceStore.getState();
+
+export const useWorkspaceStore = Object.assign(
+  (selector?: any, equalityFn?: any) => useStore(workspaceStore, selector, equalityFn),
+  workspaceStore
+) as typeof workspaceStore & (<T = WorkspaceState>(selector?: (state: WorkspaceState) => T, equalityFn?: (a: T, b: T) => boolean) => T);

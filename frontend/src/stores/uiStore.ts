@@ -1,4 +1,5 @@
-import { create } from 'zustand';
+import { useStore } from 'zustand';
+import { createStore } from 'zustand/vanilla';
 import { BreadcrumbItem } from '../types/document';
 
 export type SyncStatus = 'saved' | 'syncing' | 'offline' | 'live' | 'expired';
@@ -73,7 +74,7 @@ const getInitialLineNumbers = (): boolean => {
   return false;
 };
 
-export const useUIStore = create<UIState>((set) => ({
+const uiStore = createStore<UIState>((set) => ({
   sidebarOpen: true,
   sidebarWidth: getInitialSidebarWidth(),
   reviewSidebarOpen: false,
@@ -160,3 +161,10 @@ export const useUIStore = create<UIState>((set) => ({
       return { lineNumbers: next };
     }),
 }));
+
+(uiStore as any).getServerState = () => uiStore.getState();
+
+export const useUIStore = Object.assign(
+  (selector?: any, equalityFn?: any) => useStore(uiStore, selector, equalityFn),
+  uiStore
+) as typeof uiStore & (<T = UIState>(selector?: (state: UIState) => T, equalityFn?: (a: T, b: T) => boolean) => T);

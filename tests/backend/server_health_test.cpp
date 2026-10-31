@@ -17,6 +17,7 @@ int main() {
     cfg.server.port = 8089;
     cfg.storage.root_path = test_storage.string();
     cfg.database.url = "postgresql://cme:secret@localhost:5432/cme_test";
+    cfg.database.lease_name = "cme_health_test_lease";
 
     std::cout << "[TEST] Starting Server in background thread on http://127.0.0.1:8089...\n";
     auto server = std::make_shared<cme::server::Server>(cfg);
@@ -44,6 +45,7 @@ int main() {
 
     assert(health["status"] == "healthy");
     assert(health["version"] == CME_VERSION_STRING);
+    assert(health["authn_provider"] == "delegated");
     assert(health["database"]["status"] == "connected");
     assert(health["database"]["latency_ms"].is_number());
     assert(health["storage"]["status"] == "writable");

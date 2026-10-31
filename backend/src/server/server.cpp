@@ -107,6 +107,7 @@ nlohmann::json Server::get_health_status() {
     nlohmann::json health;
     health["version"] = CME_VERSION_STRING;
     health["uptime_seconds"] = uptime;
+    health["authn_provider"] = config_.authn.provider;
     health["active_collab_rooms"] = room_manager_ ? room_manager_->active_room_count() : 0;
 
     bool overall_healthy = true;

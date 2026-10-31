@@ -1,8 +1,34 @@
 import { apiRequest, TOKEN_STORAGE_KEY } from './client';
 import { UserIdentity, PatToken, UpdateProfileRequest } from '../types/auth';
 
+export const AUTHN_PROVIDER_STORAGE_KEY = 'cme_authn_provider';
+
+export function getStoredAuthnProvider(): string {
+  try {
+    const storage = typeof window !== 'undefined' ? window.localStorage : (typeof localStorage !== 'undefined' ? localStorage : null);
+    if (storage) {
+      const p = storage.getItem(AUTHN_PROVIDER_STORAGE_KEY);
+      if (p) return p;
+    }
+  } catch {}
+  return 'delegated';
+}
+
+export function setStoredAuthnProvider(provider: string): void {
+  try {
+    const storage = typeof window !== 'undefined' ? window.localStorage : (typeof localStorage !== 'undefined' ? localStorage : null);
+    if (storage && provider) {
+      storage.setItem(AUTHN_PROVIDER_STORAGE_KEY, provider);
+    }
+  } catch {}
+}
+
 export function normalizeUser(data: any): UserIdentity {
   const u = (data && data.user) ? data.user : data;
+  const authnProvider = data?.authn_provider || u?.authn_provider;
+  if (authnProvider) {
+    setStoredAuthnProvider(authnProvider);
+  }
   return {
     user_id: u?.user_id || u?.id || '',
     username: u?.username || '',
@@ -13,7 +39,7 @@ export function normalizeUser(data: any): UserIdentity {
     id: u?.id || u?.user_id || '',
     effective_teams: data?.effective_teams || u?.effective_teams || [],
     created_at: u?.created_at,
-    authn_provider: data?.authn_provider || u?.authn_provider,
+    authn_provider: authnProvider,
     can_change_password: Boolean(data?.can_change_password ?? u?.can_change_password ?? false),
   };
 }

@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Database, HardDrive, Users, Clock, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import { fetchHealthStatus } from '../../api/health';
+import { getStoredAuthnProvider } from '../../api/auth';
 import { useUIStore } from '../../stores/uiStore';
+import { RELOAD_KEY } from '../../api/client';
 
 function formatUptime(seconds: number): string {
   if (!seconds || seconds < 0) return '0s';
@@ -95,8 +97,28 @@ export const HealthPopover: React.FC = () => {
           {isLoading ? (
             <div className="py-4 text-center text-cme-text-muted">Probing daemon status...</div>
           ) : isSessionExpired ? (
-            <div className="py-2 text-rose-500 font-medium">
-              Authentication session expired. Please sign in again.
+            <div className="py-2 text-rose-500 font-medium space-y-1.5">
+              <div>
+                {getStoredAuthnProvider() === 'delegated'
+                  ? 'Authentication session expired. Reload the page to re-authenticate with your identity provider.'
+                  : 'Authentication session expired. Please sign in again.'}
+              </div>
+              {getStoredAuthnProvider() === 'delegated' && (
+                <button
+                  onClick={() => {
+                    if (typeof sessionStorage !== 'undefined') {
+                      sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
+                    }
+                    if (typeof window !== 'undefined' && window.location) {
+                      window.location.reload();
+                    }
+                  }}
+                  className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  <span>Reload Page</span>
+                </button>
+              )}
             </div>
           ) : isError || !health ? (
             <div className="py-2 text-rose-500">

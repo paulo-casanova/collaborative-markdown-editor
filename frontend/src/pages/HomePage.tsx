@@ -8,11 +8,13 @@ import {
   Layers,
   Zap,
   Users,
+  RefreshCw,
 } from 'lucide-react';
-import { fetchCurrentUser } from '../api/auth';
+import { fetchCurrentUser, getStoredAuthnProvider } from '../api/auth';
 import { fetchHealthStatus } from '../api/health';
 import { useUIStore } from '../stores/uiStore';
 import { Badge } from '../components/common/Badge';
+import { RELOAD_KEY } from '../api/client';
 
 export const HomePage: React.FC = () => {
   const { setBreadcrumbs, setLoginModalOpen } = useUIStore();
@@ -58,10 +60,25 @@ export const HomePage: React.FC = () => {
               <Badge variant="primary" size="md">
                 Logged in as @{user.username}
               </Badge>
+            ) : getStoredAuthnProvider() === 'delegated' ? (
+              <button
+                onClick={() => {
+                  if (typeof sessionStorage !== 'undefined') {
+                    sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
+                  }
+                  if (typeof window !== 'undefined' && window.location) {
+                    window.location.reload();
+                  }
+                }}
+                className="px-4 py-2 bg-cme-primary text-white font-medium rounded-lg text-xs hover:bg-cme-primary-hover transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Reload to Sign In</span>
+              </button>
             ) : (
               <button
                 onClick={() => setLoginModalOpen(true)}
-                className="px-4 py-2 bg-cme-primary text-white font-medium rounded-lg text-xs hover:bg-cme-primary-hover transition-colors shadow-sm"
+                className="px-4 py-2 bg-cme-primary text-white font-medium rounded-lg text-xs hover:bg-cme-primary-hover transition-colors shadow-sm cursor-pointer"
               >
                 Sign In to Start Editing
               </button>

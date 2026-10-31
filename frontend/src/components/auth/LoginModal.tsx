@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { X, Lock, User, AlertCircle, ShieldCheck } from 'lucide-react';
-import { loginUser } from '../../api/auth';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { X, Lock, User, AlertCircle, ShieldCheck, RefreshCw } from 'lucide-react';
+import { loginUser, fetchCurrentUser, getStoredAuthnProvider } from '../../api/auth';
 import { useUIStore } from '../../stores/uiStore';
+import { RELOAD_KEY } from '../../api/client';
 
 export const LoginModal: React.FC = () => {
   const { loginModalOpen, setLoginModalOpen } = useUIStore();
@@ -10,6 +11,14 @@ export const LoginModal: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const { data: user } = useQuery({
+    queryKey: ['auth-me'],
+    queryFn: fetchCurrentUser,
+    retry: false,
+  });
+
+  const isDelegated = (user?.authn_provider || getStoredAuthnProvider()) === 'delegated';
 
   const loginMutation = useMutation({
     mutationFn: () => loginUser(username, password),
@@ -33,6 +42,69 @@ export const LoginModal: React.FC = () => {
   });
 
   if (!loginModalOpen) return null;
+
+  if (isDelegated) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-150">
+        <div className="relative w-full max-w-md bg-cme-bg-surface border border-cme-border-base rounded-2xl shadow-2xl overflow-hidden text-cme-text-base">
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b border-cme-border-base bg-cme-bg-subtle">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-cme-primary" />
+              <h3 className="font-semibold text-sm">Reverse Proxy Authentication</h3>
+            </div>
+            <button
+              onClick={() => setLoginModalOpen(false)}
+              className="p-1 text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover rounded-lg transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="p-5 space-y-4 text-xs">
+            <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg flex items-start gap-2.5 text-amber-700 dark:text-amber-400">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div className="leading-relaxed">
+                <span className="font-semibold block mb-0.5">External Identity Provider</span>
+                This CME instance is deployed behind an authenticating reverse proxy. Authentication is managed upstream by your identity provider (SSO) rather than CME passwords.
+              </div>
+            </div>
+
+            <p className="text-cme-text-muted leading-relaxed">
+              If your session has expired, refreshing or reloading the page will prompt your reverse proxy to re-authenticate your session.
+            </p>
+
+            <div className="pt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setLoginModalOpen(false)}
+                className="px-3 py-1.5 rounded-lg border border-cme-border-base hover:bg-cme-bg-hover text-cme-text-base font-medium transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (typeof sessionStorage !== 'undefined') {
+                    sessionStorage.setItem(RELOAD_KEY, Date.now().toString());
+                  }
+                  if (typeof window !== 'undefined' && window.location) {
+                    window.location.reload();
+                  }
+                }}
+                className="px-3.5 py-1.5 rounded-lg bg-cme-primary text-white hover:bg-cme-primary-hover font-medium transition-colors shadow-sm flex items-center gap-1.5 cursor-pointer"
+                data-testid="modal-reload-btn"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Reload Page</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
