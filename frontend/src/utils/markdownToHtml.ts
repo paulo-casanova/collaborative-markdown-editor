@@ -3,6 +3,7 @@
  */
 
 import { splitTableRow, parseTableAlignments, isTableDelimiterRow } from './tableUtils';
+import { parseCalloutHeader, getCalloutSvgIcon } from './calloutUtils';
 
 export function slugify(text: string): string {
   return text
@@ -197,7 +198,7 @@ export function parseMarkdownToHtml(markdown: string): string {
       continue;
     }
 
-    // Blockquote
+    // Blockquote & GFM Alerts / Obsidian Callouts
     if (line.startsWith('>')) {
       closeList();
       closeBlockquote();
@@ -215,6 +216,41 @@ export function parseMarkdownToHtml(markdown: string): string {
         }
       }
       i--;
+
+      // Check if this blockquote is a GFM Alert / Obsidian Callout (e.g. > [!NOTE])
+      const calloutMeta = quoteLines.length > 0 ? parseCalloutHeader(quoteLines[0]) : null;
+      if (calloutMeta) {
+        const rawContentLines = quoteLines.slice(1);
+        const paragraphs: string[] = [];
+        let currentPara: string[] = [];
+        for (const qLine of rawContentLines) {
+          if (qLine.trim() === '') {
+            if (currentPara.length > 0) {
+              paragraphs.push(currentPara.join(' '));
+              currentPara = [];
+            }
+          } else {
+            currentPara.push(qLine);
+          }
+        }
+        if (currentPara.length > 0) {
+          paragraphs.push(currentPara.join(' '));
+        }
+
+        const iconSvg = getCalloutSvgIcon(calloutMeta.type);
+        output.push(
+          `<div class="cme-callout cme-callout-${calloutMeta.type}" data-callout="${calloutMeta.type}">` +
+            `<div class="cme-callout-title">` +
+              `<span class="cme-callout-icon">${iconSvg}</span>` +
+              `<span class="cme-callout-title-text">${inlineFormat(calloutMeta.title)}</span>` +
+            `</div>` +
+            (paragraphs.length > 0
+              ? `<div class="cme-callout-content">${paragraphs.map(p => `<p>${inlineFormat(p)}</p>`).join('')}</div>`
+              : '') +
+          `</div>`
+        );
+        continue;
+      }
 
       const paragraphs: string[] = [];
       let currentPara: string[] = [];

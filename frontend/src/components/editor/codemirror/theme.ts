@@ -100,6 +100,26 @@ export const cmeEditorTheme = EditorView.theme({
     fontStyle: 'italic',
     color: 'var(--cme-text-muted, #64748b)',
   },
+  '.cme-live-callout-header': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    padding: '0.35rem 0.75rem',
+    borderLeftWidth: '4px',
+    borderLeftStyle: 'solid',
+    borderRadius: '0.375rem 0.375rem 0 0',
+    fontWeight: '600',
+    fontSize: '0.9rem',
+    marginTop: '0.5rem',
+    marginBottom: '0.125rem',
+    boxSizing: 'border-box',
+    width: '100%',
+  },
+  '.cme-live-callout-editing': {
+    fontWeight: '600',
+    padding: '0.125rem 0.25rem',
+    borderRadius: '0.25rem',
+  },
   '.cme-mono-line, .cme-mono-line *': {
     fontFamily:
       'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important',

@@ -734,6 +734,34 @@ std::string wrap_standalone(
        << "      background-color: rgba(59, 130, 246, 0.05);\n"
        << "      border-radius: 0 4px 4px 0;\n"
        << "    }\n"
+       << "    .cme-callout {\n"
+       << "      border-radius: 6px;\n"
+       << "      margin: 1rem 0;\n"
+       << "      padding: 0.875rem 1rem;\n"
+       << "      border-left: 4px solid;\n"
+       << "    }\n"
+       << "    .cme-callout-title {\n"
+       << "      display: flex;\n"
+       << "      align-items: center;\n"
+       << "      gap: 0.5rem;\n"
+       << "      font-weight: 600;\n"
+       << "      font-size: 0.95rem;\n"
+       << "      margin-bottom: 0.375rem;\n"
+       << "    }\n"
+       << "    .cme-callout-icon { display: inline-flex; align-items: center; }\n"
+       << "    .cme-callout-icon svg { width: 1.15rem; height: 1.15rem; }\n"
+       << "    .cme-callout-content { font-size: 0.9rem; line-height: 1.6; }\n"
+       << "    .cme-callout-content p { margin: 0.375rem 0; }\n"
+       << "    .cme-callout-note { border-color: #2563eb; background-color: rgba(37, 99, 235, 0.08); }\n"
+       << "    .cme-callout-note .cme-callout-title { color: #1d4ed8; }\n"
+       << "    .cme-callout-tip { border-color: #059669; background-color: rgba(5, 150, 105, 0.08); }\n"
+       << "    .cme-callout-tip .cme-callout-title { color: #047857; }\n"
+       << "    .cme-callout-important { border-color: #7c3aed; background-color: rgba(124, 58, 237, 0.08); }\n"
+       << "    .cme-callout-important .cme-callout-title { color: #6d28d9; }\n"
+       << "    .cme-callout-warning { border-color: #d97706; background-color: rgba(217, 119, 6, 0.08); }\n"
+       << "    .cme-callout-warning .cme-callout-title { color: #b45309; }\n"
+       << "    .cme-callout-caution { border-color: #dc2626; background-color: rgba(220, 38, 38, 0.08); }\n"
+       << "    .cme-callout-caution .cme-callout-title { color: #b91c1c; }\n"
        << "    hr {\n"
        << "      border: 0;\n"
        << "      height: 1px;\n"
@@ -940,6 +968,101 @@ std::string render_pills_in_html(std::string_view html) {
         result.append(text, segment_start, text.size() - segment_start);
     }
 
+    return result;
+}
+
+std::string render_callouts_in_html(std::string_view html) {
+    static const std::regex callout_rx(R"(<blockquote>\s*<p>\[!([a-zA-Z0-9_-]+)\]([+-]?)(?:[ \t]+([^\n<]+))?(?:\n|<br\s*/?>)?([\s\S]*?)</blockquote>)");
+
+    std::string text(html);
+    std::string result;
+    result.reserve(text.size());
+
+    std::string::const_iterator search_start(text.cbegin());
+    std::smatch match;
+
+    while (std::regex_search(search_start, text.cend(), match, callout_rx)) {
+        result.append(search_start, match[0].first);
+
+        std::string raw_type = match[1].str();
+        std::string norm_type = raw_type;
+        for (auto& c : norm_type) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        std::string canonical_type = "note";
+        if (norm_type == "tip" || norm_type == "hint" || norm_type == "check" || norm_type == "done" || norm_type == "success") {
+            canonical_type = "tip";
+        } else if (norm_type == "important" || norm_type == "attention") {
+            canonical_type = "important";
+        } else if (norm_type == "warning" || norm_type == "warn" || norm_type == "faq" || norm_type == "question") {
+            canonical_type = "warning";
+        } else if (norm_type == "caution" || norm_type == "danger" || norm_type == "error" || norm_type == "failure" || norm_type == "fail" || norm_type == "bug" || norm_type == "missing") {
+            canonical_type = "caution";
+        }
+
+        std::string title;
+        if (match[3].matched && !match[3].str().empty()) {
+            title = match[3].str();
+            while (!title.empty() && std::isspace(static_cast<unsigned char>(title.back()))) {
+                title.pop_back();
+            }
+        } else {
+            title = canonical_type;
+            title[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(title[0])));
+        }
+
+        std::string icon_svg;
+        if (canonical_type == "tip") {
+            icon_svg = R"(<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cme-callout-icon-svg"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/></svg>)";
+        } else if (canonical_type == "important") {
+            icon_svg = R"(<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cme-callout-icon-svg"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>)";
+        } else if (canonical_type == "warning") {
+            icon_svg = R"(<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cme-callout-icon-svg"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>)";
+        } else if (canonical_type == "caution") {
+            icon_svg = R"(<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cme-callout-icon-svg"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>)";
+        } else {
+            icon_svg = R"(<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="cme-callout-icon-svg"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>)";
+        }
+
+        std::string raw_content = match[4].str();
+        std::string clean_content;
+        bool has_text = false;
+        for (char c : raw_content) {
+            if (!std::isspace(static_cast<unsigned char>(c))) {
+                has_text = true;
+                break;
+            }
+        }
+        if (has_text) {
+            std::string trimmed_content = raw_content;
+            size_t c_start = trimmed_content.find_first_not_of(" \t\n\r");
+            if (c_start != std::string::npos) {
+                trimmed_content = trimmed_content.substr(c_start);
+            }
+            if (!trimmed_content.empty() && trimmed_content.rfind("<p>", 0) != 0) {
+                clean_content = "<p>" + trimmed_content;
+            } else {
+                clean_content = trimmed_content;
+            }
+        }
+
+        std::ostringstream ss;
+        ss << "<div class=\"cme-callout cme-callout-" << canonical_type << "\" data-callout=\"" << canonical_type << "\">\n"
+           << "  <div class=\"cme-callout-title\">\n"
+           << "    <span class=\"cme-callout-icon\">" << icon_svg << "</span>\n"
+           << "    <span class=\"cme-callout-title-text\">" << escape_html(title) << "</span>\n"
+           << "  </div>\n";
+        if (!clean_content.empty()) {
+            ss << "  <div class=\"cme-callout-content\">\n"
+               << "    " << clean_content << "\n"
+               << "  </div>\n";
+        }
+        ss << "</div>";
+
+        result.append(ss.str());
+        search_start = match[0].second;
+    }
+
+    result.append(search_start, text.cend());
     return result;
 }
 
@@ -1182,7 +1305,7 @@ std::string MarkdownRenderer::render_to_html(
     RenderContext ctx;
     md_parse(normalized_input.data(), static_cast<MD_SIZE>(normalized_input.size()), &parser, &ctx);
 
-    std::string processed_output = render_pills_in_html(ctx.output);
+    std::string processed_output = render_callouts_in_html(render_pills_in_html(ctx.output));
 
     std::string reviews_html;
     if (options.include_reviews) {

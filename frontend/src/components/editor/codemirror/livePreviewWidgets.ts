@@ -20,6 +20,7 @@ import {
   setSnippetState,
 } from '../../../utils/snippetSync';
 import { resolvePillStyle, parsePillSyntax } from '../../../utils/pillUtils';
+import { type CalloutType, getCalloutSvgIcon } from '../../../utils/calloutUtils';
 import { parseImageDimensionAndAlt, parseImageTarget } from '../../../utils/imageDimensions';
 import {
   parseMarkdownTable,
@@ -1800,6 +1801,50 @@ export class PillWidget extends WidgetType {
     });
 
     return span;
+  }
+}
+
+export class CalloutHeaderWidget extends WidgetType {
+  constructor(
+    public calloutType: CalloutType,
+    public title: string,
+    public from: number,
+    public to: number
+  ) {
+    super();
+  }
+
+  eq(other: CalloutHeaderWidget): boolean {
+    return (
+      this.calloutType === other.calloutType &&
+      this.title === other.title &&
+      this.from === other.from &&
+      this.to === other.to
+    );
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const banner = document.createElement('div');
+    banner.className = `cme-live-callout-header cme-callout-${this.calloutType} select-none cursor-pointer`;
+    banner.title = 'Click to edit callout';
+
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'cme-callout-icon';
+    iconSpan.innerHTML = getCalloutSvgIcon(this.calloutType);
+    banner.appendChild(iconSpan);
+
+    const titleSpan = document.createElement('span');
+    titleSpan.className = 'cme-callout-title-text';
+    titleSpan.textContent = this.title;
+    banner.appendChild(titleSpan);
+
+    banner.addEventListener('click', (e) => {
+      e.stopPropagation();
+      view.dispatch({ selection: { anchor: Math.min(this.to, this.from + 2) } });
+      view.focus();
+    });
+
+    return banner;
   }
 }
 

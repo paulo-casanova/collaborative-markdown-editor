@@ -232,3 +232,199 @@ body,
   -webkit-user-select: none;
 }
 
+/* =========================================================================
+   GFM Alert / Obsidian Callout Styles
+   ========================================================================= */
+
+.cme-callout {
+  border-radius: 0.5rem;
+  margin-top: 1rem;
+  margin-bottom: 1rem;
+  padding: 0.875rem 1rem;
+  border-left-width: 4px;
+  border-left-style: solid;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.cme-callout-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.4;
+  margin-bottom: 0.375rem;
+}
+
+.cme-callout-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.cme-callout-icon svg,
+.cme-callout-icon-svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+.cme-callout-content {
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.cme-callout-content p {
+  margin-top: 0.375rem;
+  margin-bottom: 0.375rem;
+}
+.cme-callout-content p:first-child {
+  margin-top: 0;
+}
+.cme-callout-content p:last-child {
+  margin-bottom: 0;
+}
+
+/* Callout Theme: Note (Blue) */
+.cme-callout-note {
+  border-color: #2563eb;
+  background-color: rgba(37, 99, 235, 0.08);
+}
+.cme-callout-note .cme-callout-title,
+.cme-callout-note .cme-callout-icon,
+.cme-callout-title-note {
+  color: #1d4ed8;
+}
+[data-theme="dark"] .cme-callout-note {
+  border-color: #3b82f6;
+  background-color: rgba(59, 130, 246, 0.14);
+}
+[data-theme="dark"] .cme-callout-note .cme-callout-title,
+[data-theme="dark"] .cme-callout-note .cme-callout-icon,
+[data-theme="dark"] .cme-callout-title-note {
+  color: #60a5fa;
+}
+
+/* Callout Theme: Tip (Emerald/Green) */
+.cme-callout-tip {
+  border-color: #059669;
+  background-color: rgba(5, 150, 105, 0.08);
+}
+.cme-callout-tip .cme-callout-title,
+.cme-callout-tip .cme-callout-icon,
+.cme-callout-title-tip {
+  color: #047857;
+}
+[data-theme="dark"] .cme-callout-tip {
+  border-color: #10b981;
+  background-color: rgba(16, 185, 129, 0.14);
+}
+[data-theme="dark"] .cme-callout-tip .cme-callout-title,
+[data-theme="dark"] .cme-callout-tip .cme-callout-icon,
+[data-theme="dark"] .cme-callout-title-tip {
+  color: #34d399;
+}
+
+/* Callout Theme: Important (Purple) */
+.cme-callout-important {
+  border-color: #7c3aed;
+  background-color: rgba(124, 58, 237, 0.08);
+}
+.cme-callout-important .cme-callout-title,
+.cme-callout-important .cme-callout-icon,
+.cme-callout-title-important {
+  color: #6d28d9;
+}
+[data-theme="dark"] .cme-callout-important {
+  border-color: #8b5cf6;
+  background-color: rgba(139, 92, 246, 0.14);
+}
+[data-theme="dark"] .cme-callout-important .cme-callout-title,
+[data-theme="dark"] .cme-callout-important .cme-callout-icon,
+[data-theme="dark"] .cme-callout-title-important {
+  color: #a78bfa;
+}
+
+/* Callout Theme: Warning (Amber) */
+.cme-callout-warning {
+  border-color: #d97706;
+  background-color: rgba(217, 119, 6, 0.08);
+}
+.cme-callout-warning .cme-callout-title,
+.cme-callout-warning .cme-callout-icon,
+.cme-callout-title-warning {
+  color: #b45309;
+}
+[data-theme="dark"] .cme-callout-warning {
+  border-color: #f59e0b;
+  background-color: rgba(245, 158, 11, 0.14);
+}
+[data-theme="dark"] .cme-callout-warning .cme-callout-title,
+[data-theme="dark"] .cme-callout-warning .cme-callout-icon,
+[data-theme="dark"] .cme-callout-title-warning {
+  color: #fbbf24;
+}
+
+/* Callout Theme: Caution (Red) */
+.cme-callout-caution {
+  border-color: #dc2626;
+  background-color: rgba(220, 38, 38, 0.08);
+}
+.cme-callout-caution .cme-callout-title,
+.cme-callout-caution .cme-callout-icon,
+.cme-callout-title-caution {
+  color: #b91c1c;
+}
+[data-theme="dark"] .cme-callout-caution {
+  border-color: #ef4444;
+  background-color: rgba(239, 68, 68, 0.14);
+}
+[data-theme="dark"] .cme-callout-caution .cme-callout-title,
+[data-theme="dark"] .cme-callout-caution .cme-callout-icon,
+[data-theme="dark"] .cme-callout-title-caution {
+  color: #f87171;
+}
+
+/* Sepia Theme Adjustments */
+[data-theme="sepia"] .cme-callout-note {
+  border-color: #2b6cb0;
+  background-color: rgba(43, 108, 176, 0.1);
+}
+[data-theme="sepia"] .cme-callout-note .cme-callout-title,
+[data-theme="sepia"] .cme-callout-note .cme-callout-icon {
+  color: #2b6cb0;
+}
+[data-theme="sepia"] .cme-callout-tip {
+  border-color: #2f855a;
+  background-color: rgba(47, 133, 90, 0.1);
+}
+[data-theme="sepia"] .cme-callout-tip .cme-callout-title,
+[data-theme="sepia"] .cme-callout-tip .cme-callout-icon {
+  color: #2f855a;
+}
+[data-theme="sepia"] .cme-callout-important {
+  border-color: #6b46c1;
+  background-color: rgba(107, 70, 193, 0.1);
+}
+[data-theme="sepia"] .cme-callout-important .cme-callout-title,
+[data-theme="sepia"] .cme-callout-important .cme-callout-icon {
+  color: #6b46c1;
+}
+[data-theme="sepia"] .cme-callout-warning {
+  border-color: #c05621;
+  background-color: rgba(192, 86, 33, 0.1);
+}
+[data-theme="sepia"] .cme-callout-warning .cme-callout-title,
+[data-theme="sepia"] .cme-callout-warning .cme-callout-icon {
+  color: #c05621;
+}
+[data-theme="sepia"] .cme-callout-caution {
+  border-color: #c53030;
+  background-color: rgba(197, 48, 48, 0.1);
+}
+[data-theme="sepia"] .cme-callout-caution .cme-callout-title,
+[data-theme="sepia"] .cme-callout-caution .cme-callout-icon {
+  color: #c53030;
+}
+
+

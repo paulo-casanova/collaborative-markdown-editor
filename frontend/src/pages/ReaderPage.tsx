@@ -53,6 +53,7 @@ import {
 } from '../api/reviews';
 import type { CommentRecord, SuggestionRecord } from '../review/types';
 import { parseMarkdownToHtml } from '../utils/markdownToHtml';
+import { parseCalloutHeader, getCalloutReactIcon } from '../utils/calloutUtils';
 import { useUIStore } from '../stores/uiStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { DialogSidecar } from '../components/dialog/DialogSidecar';
@@ -2043,6 +2044,69 @@ export function renderMarkdown(
         }
       }
       const endBlockLine = i - 1;
+
+      // Check if this blockquote is a GFM Alert / Obsidian Callout (e.g. > [!NOTE])
+      const calloutMeta = quoteLines.length > 0 ? parseCalloutHeader(quoteLines[0]) : null;
+      if (calloutMeta) {
+        const CalloutIcon = getCalloutReactIcon(calloutMeta.type);
+        const contentLines = quoteLines.slice(1);
+        const paragraphs: string[] = [];
+        let currentPara: string[] = [];
+        for (const qLine of contentLines) {
+          if (qLine.trim() === '') {
+            if (currentPara.length > 0) {
+              paragraphs.push(currentPara.join(' '));
+              currentPara = [];
+            }
+          } else {
+            currentPara.push(qLine);
+          }
+        }
+        if (currentPara.length > 0) {
+          paragraphs.push(currentPara.join(' '));
+        }
+
+        addBlock(
+          <div
+            key={`callout-${startBlockLine}`}
+            data-callout={calloutMeta.type}
+            className={`cme-callout cme-callout-${calloutMeta.type} my-4 rounded-lg border-l-4 p-4 shadow-xs`}
+          >
+            <div className="cme-callout-title flex items-center gap-2 font-semibold text-base mb-2">
+              <CalloutIcon className="w-5 h-5 flex-shrink-0" />
+              <span>
+                {renderInlineFormatted(
+                  calloutMeta.title,
+                  currentDocTarget,
+                  currentDocMarkdown,
+                  currentDocPath,
+                  true,
+                  reviewQuotes
+                )}
+              </span>
+            </div>
+            {paragraphs.length > 0 && (
+              <div className="cme-callout-content space-y-2 text-sm leading-relaxed">
+                {paragraphs.map((para, pIdx) => (
+                  <p key={pIdx} className="my-1.5 first:mt-0 last:mb-0">
+                    {renderInlineFormatted(
+                      para,
+                      currentDocTarget,
+                      currentDocMarkdown,
+                      currentDocPath,
+                      true,
+                      reviewQuotes
+                    )}
+                  </p>
+                ))}
+              </div>
+            )}
+          </div>,
+          startBlockLine,
+          endBlockLine
+        );
+        continue;
+      }
 
       const paragraphs: string[] = [];
       let currentPara: string[] = [];

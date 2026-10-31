@@ -22,9 +22,11 @@ import {
   HeadingNumberWidget,
   ImageEmbedWidget,
   PillWidget,
+  CalloutHeaderWidget,
   setRawTablePos,
 } from './livePreviewWidgets';
 export { setRawTablePos };
+import { parseCalloutHeader } from '../../../utils/calloutUtils';
 import { parsePillSyntax } from '../../../utils/pillUtils';
 import { parseImageTarget } from '../../../utils/imageDimensions';
 import { slugify } from '../../navigation/DocumentOutline';
@@ -499,26 +501,50 @@ export function buildLivePreviewDecorations(
       }
     }
 
-    // 4c. Blockquote: > text
+    // 4c. Blockquote & GFM Alerts / Obsidian Callouts: > text
     const quoteMatch = /^(\s*>\s*)(.*)$/.exec(lineText);
     const isBlockquoteLine = Boolean(quoteMatch);
     if (quoteMatch) {
       const markerLen = quoteMatch[1].length;
-      if (!cursorOnLine) {
-        addReplace(lineFrom, lineFrom + markerLen, Decoration.replace({}));
-        if (lineFrom + markerLen < lineTo) {
+      const innerText = quoteMatch[2];
+      const calloutMeta = parseCalloutHeader(innerText);
+
+      if (calloutMeta) {
+        if (!cursorOnLine) {
+          // In Live Preview, render the alert banner when cursor is not on this header line
+          addReplace(lineFrom, lineTo, Decoration.replace({
+            widget: new CalloutHeaderWidget(calloutMeta.type, calloutMeta.title, lineFrom, lineTo),
+          }));
+        } else {
+          // Cursor is editing the callout header line: dim marker and highlight callout badge
+          items.push({
+            from: lineFrom,
+            to: lineFrom + markerLen,
+            deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+          });
           items.push({
             from: lineFrom + markerLen,
             to: lineTo,
-            deco: Decoration.mark({ class: 'cme-live-blockquote' }),
+            deco: Decoration.mark({ class: `cme-live-callout-editing cme-callout-title-${calloutMeta.type}` }),
           });
         }
       } else {
-        items.push({
-          from: lineFrom,
-          to: lineFrom + markerLen,
-          deco: Decoration.mark({ class: 'cme-syntax-marker' }),
-        });
+        if (!cursorOnLine) {
+          addReplace(lineFrom, lineFrom + markerLen, Decoration.replace({}));
+          if (lineFrom + markerLen < lineTo) {
+            items.push({
+              from: lineFrom + markerLen,
+              to: lineTo,
+              deco: Decoration.mark({ class: 'cme-live-blockquote' }),
+            });
+          }
+        } else {
+          items.push({
+            from: lineFrom,
+            to: lineFrom + markerLen,
+            deco: Decoration.mark({ class: 'cme-syntax-marker' }),
+          });
+        }
       }
     }
 

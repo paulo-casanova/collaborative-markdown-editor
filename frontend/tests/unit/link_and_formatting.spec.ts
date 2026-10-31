@@ -18,6 +18,7 @@ import {
   computeHeaderNumberingChanges,
 } from '../../src/components/editor/CollaborativeEditor';
 import { parsePillSyntax, resolvePillStyle } from '../../src/utils/pillUtils';
+import { parseCalloutHeader } from '../../src/utils/calloutUtils';
 import { parseMarkdownToHtml } from '../../src/utils/markdownToHtml';
 import { renderMarkdown } from '../../src/pages/ReaderPage';
 
@@ -273,6 +274,107 @@ Deep details.`;
       const md = '> Line 1\n> Line 2\n> Line 3';
       const html = parseMarkdownToHtml(md);
       expect(html).toContain('<blockquote><p>Line 1 Line 2 Line 3</p></blockquote>');
+    });
+  });
+
+  describe('GFM Alerts & Obsidian Callouts', () => {
+    it('parses callout header syntax accurately with default and custom titles', () => {
+      expect(parseCalloutHeader('[!NOTE]')).toEqual({
+        type: 'note',
+        rawType: 'NOTE',
+        title: 'Note',
+        isFoldable: false,
+        defaultFolded: false,
+      });
+
+      expect(parseCalloutHeader('[!tip] Performance Optimization')).toEqual({
+        type: 'tip',
+        rawType: 'tip',
+        title: 'Performance Optimization',
+        isFoldable: false,
+        defaultFolded: false,
+      });
+
+      expect(parseCalloutHeader('[!IMPORTANT]')).toEqual({
+        type: 'important',
+        rawType: 'IMPORTANT',
+        title: 'Important',
+        isFoldable: false,
+        defaultFolded: false,
+      });
+
+      expect(parseCalloutHeader('[!warning]+ Critical Notice')).toEqual({
+        type: 'warning',
+        rawType: 'warning',
+        title: 'Critical Notice',
+        isFoldable: true,
+        defaultFolded: false,
+      });
+
+      expect(parseCalloutHeader('[!CAUTION] Security Warning')).toEqual({
+        type: 'caution',
+        rawType: 'CAUTION',
+        title: 'Security Warning',
+        isFoldable: false,
+        defaultFolded: false,
+      });
+
+      expect(parseCalloutHeader('Just a normal quote')).toBeNull();
+    });
+
+    it('renders HTML for all 5 canonical GFM alert types', () => {
+      const types = ['NOTE', 'TIP', 'IMPORTANT', 'WARNING', 'CAUTION'] as const;
+      for (const t of types) {
+        const md = `> [!${t}]\n> This is ${t.toLowerCase()} content.`;
+        const html = parseMarkdownToHtml(md);
+        const lower = t.toLowerCase();
+        expect(html).toContain(`<div class="cme-callout cme-callout-${lower}" data-callout="${lower}">`);
+        expect(html).toContain('<div class="cme-callout-title">');
+        expect(html).toContain(`<span class="cme-callout-title-text">${t.charAt(0) + t.slice(1).toLowerCase()}</span>`);
+        expect(html).toContain(`<p>This is ${lower} content.</p>`);
+      }
+    });
+
+    it('renders callout with custom titles and inline formatting in title', () => {
+      const md = '> [!NOTE] Access Controls & **Permissions**\n> Documentation details.';
+      const html = parseMarkdownToHtml(md);
+      expect(html).toContain('cme-callout-note');
+      expect(html).toContain('<span class="cme-callout-title-text">Access Controls &amp; <strong>Permissions</strong></span>');
+      expect(html).toContain('<p>Documentation details.</p>');
+    });
+
+    it('renders multi-paragraph callouts with separate <p> tags', () => {
+      const md = '> [!WARNING] Dangerous Operation\n> First warning line.\n>\n> Second paragraph line.';
+      const html = parseMarkdownToHtml(md);
+      expect(html).toContain('cme-callout-warning');
+      expect(html).toContain('<p>First warning line.</p><p>Second paragraph line.</p>');
+    });
+
+    it('renders callout React elements in ReaderPage renderMarkdown', () => {
+      const md = '> [!TIP] Pro Tip\n> Remember to bookmark this page.';
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(1);
+      const calloutEl = elements[0];
+      expect(calloutEl.type).toBe('div');
+      expect(calloutEl.props.className).toContain('cme-callout');
+      expect(calloutEl.props.className).toContain('cme-callout-tip');
+      expect(calloutEl.props['data-callout']).toBe('tip');
+    });
+
+    it('buildLivePreviewDecorations generates CalloutHeaderWidget for callouts when unfocused', () => {
+      const doc = '> [!NOTE] Live Callout\n> Callout body\nUnfocused cursor line';
+      const state = EditorState.create({ doc, selection: { anchor: doc.length } });
+      const decos = buildLivePreviewDecorations(state);
+      const widgets: any[] = [];
+      decos.between(0, doc.length, (from, to, value) => {
+        if ((value as any).spec?.widget) {
+          widgets.push((value as any).spec.widget);
+        }
+      });
+      const calloutWidgets = widgets.filter((w) => w.constructor?.name === 'CalloutHeaderWidget');
+      expect(calloutWidgets.length).toBe(1);
+      expect(calloutWidgets[0].calloutType).toBe('note');
+      expect(calloutWidgets[0].title).toBe('Live Callout');
     });
   });
 

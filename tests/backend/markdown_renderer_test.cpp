@@ -243,7 +243,21 @@ int main() {
         std::string quote_html = cme::renderer::MarkdownRenderer::render_to_html(quote_md, opts);
         assert(quote_html.find("<blockquote>\n<p>Paragraph 1 line 1\nParagraph 1 line 2</p>\n<p>Paragraph 2 line 1</p>\n</blockquote>") != std::string::npos);
 
-        std::cout << "     [PASS] Mermaid diagram blocks converted into <div class=\"mermaid\">, empty code blocks & blockquotes verified.\n";
+        // GFM Alerts / Obsidian Callouts
+        std::string callout_md =
+            "> [!NOTE]\n"
+            "> Standard note information.\n\n"
+            "> [!WARNING] Security Notice\n"
+            "> Potential vulnerability.\n";
+        std::string callout_html = cme::renderer::MarkdownRenderer::render_to_html(callout_md, opts);
+        assert(callout_html.find("<div class=\"cme-callout cme-callout-note\" data-callout=\"note\">") != std::string::npos);
+        assert(callout_html.find("<span class=\"cme-callout-title-text\">Note</span>") != std::string::npos);
+        assert(callout_html.find("Standard note information.") != std::string::npos);
+        assert(callout_html.find("<div class=\"cme-callout cme-callout-warning\" data-callout=\"warning\">") != std::string::npos);
+        assert(callout_html.find("<span class=\"cme-callout-title-text\">Security Notice</span>") != std::string::npos);
+        assert(callout_html.find("Potential vulnerability.") != std::string::npos);
+
+        std::cout << "     [PASS] Mermaid diagram blocks converted into <div class=\"mermaid\">, empty code blocks, blockquotes & GFM alerts verified.\n";
     }
 
     // =========================================================================
