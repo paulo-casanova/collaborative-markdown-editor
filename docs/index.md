@@ -8,7 +8,8 @@ Welcome to the internal engineering documentation for the **Collaborative Markdo
 * [System Architecture](Architecture.md): Complete technical specification of runtime components (Frontend, CME Server, AI Agent), communication channels, and protocols.
 * [Implementation Progress Log](implementation_log.md): Granular record of implemented phases, test runs, and verification criteria.
 
-### 2. Database & Data Architecture
+### 2. Database & Access Control Architecture
+* [Access Control (ACL) Model](Access Controls.md): Comprehensive specification of CME's authorization model, multi-parent team DAG inheritance, cumulative access scopes, and permission evaluation waterfall.
 * [Relational Database Schema](database/schema.md): Complete table specifications, data types, constraints, and ER model.
 * [Team DAG & Permission Engine](database/dag_permissions.md): Mathematical and query model for multi-parent team hierarchies and granular ACL inheritance.
 * [Database Migrations Guide](database/migrations.md): How versioned SQL migrations are executed and managed via `cme-migrate`.
