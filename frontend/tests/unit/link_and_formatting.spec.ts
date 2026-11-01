@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Text, EditorState } from '@codemirror/state';
 import { buildLivePreviewDecorations } from '../../src/components/editor/codemirror/livePreviewPlugin';
+import { ImageEmbedWidget } from '../../src/components/editor/codemirror/livePreviewWidgets';
 import {
   stripHeadingNumberPrefix,
   slugifyHeading,
@@ -1192,6 +1193,111 @@ Deep details.`;
 
       expect(elements[2].props['data-level']).toBe(2);
       expect(elements[2].props.style.marginLeft).toBe('3rem');
+    });
+  });
+
+  describe('Linked Image Shields and Badges', () => {
+    it('renders external linked shields as <a> with nested <img> in ReaderPage renderMarkdown', () => {
+      const md = '[![License MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)';
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(1);
+
+      const p = elements[0];
+      expect(p.type).toBe('p');
+      const children = Array.isArray(p.props.children) ? p.props.children : [p.props.children];
+      const linkEl = children.find((c: any) => c && typeof c === 'object');
+      expect(linkEl).toBeDefined();
+      expect(linkEl.type).toBe('a');
+      expect(linkEl.props.href).toBe('https://opensource.org/licenses/MIT');
+      expect(linkEl.props.target).toBe('_blank');
+      expect(linkEl.props.rel).toBe('noopener noreferrer');
+
+      const imgEl = linkEl.props.children;
+      expect(imgEl.type).toBe('img');
+      expect(imgEl.props.src).toBe('https://img.shields.io/badge/License-MIT-blue.svg');
+      expect(imgEl.props.alt).toBe('License MIT');
+    });
+
+    it('renders internal workspace linked shields as Link with nested <img> in ReaderPage renderMarkdown', () => {
+      const md = '[![Docs](https://img.shields.io/badge/docs-passing-brightgreen.svg)](docs/architecture.md)';
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(1);
+
+      const p = elements[0];
+      const children = Array.isArray(p.props.children) ? p.props.children : [p.props.children];
+      const linkEl = children.find((c: any) => c && typeof c === 'object');
+      expect(linkEl).toBeDefined();
+      // react-router-dom Link component has to prop
+      expect(linkEl.props.to).toBe('/docs/by-path?path=docs%2Farchitecture.md');
+
+      const imgEl = linkEl.props.children;
+      expect(imgEl.type).toBe('img');
+      expect(imgEl.props.src).toBe('https://img.shields.io/badge/docs-passing-brightgreen.svg');
+      expect(imgEl.props.alt).toBe('Docs');
+    });
+
+    it('renders linked obsidian image embeds in ReaderPage renderMarkdown', () => {
+      const md = '[![[assets/badge.svg]]](https://example.com)';
+      const elements = renderMarkdown(md) as any[];
+      expect(elements.length).toBe(1);
+
+      const p = elements[0];
+      const children = Array.isArray(p.props.children) ? p.props.children : [p.props.children];
+      const linkEl = children.find((c: any) => c && typeof c === 'object');
+      expect(linkEl).toBeDefined();
+      expect(linkEl.type).toBe('a');
+      expect(linkEl.props.href).toBe('https://example.com');
+
+      const imgEl = linkEl.props.children;
+      expect(imgEl.type).toBe('img');
+      expect(imgEl.props.alt).toBe('assets/badge.svg');
+    });
+
+    it('generates ImageEmbedWidget with linkHref in live preview when unfocused', () => {
+      const doc = '# Header\n[![License MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)\nUnfocused';
+      // Cursor placed on line 3 ("Unfocused")
+      const state = EditorState.create({ doc, selection: { anchor: doc.length } });
+      const decos = buildLivePreviewDecorations(state);
+
+      const widgets: any[] = [];
+      decos.between(0, doc.length, (from, to, value) => {
+        if ((value as any).spec?.widget) {
+          widgets.push((value as any).spec.widget);
+        }
+      });
+
+      const imgWidgets = widgets.filter((w) => w instanceof ImageEmbedWidget);
+      expect(imgWidgets.length).toBe(1);
+      expect(imgWidgets[0].alt).toBe('License MIT');
+      expect(imgWidgets[0].src).toBe('https://img.shields.io/badge/License-MIT-blue.svg');
+      expect(imgWidgets[0].linkHref).toBe('LICENSE');
+    });
+
+    it('does not replace linked badge when cursor is inside it in live preview (shows raw markdown)', () => {
+      const doc = '# Header\n[![License MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)\n';
+      // Badge is on line 2 (from index 9 to 78)
+      // Cursor placed inside the badge at index 25
+      const state = EditorState.create({ doc, selection: { anchor: 25 } });
+      const decos = buildLivePreviewDecorations(state);
+
+      const widgets: any[] = [];
+      decos.between(9, 78, (from, to, value) => {
+        if ((value as any).spec?.widget) {
+          widgets.push((value as any).spec.widget);
+        }
+      });
+
+      // No image or link widget should replace text inside the active linked badge
+      const imgWidgets = widgets.filter((w) => w instanceof ImageEmbedWidget);
+      expect(imgWidgets.length).toBe(0);
+    });
+
+    it('converts linked shields into <a><img /></a> in parseMarkdownToHtml', () => {
+      const md = '[![License MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)';
+      const html = parseMarkdownToHtml(md);
+      expect(html).toContain(
+        '<a href="LICENSE" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License MIT" class="align-middle" /></a>'
+      );
     });
   });
 });

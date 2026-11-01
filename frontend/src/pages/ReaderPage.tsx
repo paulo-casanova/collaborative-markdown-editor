@@ -2659,6 +2659,7 @@ function renderInlineFormatted(
 
   // Split on:
   // 1. Inline code: `...`
+  // 1b. Linked images: [![alt](src)](target) or [![[target]]](target)
   // 2. Embedded images: ![alt](url)
   // 3. WikiLinks: [[target]] or [[target|label]]
   // 4. Custom Pills: [pill:color|label], [pill:label], [status:...], [priority:...]
@@ -2670,7 +2671,7 @@ function renderInlineFormatted(
   // 10. Bold: **...** or __...__
   // 11. Italic: *...* or _..._
   const parts = text.split(
-    /((?<!`)(?:`+).*?(?:`+)(?!`)|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*(?!\s)(?:[^\*\n]|\*[^\*\n]+?\*)+?\*\*(?!\*)|(?<![a-zA-Z0-9_])__(?!\s)(?:[^_\n]|_[^_\n]+?_)+?__(?![a-zA-Z0-9_])|(?<!\*)\*(?!\s)(?:[^\*\n]|\*\*[^\*\n]+?\*\*)+?(?<!\s)\*(?!\*)|(?<![a-zA-Z0-9_])_(?!\s)(?:[^_\n]|__[^\n]+?__|\*\*[^\n]+?\*\*)+?(?<!\s)_(?![a-zA-Z0-9_]))/g
+    /((?<!`)(?:`+).*?(?:`+)(?!`)|(?<!!)\[!\[[^\]]*\]\([^)\n]+\)\]\((?:[^)\n]+)\)|(?<!!)\[!\[\[[^\]]+\]\]\]\((?:[^)\n]+)\)|!\[[^\]]*\]\([^)\n]+\)|!\[\[[^\]]+\]\]|(?<!\!)\[\[[^\]]+\]\]|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!!)\[[^\]]+\]\([^)\n]+\)|\$\$[^\$\n]+\$\$|\$(?!\s)[^$\n]+(?<!\s)\$|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*(?!\s)(?:[^\*\n]|\*[^\*\n]+?\*)+?\*\*(?!\*)|(?<![a-zA-Z0-9_])__(?!\s)(?:[^_\n]|_[^_\n]+?_)+?__(?![a-zA-Z0-9_])|(?<!\*)\*(?!\s)(?:[^\*\n]|\*\*[^\*\n]+?\*\*)+?(?<!\s)\*(?!\*)|(?<![a-zA-Z0-9_])_(?!\s)(?:[^_\n]|__[^\n]+?__|\*\*[^\n]+?\*\*)+?(?<!\s)_(?![a-zA-Z0-9_]))/g
   );
 
   let currentOffset = 0;
@@ -2715,6 +2716,210 @@ function renderInlineFormatted(
         >
           {codeMatch[2]}
         </code>
+      );
+    }
+
+    // 1b. Linked Standard Images: [![alt](src)](href)
+    const linkedImgMatch = part.match(/^(?<!!)\[!\[([^\]]*)\]\(([^)\n]+)\)\]\(([^)\n]+)\)$/);
+    if (linkedImgMatch) {
+      const rawAlt = linkedImgMatch[1].trim();
+      const rawSrc = linkedImgMatch[2].trim();
+      const rawHref = linkedImgMatch[3].trim();
+      const parsed = parseImageDimensionAndAlt(rawAlt, rawSrc);
+      const targetInfo = parseImageTarget(rawSrc);
+      const cleanSrc = targetInfo.cleanSrc;
+      const displayAlt = parsed.altText || targetInfo.title || cleanSrc;
+      const resolvedSrc = isExternalUrl(cleanSrc) || cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')
+        ? (cleanSrc.includes(' ') ? encodeURI(cleanSrc) : cleanSrc)
+        : getWorkspaceFileUrl(cleanSrc, currentDocPath);
+      const { imgStyle } = getImageStyles(parsed);
+
+      const imgNode = (
+        <img
+          src={resolvedSrc}
+          alt={displayAlt}
+          className="block align-middle"
+          style={imgStyle}
+          onError={(e) => {
+            const el = e.currentTarget;
+            el.style.display = 'none';
+            const parent = el.parentElement;
+            if (parent && !parent.querySelector('.broken-image-fallback')) {
+              const fallback = document.createElement('span');
+              fallback.className = 'broken-image-fallback inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono rounded border border-rose-500/40 bg-rose-500/10 text-rose-500';
+              fallback.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${cleanSrc}</span>`;
+              parent.appendChild(fallback);
+            }
+          }}
+        />
+      );
+
+      const cleanHref = rawHref.trim();
+      const external = isExternalUrl(cleanHref) || cleanHref.startsWith('mailto:');
+      if (external) {
+        return (
+          <a
+            key={idx}
+            href={cleanHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block my-0.5 mx-0.5 rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full"
+            title={`${displayAlt} (Click to open ${cleanHref})`}
+          >
+            {imgNode}
+          </a>
+        );
+      }
+
+      const hashIdx = cleanHref.indexOf('#');
+      const rawFile = hashIdx >= 0 ? cleanHref.slice(0, hashIdx).trim() : cleanHref;
+      const anchor = hashIdx >= 0 ? cleanHref.slice(hashIdx + 1).trim() : '';
+      const anchorSlug = anchor ? slugify(anchor) : '';
+      const resolvedDoc = findWorkspacePath(rawFile, currentDocPath) || rawFile;
+      const isSameDoc = currentDocPath && (resolvedDoc.toLowerCase() === currentDocPath.toLowerCase() || `${resolvedDoc.toLowerCase()}.md` === currentDocPath.toLowerCase());
+      const hashHref = anchorSlug ? `#${anchorSlug}` : '';
+
+      if (isSameDoc && anchorSlug) {
+        return (
+          <a
+            key={idx}
+            href={hashHref}
+            className="inline-block my-0.5 mx-0.5 rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full"
+            title={`${displayAlt} (Click to jump to #${anchorSlug})`}
+            onClick={(e) => {
+              e.preventDefault();
+              const el = findHeadingElement(anchor || anchorSlug);
+              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+          >
+            {imgNode}
+          </a>
+        );
+      }
+
+      const docLink = `/docs/by-path?path=${encodeURIComponent(resolvedDoc)}${hashHref}`;
+      return (
+        <Link
+          key={idx}
+          to={docLink}
+          className="inline-block my-0.5 mx-0.5 rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full"
+          title={`${displayAlt} (Click to view ${cleanHref}, Ctrl+Click to edit)`}
+          onClick={(e) => {
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              window.dispatchEvent(
+                new CustomEvent('cme-open-wikilink', {
+                  detail: { target: resolvedDoc, anchor: anchorSlug },
+                })
+              );
+            }
+          }}
+        >
+          {imgNode}
+        </Link>
+      );
+    }
+
+    // 1c. Linked Obsidian Embeds: [![[target]]](href)
+    const linkedEmbMatch = part.match(/^(?<!!)\[!\[\[([^\]]+)\]\]\]\(([^)\n]+)\)$/);
+    if (linkedEmbMatch) {
+      const inner = linkedEmbMatch[1].trim();
+      const rawHref = linkedEmbMatch[2].trim();
+      const pipeIdx = inner.indexOf('|');
+      const rawTarget = (pipeIdx >= 0 ? inner.slice(0, pipeIdx) : inner).trim();
+      const altOrSize = (pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : '').trim();
+      const parsed = parseImageDimensionAndAlt(altOrSize);
+      const targetInfo = parseImageTarget(rawTarget);
+      const cleanSrc = targetInfo.cleanSrc;
+      const displayAlt = parsed.altText || targetInfo.title || cleanSrc;
+      const resolvedSrc = isExternalUrl(cleanSrc) || cleanSrc.startsWith('data:') || cleanSrc.startsWith('blob:')
+        ? (cleanSrc.includes(' ') ? encodeURI(cleanSrc) : cleanSrc)
+        : getWorkspaceFileUrl(cleanSrc, currentDocPath);
+      const { imgStyle } = getImageStyles(parsed);
+
+      const imgNode = (
+        <img
+          src={resolvedSrc}
+          alt={displayAlt}
+          className="block align-middle"
+          style={imgStyle}
+          onError={(e) => {
+            const el = e.currentTarget;
+            el.style.display = 'none';
+            const parent = el.parentElement;
+            if (parent && !parent.querySelector('.broken-image-fallback')) {
+              const fallback = document.createElement('span');
+              fallback.className = 'broken-image-fallback inline-flex items-center gap-1.5 px-2 py-1 text-xs font-mono rounded border border-rose-500/40 bg-rose-500/10 text-rose-500';
+              fallback.innerHTML = `🖼⚠ Image not found: <span class="underline font-semibold">${cleanSrc}</span>`;
+              parent.appendChild(fallback);
+            }
+          }}
+        />
+      );
+
+      const cleanHref = rawHref.trim();
+      const external = isExternalUrl(cleanHref) || cleanHref.startsWith('mailto:');
+      if (external) {
+        return (
+          <a
+            key={idx}
+            href={cleanHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block my-0.5 mx-0.5 rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full"
+            title={`${displayAlt} (Click to open ${cleanHref})`}
+          >
+            {imgNode}
+          </a>
+        );
+      }
+
+      const hashIdx = cleanHref.indexOf('#');
+      const rawFile = hashIdx >= 0 ? cleanHref.slice(0, hashIdx).trim() : cleanHref;
+      const anchor = hashIdx >= 0 ? cleanHref.slice(hashIdx + 1).trim() : '';
+      const anchorSlug = anchor ? slugify(anchor) : '';
+      const resolvedDoc = findWorkspacePath(rawFile, currentDocPath) || rawFile;
+      const isSameDoc = currentDocPath && (resolvedDoc.toLowerCase() === currentDocPath.toLowerCase() || `${resolvedDoc.toLowerCase()}.md` === currentDocPath.toLowerCase());
+      const hashHref = anchorSlug ? `#${anchorSlug}` : '';
+
+      if (isSameDoc && anchorSlug) {
+        return (
+          <a
+            key={idx}
+            href={hashHref}
+            className="inline-block my-0.5 mx-0.5 rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full"
+            title={`${displayAlt} (Click to jump to #${anchorSlug})`}
+            onClick={(e) => {
+              e.preventDefault();
+              const el = findHeadingElement(anchor || anchorSlug);
+              if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+          >
+            {imgNode}
+          </a>
+        );
+      }
+
+      const docLink = `/docs/by-path?path=${encodeURIComponent(resolvedDoc)}${hashHref}`;
+      return (
+        <Link
+          key={idx}
+          to={docLink}
+          className="inline-block my-0.5 mx-0.5 rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full"
+          title={`${displayAlt} (Click to view ${cleanHref}, Ctrl+Click to edit)`}
+          onClick={(e) => {
+            if (e.ctrlKey || e.metaKey) {
+              e.preventDefault();
+              window.dispatchEvent(
+                new CustomEvent('cme-open-wikilink', {
+                  detail: { target: resolvedDoc, anchor: anchorSlug },
+                })
+              );
+            }
+          }}
+        >
+          {imgNode}
+        </Link>
       );
     }
 

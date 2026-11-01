@@ -286,7 +286,8 @@ export class ImageEmbedWidget extends WidgetType {
     public src: string,
     public from: number,
     public to: number,
-    public docPath?: string
+    public docPath?: string,
+    public linkHref?: string
   ) {
     super();
   }
@@ -297,13 +298,17 @@ export class ImageEmbedWidget extends WidgetType {
       this.src === other.src &&
       this.from === other.from &&
       this.to === other.to &&
-      this.docPath === other.docPath
+      this.docPath === other.docPath &&
+      this.linkHref === other.linkHref
     );
   }
 
   toDOM(view: EditorView): HTMLElement {
+    const isLinked = Boolean(this.linkHref);
     const wrapper = document.createElement('span');
-    wrapper.className = 'cme-image-embed inline-flex flex-col items-start gap-1 my-1 select-none max-w-full';
+    wrapper.className = isLinked
+      ? 'cme-image-embed inline-flex items-center my-0.5 mx-0.5 select-none max-w-full align-middle'
+      : 'cme-image-embed inline-flex flex-col items-start gap-1 my-1 select-none max-w-full';
 
     const parsed = parseImageDimensionAndAlt(this.alt, this.src);
     const targetInfo = parseImageTarget(this.src);
@@ -316,16 +321,44 @@ export class ImageEmbedWidget extends WidgetType {
         : getWorkspaceFileUrl(cleanSrc, this.docPath);
 
     const link = document.createElement('a');
-    link.href = resolvedUrl;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.title = `${displayAlt} (Click to open in new tab)`;
-    link.className = 'inline-block rounded-lg overflow-hidden border border-cme-border-base bg-cme-bg-surface shadow-sm hover:border-cme-primary transition-colors max-w-full';
+    if (this.linkHref) {
+      const cleanHref = this.linkHref.trim();
+      if (isExternalUrl(cleanHref) || cleanHref.startsWith('mailto:')) {
+        link.href = cleanHref;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.title = `${displayAlt} (Click to open ${cleanHref})`;
+      } else {
+        const hashIdx = cleanHref.indexOf('#');
+        const targetDoc = hashIdx >= 0 ? cleanHref.slice(0, hashIdx).trim() : cleanHref.trim();
+        const anchor = hashIdx >= 0 ? cleanHref.slice(hashIdx + 1).trim() : '';
+        link.href = '#';
+        link.title = `${displayAlt} (Click to open ${cleanHref})`;
+        link.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(
+            new CustomEvent('cme-open-wikilink', {
+              detail: { target: targetDoc, anchor },
+            })
+          );
+        };
+      }
+      link.className =
+        'inline-block rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full';
+    } else {
+      link.href = resolvedUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.title = `${displayAlt} (Click to open in new tab)`;
+      link.className =
+        'inline-block rounded-lg overflow-hidden border border-cme-border-base bg-cme-bg-surface shadow-sm hover:border-cme-primary transition-colors max-w-full';
+    }
 
     const img = document.createElement('img');
     img.src = resolvedUrl;
     img.alt = displayAlt;
-    img.className = 'max-w-full block';
+    img.className = 'max-w-full block align-middle';
 
     if (parsed.width) {
       if (parsed.width.endsWith('%')) {
@@ -1620,7 +1653,7 @@ export function renderCellContent(
   }
 
   const tokenRegex =
-    /((?<!`)(?:`+).*?(?:`+)(?!`)|(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!\!)\[\[([^\]]+)\]\]|(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*(?!\s)(?:[^\*\n]|\*[^\*\n]+?\*)+?\*\*(?!\*)|(?<![a-zA-Z0-9_])__(?!\s)(?:[^_\n]|_[^_\n]+?_)+?__(?![a-zA-Z0-9_])|(?<!\*)\*(?!\s)(?:[^\*\n]|\*\*[^\*\n]+?\*\*)+?(?<!\s)\*(?!\*)|(?<![a-zA-Z0-9_])_(?!\s)(?:[^_\n]|__[^\n]+?__|\*\*[^\n]+?\*\*)+?(?<!\s)_(?![a-zA-Z0-9_]))/g;
+    /((?<!`)(?:`+).*?(?:`+)(?!`)|(?<!!)\[!\[([^\]]*)\]\(([^)\n]+)\)\]\(([^)\n]+)\)|(?<![\$\\])\$(?!\s|\$)([^\$\n]+?)(?<!\s|\$)\$(?!\$)|(?<!!)\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?[^\]\n]+\]|(?<!\!)\[\[([^\]]+)\]\]|(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)|~~[^~\n]+~~|\*\*\*+[^*\n]+\*\*\*+|___+[^_\n]+___+|\*\*(?!\s)(?:[^\*\n]|\*[^\*\n]+?\*)+?\*\*(?!\*)|(?<![a-zA-Z0-9_])__(?!\s)(?:[^_\n]|_[^_\n]+?_)+?__(?![a-zA-Z0-9_])|(?<!\*)\*(?!\s)(?:[^\*\n]|\*\*[^\*\n]+?\*\*)+?(?<!\s)\*(?!\*)|(?<![a-zA-Z0-9_])_(?!\s)(?:[^_\n]|__[^\n]+?__|\*\*[^\n]+?\*\*)+?(?<!\s)_(?![a-zA-Z0-9_]))/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -1650,6 +1683,19 @@ export function renderCellContent(
         'px-1.5 py-0.5 rounded bg-cme-bg-subtle text-[11px] font-mono text-pink-600 dark:text-pink-400 border border-cme-border-base/40';
       code.textContent = codeMatch ? codeMatch[2] : token.slice(1, -1);
       container.appendChild(code);
+    }
+    // 2.5 Linked Image: [![alt](src)](href)
+    else if (token.startsWith('[![') && token.includes('](') && token.endsWith(')')) {
+      const lkMatch = token.match(/^\[!\[([^\]]*)\]\(([^)\n]+)\)\]\(([^)\n]+)\)$/);
+      if (lkMatch) {
+        const alt = lkMatch[1].trim();
+        const rawSrc = lkMatch[2].trim();
+        const rawHref = lkMatch[3].trim();
+        const widget = new ImageEmbedWidget(alt, rawSrc, 0, 0, docPath, rawHref);
+        container.appendChild(widget.toDOM(view));
+      } else {
+        container.appendChild(document.createTextNode(token));
+      }
     }
     // 3. Custom Pills: [pill:...], [status:...], [priority:...]
     else if (token.startsWith('[') && token.endsWith(']') && (token.startsWith('[pill:') || token.startsWith('[status:') || token.startsWith('[priority:'))) {

@@ -57,6 +57,12 @@ function inlineFormat(text: string): string {
     return `<span class="cme-pill cme-pill-${escapeHtml(c)}" data-color="${escapeHtml(c)}">${escapeHtml(label)}</span>`;
   });
 
+  // Linked Images: [![alt](src)](href)
+  res = res.replace(/(?<!!)\[!\[([^\]]*)\]\(([^)\n]+)\)\]\(([^)\n]+)\)/g, '<a href="$3" target="_blank" rel="noopener noreferrer"><img src="$2" alt="$1" class="align-middle" /></a>');
+
+  // Standalone Images: ![alt](src)
+  res = res.replace(/!\[([^\]]*)\]\(([^)\n]+)\)/g, '<img src="$2" alt="$1" class="align-middle" />');
+
   // Standard Markdown Links: [label](target)
   res = res.replace(/(?<!!)\[([^\][\n]+)\]\(([^)\n]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 

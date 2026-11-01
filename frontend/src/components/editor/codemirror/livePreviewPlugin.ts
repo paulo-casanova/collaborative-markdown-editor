@@ -117,6 +117,8 @@ export function buildLivePreviewDecorations(
   const replacedRanges: { from: number; to: number }[] = [];
   // Track fenced code blocks & inline code spans so math/links/formatting inside code are never parsed
   const codeOrFenceRanges: { from: number; to: number }[] = [];
+  // Track active linked image ranges currently focused/being edited by cursor so inner tokens are not partially replaced
+  const activeLinkedImageRanges: { from: number; to: number }[] = [];
 
   const isOverlappingReplaced = (from: number, to: number) => {
     return replacedRanges.some((r) => Math.max(from, r.from) < Math.min(to, r.to));
@@ -124,6 +126,10 @@ export function buildLivePreviewDecorations(
 
   const isInsideCodeOrFence = (from: number, to: number) => {
     return codeOrFenceRanges.some((r) => Math.max(from, r.from) < Math.min(to, r.to));
+  };
+
+  const isInsideActiveLinkedImage = (from: number, to: number) => {
+    return activeLinkedImageRanges.some((r) => Math.max(from, r.from) < Math.min(to, r.to));
   };
 
   const addReplace = (from: number, to: number, deco: Decoration) => {
@@ -592,13 +598,65 @@ export function buildLivePreviewDecorations(
       }
     }
 
+    // 4f0. Linked Images: [![alt](src)](href)
+    const linkedImgRegex = /(?<!!)\[!\[([^\]]*)\]\(([^)\n]+)\)\]\(([^)\n]+)\)/g;
+    let lkMatch: RegExpExecArray | null;
+    while ((lkMatch = linkedImgRegex.exec(lineText)) !== null) {
+      const lkFrom = lineFrom + lkMatch.index;
+      const lkTo = lkFrom + lkMatch[0].length;
+      if (isOverlappingReplaced(lkFrom, lkTo)) continue;
+
+      const alt = lkMatch[1].trim();
+      const rawSrc = lkMatch[2].trim();
+      const rawHref = lkMatch[3].trim();
+      const cursorInLk = cursorTo >= lkFrom && cursorFrom <= lkTo;
+      if (cursorInLk) {
+        activeLinkedImageRanges.push({ from: lkFrom, to: lkTo });
+      } else if (rawSrc) {
+        addReplace(
+          lkFrom,
+          lkTo,
+          Decoration.replace({
+            widget: new ImageEmbedWidget(alt, rawSrc, lkFrom, lkTo, documentPath, rawHref),
+          })
+        );
+      }
+    }
+
+    // 4f1. Linked Obsidian Embeds: [![[target]]](href)
+    const linkedEmbRegex = /(?<!!)\[!\[\[([^\]]+)\]\]\]\(([^)\n]+)\)/g;
+    let leMatch: RegExpExecArray | null;
+    while ((leMatch = linkedEmbRegex.exec(lineText)) !== null) {
+      const leFrom = lineFrom + leMatch.index;
+      const leTo = leFrom + leMatch[0].length;
+      if (isOverlappingReplaced(leFrom, leTo)) continue;
+
+      const inner = leMatch[1].trim();
+      const rawHref = leMatch[2].trim();
+      const cursorInLe = cursorTo >= leFrom && cursorFrom <= leTo;
+      if (cursorInLe) {
+        activeLinkedImageRanges.push({ from: leFrom, to: leTo });
+      } else if (inner) {
+        const pipeIdx = inner.indexOf('|');
+        const rawTarget = pipeIdx >= 0 ? inner.slice(0, pipeIdx).trim() : inner;
+        const altOrSize = pipeIdx >= 0 ? inner.slice(pipeIdx + 1) : '';
+        addReplace(
+          leFrom,
+          leTo,
+          Decoration.replace({
+            widget: new ImageEmbedWidget(altOrSize, rawTarget, leFrom, leTo, documentPath, rawHref),
+          })
+        );
+      }
+    }
+
     // 4f. Embedded Images: ![alt](src)
     const imgRegex = /!\[([^\]]*)\]\(([^)\n]+)\)/g;
     let imgMatch: RegExpExecArray | null;
     while ((imgMatch = imgRegex.exec(lineText)) !== null) {
       const imgFrom = lineFrom + imgMatch.index;
       const imgTo = imgFrom + imgMatch[0].length;
-      if (isOverlappingReplaced(imgFrom, imgTo)) continue;
+      if (isOverlappingReplaced(imgFrom, imgTo) || isInsideActiveLinkedImage(imgFrom, imgTo)) continue;
 
       const alt = imgMatch[1].trim();
       const rawSrc = imgMatch[2].trim();
@@ -620,7 +678,7 @@ export function buildLivePreviewDecorations(
     while ((embMatch = embedRegex.exec(lineText)) !== null) {
       const embFrom = lineFrom + embMatch.index;
       const embTo = embFrom + embMatch[0].length;
-      if (isOverlappingReplaced(embFrom, embTo)) continue;
+      if (isOverlappingReplaced(embFrom, embTo) || isInsideActiveLinkedImage(embFrom, embTo)) continue;
 
       const rawTarget = embMatch[1].trim();
       const altOrSize = embMatch[2] ? embMatch[2].trim() : '';
@@ -698,7 +756,7 @@ export function buildLivePreviewDecorations(
     while ((mdMatch = mdLinkRegex.exec(lineText)) !== null) {
       const mFrom = lineFrom + mdMatch.index;
       const mTo = mFrom + mdMatch[0].length;
-      if (isOverlappingReplaced(mFrom, mTo)) continue;
+      if (isOverlappingReplaced(mFrom, mTo) || isInsideActiveLinkedImage(mFrom, mTo)) continue;
 
       const label = mdMatch[1].trim();
       const rawTarget = parseImageTarget(mdMatch[2]).cleanSrc;
@@ -956,7 +1014,7 @@ export function buildLivePreviewDecorations(
       const mFrom = lineFrom + mMatch.index;
       const mTo = mFrom + mMatch[0].length;
 
-      if (isOverlappingReplaced(mFrom, mTo)) continue;
+      if (isOverlappingReplaced(mFrom, mTo) || isInsideActiveLinkedImage(mFrom, mTo)) continue;
 
       // Math blocks inside quotes (> blockquote or "..." / '...') should show as monospace, not rendered
       if (isBlockquoteLine || isRangeInQuote(mFrom, mTo)) {
