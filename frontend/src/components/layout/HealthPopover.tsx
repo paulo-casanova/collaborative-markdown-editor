@@ -99,11 +99,11 @@ export const HealthPopover: React.FC = () => {
           ) : isSessionExpired ? (
             <div className="py-2 text-rose-500 font-medium space-y-1.5">
               <div>
-                {getStoredAuthnProvider() === 'delegated'
+                {(health?.authn_provider || getStoredAuthnProvider()) === 'delegated'
                   ? 'Authentication session expired. Reload the page to re-authenticate with your identity provider.'
                   : 'Authentication session expired. Please sign in again.'}
               </div>
-              {getStoredAuthnProvider() === 'delegated' && (
+              {(health?.authn_provider || getStoredAuthnProvider()) === 'delegated' && (
                 <button
                   onClick={() => {
                     if (typeof sessionStorage !== 'undefined') {

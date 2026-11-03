@@ -1,7 +1,7 @@
-import { apiRequest, TOKEN_STORAGE_KEY } from './client';
+import { apiRequest, TOKEN_STORAGE_KEY, AUTHN_PROVIDER_STORAGE_KEY, setStoredAuthnProvider } from './client';
 import { UserIdentity, PatToken, UpdateProfileRequest } from '../types/auth';
 
-export const AUTHN_PROVIDER_STORAGE_KEY = 'cme_authn_provider';
+export { AUTHN_PROVIDER_STORAGE_KEY, setStoredAuthnProvider };
 
 export function getStoredAuthnProvider(): string {
   try {
@@ -12,15 +12,6 @@ export function getStoredAuthnProvider(): string {
     }
   } catch {}
   return 'delegated';
-}
-
-export function setStoredAuthnProvider(provider: string): void {
-  try {
-    const storage = typeof window !== 'undefined' ? window.localStorage : (typeof localStorage !== 'undefined' ? localStorage : null);
-    if (storage && provider) {
-      storage.setItem(AUTHN_PROVIDER_STORAGE_KEY, provider);
-    }
-  } catch {}
 }
 
 export function normalizeUser(data: any): UserIdentity {

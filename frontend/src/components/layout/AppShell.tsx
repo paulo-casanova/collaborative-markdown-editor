@@ -13,6 +13,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { RELOAD_KEY } from '../../api/client';
 import { fetchCurrentUser, getStoredAuthnProvider } from '../../api/auth';
+import { fetchHealthStatus } from '../../api/health';
 
 export const AppShell: React.FC = () => {
   const { initThemeListener } = useThemeStore();
@@ -27,7 +28,13 @@ export const AppShell: React.FC = () => {
     retry: false,
   });
 
-  const isDelegated = (user?.authn_provider || getStoredAuthnProvider()) === 'delegated';
+  const { data: health } = useQuery({
+    queryKey: ['system-health'],
+    queryFn: fetchHealthStatus,
+    staleTime: 30000,
+  });
+
+  const isDelegated = (user?.authn_provider || health?.authn_provider || getStoredAuthnProvider()) === 'delegated';
 
   const handleReload = () => {
     if (hasDirtyTabs) {

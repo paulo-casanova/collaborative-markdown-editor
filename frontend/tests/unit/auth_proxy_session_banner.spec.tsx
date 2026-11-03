@@ -252,4 +252,56 @@ describe('Auth Proxy Session Recovery & Expired Banner', () => {
     // Initial closed state renders health button
     expect(html).toContain('v0.1.0');
   });
+
+  it('renders switch-to-password-login fallback button in LoginModal when in delegated mode', () => {
+    setStoredAuthnProvider('delegated');
+    useUIStore.setState({ loginModalOpen: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(['auth-me'], null);
+    queryClient.setQueryData(['system-health'], {
+      status: 'healthy',
+      version: 'v0.1.0',
+      authn_provider: 'delegated',
+    });
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <LoginModal />
+      </QueryClientProvider>
+    );
+
+    expect(html).toContain('data-testid="switch-to-password-login"');
+    expect(html).toContain('Sign in with local username and password instead');
+  });
+
+  it('uses system-health authn_provider challenge to allow Sign In even when unauthenticated', () => {
+    // Stored was previously delegated, but server reports challenge in /api/v1/health
+    setStoredAuthnProvider('delegated');
+    useUIStore.setState({ isSessionExpired: true });
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(['auth-me'], null);
+    queryClient.setQueryData(['system-health'], {
+      status: 'healthy',
+      version: 'v0.1.0',
+      uptime_seconds: 10,
+      authn_provider: 'challenge',
+    });
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <AppShell />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(html).toContain('data-testid="session-signin-btn"');
+    expect(html).toContain('Sign In');
+  });
 });

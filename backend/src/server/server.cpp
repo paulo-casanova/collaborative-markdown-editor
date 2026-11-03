@@ -607,7 +607,8 @@ Result<void> Server::start() {
         if (!auth_res.has_value() || !auth_res.value().has_value()) {
             send_json(res, "401 Unauthorized", {
                 {"error", "Unauthorized"},
-                {"message", "Authentication required"}
+                {"message", "Authentication required"},
+                {"authn_provider", config_.authn.provider}
             });
             return;
         }

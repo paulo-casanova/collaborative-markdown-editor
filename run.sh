@@ -13,6 +13,7 @@ DB_URL="${CME_DATABASE_URL:-postgresql://${PG_USER}:${PG_PASSWORD}@localhost:${P
 DATA_DIR="${CME_STORAGE_ROOT_PATH:-${SCRIPT_DIR}/storage_data}"
 UI_DIR="${CME_UI_DIST_DIR:-${SCRIPT_DIR}/frontend/dist}"
 PORT="${CME_SERVER_PORT:-8080}"
+AUTHN_PROVIDER="${CME_AUTHN_PROVIDER:-challenge}"
 
 SERVER_PID=""
 CLEANED_UP=0
@@ -81,12 +82,13 @@ fi
 
 mkdir -p "${DATA_DIR}"
 
-echo "[run.sh] Starting cme-server on port ${PORT} (data-dir: ${DATA_DIR})..."
+echo "[run.sh] Starting cme-server on port ${PORT} (data-dir: ${DATA_DIR}, authn: ${AUTHN_PROVIDER})..."
 "${SCRIPT_DIR}/build/bin/cme-server" \
   --db-url "${DB_URL}" \
   --data-dir "${DATA_DIR}" \
   --embedded-ui "${UI_DIR}" \
   --port "${PORT}" \
+  --authn "${AUTHN_PROVIDER}" \
   "$@" &
 SERVER_PID=$!
 

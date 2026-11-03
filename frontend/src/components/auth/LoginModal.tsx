@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X, Lock, User, AlertCircle, ShieldCheck, RefreshCw } from 'lucide-react';
 import { loginUser, fetchCurrentUser, getStoredAuthnProvider } from '../../api/auth';
+import { fetchHealthStatus } from '../../api/health';
 import { useUIStore } from '../../stores/uiStore';
 import { RELOAD_KEY } from '../../api/client';
 
@@ -11,6 +12,7 @@ export const LoginModal: React.FC = () => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
 
   const { data: user } = useQuery({
     queryKey: ['auth-me'],
@@ -18,7 +20,13 @@ export const LoginModal: React.FC = () => {
     retry: false,
   });
 
-  const isDelegated = (user?.authn_provider || getStoredAuthnProvider()) === 'delegated';
+  const { data: health } = useQuery({
+    queryKey: ['system-health'],
+    queryFn: fetchHealthStatus,
+    staleTime: 30000,
+  });
+
+  const isDelegated = (user?.authn_provider || health?.authn_provider || getStoredAuthnProvider()) === 'delegated';
 
   const loginMutation = useMutation({
     mutationFn: () => loginUser(username, password),
@@ -35,6 +43,7 @@ export const LoginModal: React.FC = () => {
       setUsername('');
       setPassword('');
       setErrorMessage(null);
+      setShowPasswordForm(false);
     },
     onError: (err: any) => {
       setErrorMessage(err.message || 'Invalid credentials');
@@ -43,7 +52,7 @@ export const LoginModal: React.FC = () => {
 
   if (!loginModalOpen) return null;
 
-  if (isDelegated) {
+  if (isDelegated && !showPasswordForm) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-150">
         <div className="relative w-full max-w-md bg-cme-bg-surface border border-cme-border-base rounded-2xl shadow-2xl overflow-hidden text-cme-text-base">
@@ -74,6 +83,17 @@ export const LoginModal: React.FC = () => {
             <p className="text-cme-text-muted leading-relaxed">
               If your session has expired, refreshing or reloading the page will prompt your reverse proxy to re-authenticate your session.
             </p>
+
+            <div className="pt-1 text-center">
+              <button
+                type="button"
+                onClick={() => setShowPasswordForm(true)}
+                className="text-xs text-cme-text-muted hover:text-cme-primary underline transition-colors cursor-pointer"
+                data-testid="switch-to-password-login"
+              >
+                Sign in with local username and password instead
+              </button>
+            </div>
 
             <div className="pt-2 flex justify-end gap-2">
               <button

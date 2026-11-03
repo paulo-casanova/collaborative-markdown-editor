@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { Shield, LogOut, Key, Users, Settings, ChevronDown, LogIn, RefreshCw } from 'lucide-react';
 import { fetchCurrentUser, logoutUser, getStoredAuthnProvider } from '../../api/auth';
+import { fetchHealthStatus } from '../../api/health';
 import { useUIStore } from '../../stores/uiStore';
 import { Badge } from '../common/Badge';
 import { RELOAD_KEY } from '../../api/client';
@@ -50,7 +51,13 @@ export const UserProfilePill: React.FC = () => {
     );
   }
 
-  const isDelegated = (user?.authn_provider || getStoredAuthnProvider()) === 'delegated';
+  const { data: health } = useQuery({
+    queryKey: ['system-health'],
+    queryFn: fetchHealthStatus,
+    staleTime: 30000,
+  });
+
+  const isDelegated = (user?.authn_provider || health?.authn_provider || getStoredAuthnProvider()) === 'delegated';
 
   if (isError || !user) {
     return (

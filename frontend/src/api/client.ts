@@ -15,6 +15,16 @@ export class ApiError extends Error {
 
 export const TOKEN_STORAGE_KEY = 'cme_auth_token';
 export const RELOAD_KEY = 'cme_last_session_reload';
+export const AUTHN_PROVIDER_STORAGE_KEY = 'cme_authn_provider';
+
+export function setStoredAuthnProvider(provider: string): void {
+  try {
+    const storage = typeof window !== 'undefined' ? window.localStorage : (typeof localStorage !== 'undefined' ? localStorage : null);
+    if (storage && provider) {
+      storage.setItem(AUTHN_PROVIDER_STORAGE_KEY, provider);
+    }
+  } catch {}
+}
 
 let activeProbePromise: Promise<boolean> | null = null;
 let lastProbeTime = 0;
@@ -40,11 +50,20 @@ export async function probeAuthSession(): Promise<boolean> {
       redirect: 'manual',
     });
 
+    if (res.status === 401) {
+      try {
+        const json = await res.json();
+        if (json?.authn_provider) {
+          setStoredAuthnProvider(json.authn_provider);
+        }
+      } catch {}
+      return false;
+    }
+
     if (
       res.type === 'opaqueredirect' ||
       res.status === 0 ||
       res.redirected ||
-      res.status === 401 ||
       !res.ok
     ) {
       return false;
@@ -241,9 +260,12 @@ export async function apiRequest<T>(
   });
 
   if (!response.ok) {
-    let errorJson: { error?: string; message?: string; timestamp?: string } = {};
+    let errorJson: { error?: string; message?: string; timestamp?: string; authn_provider?: string } = {};
     try {
       errorJson = await response.json();
+      if (errorJson?.authn_provider) {
+        setStoredAuthnProvider(errorJson.authn_provider);
+      }
     } catch {
       // Body is not JSON
     }
