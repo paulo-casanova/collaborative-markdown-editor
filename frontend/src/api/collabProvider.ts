@@ -21,11 +21,13 @@ export interface ReviewEventPayload {
 
 export type StatusListener = (status: CollabConnectionStatus) => void;
 export type ReviewEventListener = (payload: ReviewEventPayload) => void;
+export type SyncListener = (isSynced: boolean) => void;
 
 export class CmeCollabProvider {
   public ydoc: Y.Doc;
   public awareness: Awareness;
   public status: CollabConnectionStatus = 'disconnected';
+  public isSynced: boolean = false;
   public documentId: string;
 
   private ws: WebSocket | null = null;
@@ -37,6 +39,7 @@ export class CmeCollabProvider {
   private pingInterval: any = null;
   private statusListeners = new Set<StatusListener>();
   private reviewEventListeners = new Set<ReviewEventListener>();
+  private syncListeners = new Set<SyncListener>();
 
   constructor(documentId: string, ydoc?: Y.Doc, token?: string | null, customUrl?: string) {
     this.documentId = documentId;
@@ -92,12 +95,21 @@ export class CmeCollabProvider {
     this.awareness.destroy();
     this.statusListeners.clear();
     this.reviewEventListeners.clear();
+    this.syncListeners.clear();
   }
 
   public onStatus(listener: StatusListener) {
     this.statusListeners.add(listener);
     listener(this.status);
     return () => this.statusListeners.delete(listener);
+  }
+
+  public onSync(listener: SyncListener) {
+    this.syncListeners.add(listener);
+    if (this.isSynced) {
+      listener(true);
+    }
+    return () => this.syncListeners.delete(listener);
   }
 
   public onReviewEvent(listener: ReviewEventListener) {
@@ -109,6 +121,13 @@ export class CmeCollabProvider {
     if (this.status !== status) {
       this.status = status;
       this.statusListeners.forEach((l) => l(status));
+    }
+  }
+
+  private setSynced(synced: boolean) {
+    if (this.isSynced !== synced) {
+      this.isSynced = synced;
+      this.syncListeners.forEach((l) => l(synced));
     }
   }
 
@@ -207,6 +226,9 @@ export class CmeCollabProvider {
                 ytext.delete(beforeText.length, beforeText.length);
               }, this);
             }
+          }
+          if (subtype === 0x02) {
+            this.setSynced(true);
           }
           if (this.status !== 'connected') {
             this.setStatus('connected');

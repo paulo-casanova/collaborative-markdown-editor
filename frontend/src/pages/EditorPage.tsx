@@ -9,7 +9,8 @@ import { EditorPane } from '../components/workspace/EditorPane';
 import { DirectoryView } from '../components/workspace/DirectoryView';
 
 export const EditorPage: React.FC = () => {
-  const { id } = useParams<{ id: string }>();
+  const params = useParams<{ id?: string; '*'?: string }>();
+  const id = params.id || params['*'];
   const [searchParams] = useSearchParams();
   const location = useLocation();
   const navigate = useNavigate();

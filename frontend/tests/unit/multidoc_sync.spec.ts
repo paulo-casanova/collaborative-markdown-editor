@@ -65,4 +65,36 @@ describe('Issue #5: Multi-document background synchronization', () => {
 
     provider2.destroy();
   });
+
+  it('tracks isSynced and notifies listeners when server SyncStep2 arrives', () => {
+    const doc = new Y.Doc();
+    const provider = new CmeCollabProvider('doc-sync-test', doc, null, 'ws://127.0.0.1:9999/ws');
+
+    expect(provider.isSynced).toBe(false);
+
+    let syncedNotified = false;
+    const unsub = provider.onSync((synced) => {
+      syncedNotified = synced;
+    });
+
+    // Simulate server SyncStep2 (opcode 0x00, subtype 0x02, update payload)
+    const remoteDoc = new Y.Doc();
+    remoteDoc.getText('content').insert(0, '# Initial Markdown Heading');
+    const update = Y.encodeStateAsUpdate(remoteDoc);
+
+    const frame = new Uint8Array(2 + update.length);
+    frame[0] = 0x00; // Opcode Sync
+    frame[1] = 0x02; // Subtype SyncStep2
+    frame.set(update, 2);
+
+    // Trigger internal message handler
+    (provider as any).handleWsMessage({ data: frame.buffer });
+
+    expect(provider.isSynced).toBe(true);
+    expect(syncedNotified).toBe(true);
+    expect(provider.ydoc.getText('content').toString()).toBe('# Initial Markdown Heading');
+
+    unsub();
+    provider.destroy();
+  });
 });

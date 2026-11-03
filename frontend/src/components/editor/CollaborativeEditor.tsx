@@ -471,6 +471,12 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     } else {
       const ytext = provider.ydoc.getText('content');
       initialDoc = ytext.toString();
+      if (!initialDoc && rawInitialText) {
+        // If Yjs sync yielded empty content (e.g. initial connection or offline fallback),
+        // seed ytext from REST initialContent so the editor never renders as a blank document
+        ytext.insert(0, rawInitialText);
+        initialDoc = rawInitialText;
+      }
       extensions.push(yCollab(ytext, provider.awareness));
     }
 

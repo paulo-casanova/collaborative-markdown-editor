@@ -180,6 +180,39 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     return new CmeCollabProvider(documentId);
   }, [documentId]);
 
+  const [isCollabSynced, setIsCollabSynced] = useState<boolean>(() => {
+    if (!provider) return true;
+    return provider.isSynced || provider.ydoc.getText('content').length > 0;
+  });
+
+  useEffect(() => {
+    if (!provider) {
+      setIsCollabSynced(true);
+      return;
+    }
+    if (provider.isSynced || provider.ydoc.getText('content').length > 0) {
+      setIsCollabSynced(true);
+      return;
+    }
+
+    setIsCollabSynced(false);
+    const unsub = provider.onSync((synced) => {
+      if (synced) {
+        setIsCollabSynced(true);
+      }
+    });
+
+    // Safety fallback: don't hold the skeleton for more than 1200ms if WebSocket is delayed/offline
+    const timer = setTimeout(() => {
+      setIsCollabSynced(true);
+    }, 1200);
+
+    return () => {
+      unsub();
+      clearTimeout(timer);
+    };
+  }, [provider]);
+
   const {
     initDocument,
     handleWebSocketReviewEvent,
@@ -675,7 +708,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     };
   }, [provider, documentId, setSyncStatus, queryClient, handleWebSocketReviewEvent]);
 
-  if (isLoading) {
+  if (isLoading || (!isCollabSynced && provider)) {
     return (
       <div className="p-6 md:p-8 space-y-4 animate-pulse">
         <div className="h-8 bg-cme-bg-subtle rounded-lg w-1/3" />

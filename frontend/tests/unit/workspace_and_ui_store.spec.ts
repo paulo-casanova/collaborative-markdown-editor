@@ -217,4 +217,22 @@ describe('WorkspaceStore & UIStore behavior', () => {
       global.fetch = originalFetch;
     }
   });
+
+  it('supports nested directory tabs with multi-segment paths and retains them in store', () => {
+    const ws = useWorkspaceStore.getState();
+    const nestedDirTabId = 'dir:docs/crdt/specs';
+
+    ws.openTab({
+      id: nestedDirTabId,
+      path: 'docs/crdt/specs',
+      title: 'specs',
+      is_directory: true,
+    });
+
+    const current = useWorkspaceStore.getState();
+    expect(current.tabs).toHaveLength(1);
+    expect(current.tabs[0].id).toBe(nestedDirTabId);
+    expect(current.tabs[0].is_directory).toBe(true);
+    expect(current.activeTabId).toBe(nestedDirTabId);
+  });
 });

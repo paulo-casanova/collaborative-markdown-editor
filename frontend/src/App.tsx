@@ -29,6 +29,7 @@ export const App: React.FC = () => {
             <Route index element={<TaskDashboardPage />} />
             <Route path="documents/by-path" element={<EditorPage />} />
             <Route path="documents/:id" element={<EditorPage />} />
+            <Route path="documents/*" element={<EditorPage />} />
             <Route path="doc/:id" element={<EditorPage />} />
             <Route path="d/:id" element={<EditorPage />} />
             <Route path="docs/by-path" element={<ReaderPage />} />

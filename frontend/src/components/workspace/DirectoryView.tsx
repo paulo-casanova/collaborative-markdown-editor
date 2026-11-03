@@ -199,7 +199,11 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
   };
 
   const openDocumentTab = (item: DirectoryDashboardItem) => {
-    if (!item.id) return;
+    if (!item.id) {
+      // Auto-reconcile unindexed on-disk files via by-path resolution
+      navigate(`/documents/by-path?path=${encodeURIComponent(item.path)}`);
+      return;
+    }
     openTab({
       id: item.id,
       path: item.path,
