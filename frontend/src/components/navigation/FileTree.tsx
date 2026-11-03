@@ -185,6 +185,30 @@ export const FileTree: React.FC = () => {
     navigate(`/documents/${tabId}`);
   };
 
+  // Helper to resolve the active destination folder from activeNode or open workspace tabs
+  const resolveActiveParentDir = (): string => {
+    if (activeNode) {
+      if (activeNode.is_directory) return activeNode.path;
+      const lastSlash = activeNode.path.lastIndexOf('/');
+      return lastSlash !== -1 ? activeNode.path.substring(0, lastSlash) : '';
+    }
+    const { tabs, activeTabId } = useWorkspaceStore.getState();
+    if (activeTabId) {
+      if (activeTabId.startsWith('dir:')) {
+        return activeTabId.replace(/^dir:/, '');
+      }
+      const activeTab = tabs.find((t) => t.id === activeTabId);
+      if (activeTab?.is_directory) {
+        return activeTab.path;
+      }
+      if (activeTab?.path) {
+        const lastSlash = activeTab.path.lastIndexOf('/');
+        return lastSlash !== -1 ? activeTab.path.substring(0, lastSlash) : '';
+      }
+    }
+    return '';
+  };
+
   const { data: user } = useQuery({
     queryKey: ['auth-me'],
     queryFn: fetchCurrentUser,
@@ -312,6 +336,14 @@ export const FileTree: React.FC = () => {
         }
         return next;
       });
+      if (res?.path) {
+        setActiveNode({
+          name: res.path.split('/').pop() || res.path,
+          path: res.path,
+          is_directory: true,
+          is_bundle: false,
+        });
+      }
       setModalMode(null);
       setInputValue('');
     },
@@ -604,11 +636,7 @@ export const FileTree: React.FC = () => {
     if (!inputValue.trim()) return;
 
     if (modalMode === 'new-doc') {
-      const parentDir = activeNode
-        ? activeNode.is_directory
-          ? activeNode.path
-          : activeNode.path.substring(0, activeNode.path.lastIndexOf('/'))
-        : '';
+      const parentDir = resolveActiveParentDir();
       let filename = inputValue.trim();
       if (!filename.endsWith('.md') && !filename.endsWith('.bundle')) {
         filename += '.md';
@@ -620,11 +648,7 @@ export const FileTree: React.FC = () => {
         content: `# ${filename.replace(/\.(md|bundle)$/, '')}\n\n`,
       });
     } else if (modalMode === 'new-folder') {
-      const parentDir = activeNode
-        ? activeNode.is_directory
-          ? activeNode.path
-          : activeNode.path.substring(0, activeNode.path.lastIndexOf('/'))
-        : '';
+      const parentDir = resolveActiveParentDir();
       const folderName = inputValue.trim().replace(/^\/+|\/+$/g, '');
       const fullPath = parentDir ? `${parentDir}/${folderName}` : folderName;
       createDirMutation.mutate(fullPath);
@@ -746,6 +770,7 @@ export const FileTree: React.FC = () => {
           <Link
             to={docLink}
             onClick={() => {
+              setActiveNode(node);
               if (node.id) {
                 openTab({
                   id: node.id,
@@ -828,7 +853,10 @@ export const FileTree: React.FC = () => {
 
             {/* Clicking folder icon + name opens directory dashboard tab */}
             <div
-              onClick={() => openDirectoryTab(node.path)}
+              onClick={() => {
+                setActiveNode(node);
+                openDirectoryTab(node.path);
+              }}
               className="flex items-center gap-1.5 min-w-0 flex-1 truncate hover:text-cme-primary"
               title={`Open ${node.name} dashboard`}
               data-testid={`filetree-folder-name-${node.name}`}
@@ -894,7 +922,15 @@ export const FileTree: React.FC = () => {
         <div className="flex items-center gap-1">
           <button
             onClick={() => {
-              setActiveNode(null);
+              const currentDir = resolveActiveParentDir();
+              if (currentDir && (!activeNode || activeNode.path !== currentDir)) {
+                setActiveNode({
+                  name: currentDir.split('/').pop() || currentDir,
+                  path: currentDir,
+                  is_directory: true,
+                  is_bundle: false,
+                });
+              }
               setInputValue('');
               setModalMode('new-doc');
             }}
@@ -906,7 +942,15 @@ export const FileTree: React.FC = () => {
           </button>
           <button
             onClick={() => {
-              setActiveNode(null);
+              const currentDir = resolveActiveParentDir();
+              if (currentDir && (!activeNode || activeNode.path !== currentDir)) {
+                setActiveNode({
+                  name: currentDir.split('/').pop() || currentDir,
+                  path: currentDir,
+                  is_directory: true,
+                  is_bundle: false,
+                });
+              }
               setInputValue('');
               setModalMode('new-folder');
             }}
@@ -1152,6 +1196,27 @@ export const FileTree: React.FC = () => {
               {modalMode === 'new-folder' && 'Create New Folder'}
               {modalMode === 'rename' && 'Rename Item'}
             </h3>
+
+            {modalMode !== 'rename' && (
+              <div className="text-xs text-cme-text-muted flex items-center justify-between bg-cme-bg-subtle/50 px-2.5 py-1.5 rounded-lg border border-cme-border-base/50">
+                <span className="truncate">
+                  Location:{' '}
+                  <span className="font-mono text-cme-primary font-medium" data-testid="creation-target-folder">
+                    {resolveActiveParentDir() ? `${resolveActiveParentDir()}/` : 'Root /'}
+                  </span>
+                </span>
+                {resolveActiveParentDir() && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveNode(null)}
+                    className="text-[11px] text-cme-text-subtle hover:text-cme-text-base underline flex-shrink-0 ml-2"
+                    data-testid="clear-creation-target-btn"
+                  >
+                    Clear to Root
+                  </button>
+                )}
+              </div>
+            )}
 
             <form onSubmit={handleModalSubmit} className="space-y-4">
               <div>
