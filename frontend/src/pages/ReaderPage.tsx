@@ -168,7 +168,8 @@ export const ReaderPage: React.FC = () => {
     retry: 1,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
-    staleTime: Infinity,
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
 
   // Query reviews for the overlay

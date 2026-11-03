@@ -50,6 +50,10 @@ export class CodeMirrorEditorAdapter {
     return this.view.state.doc.toString();
   }
 
+  getMarkdown(): string {
+    return this.getText();
+  }
+
   can(): { undo: () => boolean; redo: () => boolean } {
     return {
       undo: () => true,

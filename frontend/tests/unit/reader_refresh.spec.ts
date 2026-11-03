@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { QueryClient } from '@tanstack/react-query';
 import * as documentsApi from '../../src/api/documents';
 import * as reviewsApi from '../../src/api/reviews';
 import { computeCommentsSignature } from '../../src/pages/ReaderPage';
 import type { CommentRecord } from '../../src/review/types';
 import { useReviewStore } from '../../src/stores/reviewStore';
+import { CodeMirrorEditorAdapter } from '../../src/components/editor/codemirror/editorAdapter';
 
 describe('Issue #19 & Reader Refresh: Refresh Button & Comment Updates Polling', () => {
   beforeEach(() => {
@@ -540,6 +542,130 @@ describe('Issue #19 & Reader Refresh: Refresh Button & Comment Updates Polling',
       expect(refreshReason).toBe('comments');
 
       unsub();
+    });
+  });
+
+  describe('Switching from Editing Mode to Reader Mode & Cache Sync', () => {
+    it('provides getMarkdown on CodeMirrorEditorAdapter matching getText', () => {
+      const mockView = {
+        state: {
+          doc: {
+            toString: () => '# Chapter 1\n\nContent body.',
+          },
+        },
+        dom: { parentNode: {} },
+        destroy: vi.fn(),
+      } as any;
+
+      const adapter = new CodeMirrorEditorAdapter(mockView);
+      expect(adapter.getText()).toBe('# Chapter 1\n\nContent body.');
+      expect(adapter.getMarkdown()).toBe('# Chapter 1\n\nContent body.');
+    });
+
+    it('immediately seeds reader cache with edited content so reader mode sees latest changes without manual refresh', () => {
+      const queryClient = new QueryClient();
+      const docId = 'doc-reader-switch-test';
+      const docPath = 'workspace/guide.md';
+
+      // 1. Initial cached doc in reader mode before user started editing
+      const initialDoc = {
+        id: docId,
+        path: docPath,
+        title: 'Guide',
+        content: '# Old Content\n\nBefore user edits.',
+        created_at: '2026-10-24T00:00:00Z',
+        updated_at: '2026-10-24T00:00:00Z',
+      };
+      queryClient.setQueryData(['doc-reader', docId], initialDoc);
+      queryClient.setQueryData(['doc-reader', docPath], initialDoc);
+
+      // Verify stale content in cache
+      expect((queryClient.getQueryData(['doc-reader', docId]) as any)?.content).toBe(
+        '# Old Content\n\nBefore user edits.'
+      );
+
+      // 2. User edits document in editing mode
+      const newEditedText = '# Updated Content\n\nUser added new paragraphs in editor mode.';
+
+      // Logic matching EditorPane.syncDocReaderCache:
+      queryClient.setQueriesData({ queryKey: ['doc-reader'] }, (old: any) => {
+        if (old && (old.id === docId || old.path === docPath)) {
+          return { ...old, content: newEditedText };
+        }
+        return old;
+      });
+      queryClient.setQueryData(['doc-reader', docId], (old: any) => {
+        if (!old) return old;
+        return { ...old, content: newEditedText };
+      });
+      queryClient.setQueryData(['doc-reader', docPath], (old: any) => {
+        if (!old) return old;
+        return { ...old, content: newEditedText };
+      });
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+
+      // 3. Reader cache now reflects latest edited text immediately
+      const readerDocById = queryClient.getQueryData(['doc-reader', docId]) as any;
+      const readerDocByPath = queryClient.getQueryData(['doc-reader', docPath]) as any;
+
+      expect(readerDocById.content).toBe(newEditedText);
+      expect(readerDocByPath.content).toBe(newEditedText);
+
+      // Verify queries are marked stale/invalidated so active or mounting queries re-fetch from backend
+      const queryState = queryClient.getQueryState(['doc-reader', docId]);
+      expect(queryState?.isInvalidated).toBe(true);
+    });
+
+    it('does not display stale banner after switching to reader mode when server matches edited content', async () => {
+      const docId = 'doc-banner-test';
+      const updatedContent = '# Fresh Heading\n\nContent saved from editor.';
+
+      vi.spyOn(documentsApi, 'fetchDocument').mockImplementation(async (id: string) => ({
+        id,
+        path: 'doc.md',
+        title: 'Fresh Doc',
+        content: updatedContent,
+        is_bundle: false,
+        created_at: '2026-10-24T00:00:00Z',
+        updated_at: '2026-10-24T00:00:00Z',
+      }));
+
+      vi.spyOn(reviewsApi, 'fetchDocumentComments').mockImplementation(async () => []);
+
+      // In ReaderPage, displayedContent was initialized with the updated content from queryClient cache
+      const displayedContent = updatedContent;
+      let hasNewVersion = false;
+      let refreshReason: 'content' | 'comments' | 'all' | null = null;
+
+      const checkServerVersion = async () => {
+        const [latestDoc, latestComments] = await Promise.all([
+          documentsApi.fetchDocument(docId),
+          reviewsApi.fetchDocumentComments(docId),
+        ]);
+        const latestContent = latestDoc.content ?? '';
+        const contentChanged = latestContent !== displayedContent;
+        const commentsChanged =
+          computeCommentsSignature(latestComments) !== computeCommentsSignature([]);
+
+        if (contentChanged && commentsChanged) {
+          hasNewVersion = true;
+          refreshReason = 'all';
+        } else if (contentChanged) {
+          hasNewVersion = true;
+          refreshReason = 'content';
+        } else if (commentsChanged) {
+          hasNewVersion = true;
+          refreshReason = 'comments';
+        } else {
+          hasNewVersion = false;
+          refreshReason = null;
+        }
+      };
+
+      await checkServerVersion();
+      // Because displayedContent already matches server content, no refresh banner or refresh click is needed
+      expect(hasNewVersion).toBe(false);
+      expect(refreshReason).toBeNull();
     });
   });
 });

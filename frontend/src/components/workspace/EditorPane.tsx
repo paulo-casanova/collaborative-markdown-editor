@@ -528,13 +528,13 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     try {
       if (typeof editorInstance?.getText === 'function') {
         const txt = editorInstance.getText();
-        if (typeof txt === 'string' && txt.length > 0) return txt;
+        if (typeof txt === 'string') return txt;
       }
       const view = editorInstance?.getView?.() || (editorInstance as any)?.view;
       if (view?.state?.doc) {
         return view.state.doc.toString();
       }
-      if (typeof liveContent === 'string' && liveContent.length > 0) {
+      if (typeof liveContent === 'string') {
         return liveContent;
       }
       if (typeof document?.content === 'string') {
@@ -545,6 +545,56 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     }
     return typeof document?.content === 'string' ? document.content : '';
   }, [editorInstance, liveContent, document?.content]);
+
+  const syncDocReaderCache = useCallback(
+    (latestText?: string) => {
+      const textToSync = latestText !== undefined ? latestText : getDocumentMarkdown();
+      if (!document?.id) return;
+
+      if (typeof textToSync === 'string') {
+        // 1. Update any existing ['doc-reader'] queries matching this document id or path
+        queryClient.setQueriesData({ queryKey: ['doc-reader'] }, (old: any) => {
+          if (old && (old.id === document.id || (document.path && old.path === document.path))) {
+            return { ...old, content: textToSync };
+          }
+          return old;
+        });
+
+        // 2. Explicitly update document.id and path query keys
+        queryClient.setQueryData(['doc-reader', document.id], (old: any) => {
+          if (!old) return old;
+          return { ...old, content: textToSync };
+        });
+        if (document.path) {
+          queryClient.setQueryData(['doc-reader', document.path], (old: any) => {
+            if (!old) return old;
+            return { ...old, content: textToSync };
+          });
+          queryClient.setQueryData(['doc-reader', `workspace/${document.path}`], (old: any) => {
+            if (!old) return old;
+            return { ...old, content: textToSync };
+          });
+        }
+
+        // 3. Keep ['document', document.id] updated
+        queryClient.setQueryData(['document', document.id], (old: any) => {
+          if (!old) return old;
+          return { ...old, content: textToSync };
+        });
+      }
+
+      // Invalidate reader queries so active or next mount refetches from server
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+    },
+    [document?.id, document?.path, getDocumentMarkdown, queryClient]
+  );
+
+  // Synchronize reader cache on unmount (e.g. navigation to reader mode, tab close, back button)
+  useEffect(() => {
+    return () => {
+      syncDocReaderCache();
+    };
+  }, [syncDocReaderCache]);
 
   const handleCopyPermalink = useCallback(() => {
     if (document?.id) {
@@ -899,7 +949,10 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
             <Link
               to={`/docs/${document.id}`}
-              onClick={() => setViewMode('read')}
+              onClick={() => {
+                syncDocReaderCache();
+                setViewMode('read');
+              }}
               className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-base transition-colors"
               title="Switch to Reader View"
               data-testid="switch-to-reader-btn"
@@ -992,6 +1045,28 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               setLiveContent(content);
               if (document?.path) {
                 updateCachedDocumentHeadings(document.path, content);
+              }
+              if (document?.id) {
+                queryClient.setQueriesData({ queryKey: ['doc-reader'] }, (old: any) => {
+                  if (old && (old.id === document.id || (document.path && old.path === document.path))) {
+                    return { ...old, content };
+                  }
+                  return old;
+                });
+                queryClient.setQueryData(['doc-reader', document.id], (old: any) => {
+                  if (!old) return old;
+                  return { ...old, content };
+                });
+                if (document.path) {
+                  queryClient.setQueryData(['doc-reader', document.path], (old: any) => {
+                    if (!old) return old;
+                    return { ...old, content };
+                  });
+                  queryClient.setQueryData(['doc-reader', `workspace/${document.path}`], (old: any) => {
+                    if (!old) return old;
+                    return { ...old, content };
+                  });
+                }
               }
             }}
             onCursorLineChange={setCursorLine}
