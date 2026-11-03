@@ -22,6 +22,10 @@ import { parsePillSyntax, resolvePillStyle } from '../../src/utils/pillUtils';
 import { parseCalloutHeader } from '../../src/utils/calloutUtils';
 import { parseMarkdownToHtml } from '../../src/utils/markdownToHtml';
 import { renderMarkdown } from '../../src/pages/ReaderPage';
+import {
+  updateMarkdownWikilinks,
+  updateMarkdownWikilinksForDirectory,
+} from '../../src/utils/wikilinkUpdater';
 
 describe('Link Validator and Header Numbering Utils', () => {
   it('strips hierarchical heading numbers while keeping non-section digits intact', () => {
@@ -1298,6 +1302,68 @@ Deep details.`;
       expect(html).toContain(
         '<a href="LICENSE" target="_blank" rel="noopener noreferrer"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License MIT" class="align-middle" /></a>'
       );
+    });
+  });
+
+  describe('Automatic Wikilink Updates on Document and Directory Rename', () => {
+    it('updates stem, path, anchor, label, and embed wikilinks when a document is renamed', () => {
+      const sample = [
+        '# Referencing Document',
+        'Stem link: [[intro]], and with alias: [[intro|Introduction]].',
+        'Heading link: [[intro#Prerequisites]] and [[intro#Setup|Install Guide]].',
+        'Full path: [[guides/intro.md]] and without ext: [[guides/intro]].',
+        'Relative dot-slash: [[./intro]] and [[./intro.md]].',
+        'Embed: ![[intro]] and with alt: ![[intro|diagram]].',
+        'Self heading: [[#Heading]] should remain unchanged.',
+        'Unrelated link: [[other-doc]] should remain unchanged.',
+        'Inside inline code: `[[intro]]` must not be changed.',
+        '```markdown',
+        '[[intro]] in code block',
+        '```',
+        'Final mention: [[intro]].',
+      ].join('\n');
+
+      const updated = updateMarkdownWikilinks(
+        sample,
+        'guides/intro.md',
+        'guides/getting-started.md',
+        'notes/overview.md'
+      );
+
+      expect(updated).toContain('Stem link: [[getting-started]], and with alias: [[getting-started|Introduction]].');
+      expect(updated).toContain('Heading link: [[getting-started#Prerequisites]] and [[getting-started#Setup|Install Guide]].');
+      expect(updated).toContain('Full path: [[guides/getting-started.md]] and without ext: [[guides/getting-started]].');
+      expect(updated).toContain('Relative dot-slash: [[./getting-started]] and [[./getting-started.md]].');
+      expect(updated).toContain('Embed: ![[getting-started]] and with alt: ![[getting-started|diagram]].');
+      expect(updated).toContain('Self heading: [[#Heading]] should remain unchanged.');
+      expect(updated).toContain('Unrelated link: [[other-doc]] should remain unchanged.');
+      expect(updated).toContain('Inside inline code: `[[intro]]` must not be changed.');
+      expect(updated).toContain('```markdown\n[[intro]] in code block\n```');
+      expect(updated).toContain('Final mention: [[getting-started]].');
+    });
+
+    it('updates directory path prefixes in wikilinks when a directory is renamed', () => {
+      const sample = [
+        'See [[docs/intro]] and [[docs/sub/notes#Heading|Notes]].',
+        'Media embed: ![[docs/images/arch.png]].',
+        'Root link [[root-doc]] untouched.',
+      ].join('\n');
+
+      const updated = updateMarkdownWikilinksForDirectory(sample, 'docs', 'guides');
+
+      expect(updated).toContain('See [[guides/intro]] and [[guides/sub/notes#Heading|Notes]].');
+      expect(updated).toContain('Media embed: ![[guides/images/arch.png]].');
+      expect(updated).toContain('Root link [[root-doc]] untouched.');
+    });
+
+    it('correctly handles bundle document renames', () => {
+      const sample = 'Architecture bundle: [[docs/architecture.bundle]] or [[architecture]].';
+      const updated = updateMarkdownWikilinks(
+        sample,
+        'docs/architecture.bundle',
+        'docs/system-design.bundle'
+      );
+      expect(updated).toBe('Architecture bundle: [[docs/system-design.bundle]] or [[system-design]].');
     });
   });
 });

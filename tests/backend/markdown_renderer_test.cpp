@@ -362,6 +362,63 @@ int main() {
     }
 
     // =========================================================================
+    // 4d. UNIT TEST: Automatic Wikilink Rewriting on Rename / Move
+    // =========================================================================
+    {
+        std::cout << "  -> Testing automatic wikilink updates on rename / move...\n";
+
+        std::string sample =
+            "# Document with References\n\n"
+            "Here is a stem link: [[intro]], and with alias: [[intro|Introduction]].\n"
+            "With heading anchor: [[intro#Prerequisites]] and [[intro#Setup|Install Guide]].\n"
+            "Full path: [[guides/intro.md]], and no ext: [[guides/intro]].\n"
+            "Embed: ![[intro]], and embed with alt: ![[intro|diagram]].\n"
+            "Local heading link: [[#Local Heading]] should not be touched.\n"
+            "Unrelated document: [[other-doc]] should not be touched.\n"
+            "Inside inline code: `[[intro]]` must not be touched.\n"
+            "Inside fenced code:\n"
+            "```markdown\n"
+            "[[intro]]\n"
+            "```\n"
+            "Final paragraph with [[intro]].\n";
+
+        std::string updated = cme::document::update_markdown_wikilinks(
+            sample,
+            "notes/overview.md",
+            "guides/intro.md",
+            "guides/getting-started.md"
+        );
+
+        assert(updated.find("[[getting-started]]") != std::string::npos);
+        assert(updated.find("[[getting-started|Introduction]]") != std::string::npos);
+        assert(updated.find("[[getting-started#Prerequisites]]") != std::string::npos);
+        assert(updated.find("[[getting-started#Setup|Install Guide]]") != std::string::npos);
+        assert(updated.find("[[guides/getting-started.md]]") != std::string::npos);
+        assert(updated.find("[[guides/getting-started]]") != std::string::npos);
+        assert(updated.find("![[getting-started]]") != std::string::npos);
+        assert(updated.find("![[getting-started|diagram]]") != std::string::npos);
+        assert(updated.find("[[#Local Heading]]") != std::string::npos);
+        assert(updated.find("[[other-doc]]") != std::string::npos);
+        assert(updated.find("`[[intro]]`") != std::string::npos);
+        assert(updated.find("```markdown\n[[intro]]\n```") != std::string::npos);
+
+        // Test directory rename
+        std::string dir_sample =
+            "Links to directory: [[docs/intro]] and [[docs/sub/notes#Heading|Notes]].\n"
+            "Embed: ![[docs/images/arch.png]].\n";
+        std::string dir_updated = cme::document::update_markdown_wikilinks_for_directory(
+            dir_sample,
+            "docs",
+            "guides"
+        );
+        assert(dir_updated.find("[[guides/intro]]") != std::string::npos);
+        assert(dir_updated.find("[[guides/sub/notes#Heading|Notes]]") != std::string::npos);
+        assert(dir_updated.find("![[guides/images/arch.png]]") != std::string::npos);
+
+        std::cout << "     [PASS] Automatic wikilink updates on document and directory rename verified.\n";
+    }
+
+    // =========================================================================
     // 5. UNIT TEST: Review Subsystem Annotations Overlay
     // =========================================================================
     {

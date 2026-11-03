@@ -34,6 +34,7 @@ struct DocumentRecord {
     bool number_headers{false};  ///< True if hierarchical header numbering is enabled.
     std::string created_at;      ///< ISO-8601 creation timestamp.
     std::string updated_at;      ///< ISO-8601 last update timestamp.
+    std::vector<std::string> updated_referencing_docs{}; ///< Document IDs whose wikilinks were automatically updated.
 
     [[nodiscard]] nlohmann::json to_json(bool include_content = true) const {
         nlohmann::json j = {
@@ -44,7 +45,8 @@ struct DocumentRecord {
             {"owner_user_id", owner_user_id},
             {"number_headers", number_headers},
             {"created_at", created_at},
-            {"updated_at", updated_at}
+            {"updated_at", updated_at},
+            {"updated_referencing_docs", updated_referencing_docs}
         };
         if (include_content) {
             j["content"] = content;
@@ -437,6 +439,26 @@ public:
         const auth::UserIdentity& user
     );
 
+    /**
+     * @brief Automatically updates Obsidian-style wikilinks across other documents when a document is renamed or moved.
+     * @return List of document IDs whose content was updated.
+     */
+    Result<std::vector<std::string>> update_referencing_wikilinks(
+        const std::string& old_fs_path,
+        const std::string& new_fs_path,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Automatically updates Obsidian-style wikilinks across other documents when a directory is renamed.
+     * @return List of document IDs whose content was updated.
+     */
+    Result<std::vector<std::string>> update_referencing_wikilinks_for_dir(
+        const std::string& old_dir,
+        const std::string& new_dir,
+        const auth::UserIdentity& user
+    );
+
 private:
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::IStorageBackend> storage_;
@@ -447,5 +469,26 @@ private:
         const std::string& fs_path
     );
 };
+
+/**
+ * @brief Rewrites Obsidian-style wikilinks in markdown content targeting an old document path/stem to the new path/stem.
+ * Skips code blocks and inline code spans. Preserves anchors, labels, and embeds.
+ */
+std::string update_markdown_wikilinks(
+    std::string_view content,
+    const std::string& ref_doc_path,
+    const std::string& old_doc_path,
+    const std::string& new_doc_path
+);
+
+/**
+ * @brief Rewrites Obsidian-style wikilinks in markdown content targeting an old directory prefix to the new directory prefix.
+ * Skips code blocks and inline code spans. Preserves anchors, labels, and embeds.
+ */
+std::string update_markdown_wikilinks_for_directory(
+    std::string_view content,
+    const std::string& old_dir_path,
+    const std::string& new_dir_path
+);
 
 } // namespace cme::document

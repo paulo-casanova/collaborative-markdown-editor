@@ -150,6 +150,8 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
     onSuccess: (_data, deletedPath) => {
       queryClient.invalidateQueries({ queryKey: ['directory-details'] });
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['document'] });
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
       queryClient.invalidateQueries({ queryKey: ['trash-items'] });
 
       // If we deleted the current directory we are viewing, close tab & navigate away
@@ -172,6 +174,8 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
     onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: ['directory-details'] });
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['document'] });
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
 
       if (cleanPath === res.old_path) {
         closeTab(`dir:${cleanPath}`);

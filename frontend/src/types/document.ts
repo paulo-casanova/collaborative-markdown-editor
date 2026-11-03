@@ -9,6 +9,7 @@ export interface DocumentRecord {
   number_headers?: boolean;
   created_at: string;
   updated_at: string;
+  updated_referencing_docs?: string[];
 }
 
 export interface WorkspaceNode {

@@ -620,7 +620,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     onSuccess: (updatedDoc) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
-      queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
+      queryClient.invalidateQueries({ queryKey: ['document'] });
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
       queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
       updateTabMetadata(updatedDoc.id, {
         path: updatedDoc.path,
@@ -636,7 +637,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     onSuccess: (updatedDoc) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
-      queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
+      queryClient.invalidateQueries({ queryKey: ['document'] });
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
       queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
       updateTabMetadata(updatedDoc.id, {
         path: updatedDoc.path,

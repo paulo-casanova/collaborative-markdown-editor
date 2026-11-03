@@ -211,7 +211,345 @@ size_t levenshtein_distance(std::string_view s1, std::string_view s2) {
     return dp0[n];
 }
 
+template <typename MatcherFn>
+std::string transform_markdown_wikilinks(std::string_view content, MatcherFn&& match_and_replace) {
+    std::string result;
+    result.reserve(content.size());
+
+    size_t i = 0;
+    const size_t n = content.size();
+
+    bool in_fenced_code = false;
+    std::string fence_delim;
+
+    while (i < n) {
+        // 1. Check for fenced code block at line start
+        bool is_line_start = (i == 0 || content[i - 1] == '\n');
+        if (is_line_start) {
+            size_t sp = i;
+            while (sp < n && sp < i + 3 && content[sp] == ' ') sp++;
+            if (sp + 2 < n) {
+                char fchar = content[sp];
+                if (fchar == '`' || fchar == '~') {
+                    size_t fcount = 0;
+                    while (sp + fcount < n && content[sp + fcount] == fchar) {
+                        fcount++;
+                    }
+                    if (fcount >= 3) {
+                        std::string current_fence = std::string(fcount, fchar);
+                        if (!in_fenced_code) {
+                            in_fenced_code = true;
+                            fence_delim = current_fence;
+                        } else if (fchar == fence_delim[0] && fcount >= fence_delim.size()) {
+                            size_t eol = sp + fcount;
+                            while (eol < n && content[eol] != '\n' && (content[eol] == ' ' || content[eol] == '\t')) {
+                                eol++;
+                            }
+                            if (eol == n || content[eol] == '\n' || content[eol] == '\r') {
+                                in_fenced_code = false;
+                                fence_delim.clear();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (in_fenced_code) {
+            result.push_back(content[i++]);
+            continue;
+        }
+
+        // 2. Check for inline code `...`
+        if (content[i] == '`') {
+            size_t tick_count = 0;
+            while (i + tick_count < n && content[i + tick_count] == '`') {
+                tick_count++;
+            }
+            std::string ticks = std::string(tick_count, '`');
+            result.append(ticks);
+            i += tick_count;
+            size_t close_pos = content.find(ticks, i);
+            if (close_pos != std::string_view::npos) {
+                result.append(content.substr(i, close_pos + tick_count - i));
+                i = close_pos + tick_count;
+            }
+            continue;
+        }
+
+        // 3. Check for wikilink: "![[" or "[["
+        bool is_embed = (content[i] == '!' && i + 2 < n && content[i + 1] == '[' && content[i + 2] == '[');
+        bool is_link = (!is_embed && content[i] == '[' && i + 1 < n && content[i + 1] == '[');
+
+        if (is_embed || is_link) {
+            size_t open_pos = is_embed ? (i + 1) : i; // points to first '[' of "[["
+            size_t start_inner = open_pos + 2;
+            size_t close_pos = content.find("]]", start_inner);
+
+            // Ensure closing ]] is on the same line
+            size_t next_nl = content.find('\n', start_inner);
+            if (close_pos != std::string_view::npos && (next_nl == std::string_view::npos || close_pos < next_nl)) {
+                std::string_view inner = content.substr(start_inner, close_pos - start_inner);
+                size_t pipe_pos = inner.find('|');
+                std::string_view target_view = (pipe_pos != std::string_view::npos) ? inner.substr(0, pipe_pos) : inner;
+                std::string_view label_view = (pipe_pos != std::string_view::npos) ? inner.substr(pipe_pos) : std::string_view{};
+
+                size_t hash_pos = target_view.find('#');
+                std::string_view doc_view = (hash_pos != std::string_view::npos) ? target_view.substr(0, hash_pos) : target_view;
+                std::string_view anchor_view = (hash_pos != std::string_view::npos) ? target_view.substr(hash_pos) : std::string_view{};
+
+                size_t first = doc_view.find_first_not_of(" \t");
+                size_t last = doc_view.find_last_not_of(" \t");
+
+                if (first != std::string_view::npos) {
+                    std::string leading_ws(doc_view.substr(0, first));
+                    std::string trailing_ws(doc_view.substr(last + 1));
+                    std::string clean_doc(doc_view.substr(first, last - first + 1));
+
+                    auto replaced_doc = match_and_replace(clean_doc);
+                    if (replaced_doc.has_value()) {
+                        if (is_embed) result.push_back('!');
+                        result.append("[[");
+                        result.append(leading_ws);
+                        result.append(*replaced_doc);
+                        result.append(trailing_ws);
+                        result.append(anchor_view);
+                        result.append(label_view);
+                        result.append("]]");
+                        i = close_pos + 2;
+                        continue;
+                    }
+                }
+
+                // If not replaced, copy original wikilink verbatim to avoid inner rescan
+                size_t full_len = (close_pos + 2) - i;
+                result.append(content.substr(i, full_len));
+                i = close_pos + 2;
+                continue;
+            }
+        }
+
+        result.push_back(content[i++]);
+    }
+    return result;
+}
+
 } // namespace
+
+std::string update_markdown_wikilinks(
+    std::string_view content,
+    const std::string& ref_doc_path,
+    const std::string& old_doc_path,
+    const std::string& new_doc_path
+) {
+    std::string norm_old = old_doc_path;
+    while (!norm_old.empty() && (norm_old.front() == '/' || norm_old.front() == '\\')) norm_old.erase(0, 1);
+    std::string norm_new = new_doc_path;
+    while (!norm_new.empty() && (norm_new.front() == '/' || norm_new.front() == '\\')) norm_new.erase(0, 1);
+
+    if (norm_old.empty() || norm_new.empty() || norm_old == norm_new) {
+        return std::string(content);
+    }
+
+    std::filesystem::path old_p(norm_old);
+    std::filesystem::path new_p(norm_new);
+
+    std::string old_filename = old_p.filename().string();
+    std::string new_filename = new_p.filename().string();
+
+    std::string old_stem = old_p.stem().string();
+    std::string new_stem = new_p.stem().string();
+
+    if (norm_old.ends_with(".bundle")) {
+        old_stem = old_filename.substr(0, old_filename.length() - 7);
+    }
+    if (norm_new.ends_with(".bundle")) {
+        new_stem = new_filename.substr(0, new_filename.length() - 7);
+    }
+
+    std::string old_dir = old_p.parent_path().string();
+    if (old_dir == ".") old_dir = "";
+    std::string new_dir = new_p.parent_path().string();
+    if (new_dir == ".") new_dir = "";
+
+    std::string old_path_no_ext = old_dir.empty() ? old_stem : (old_dir + "/" + old_stem);
+    std::string new_path_no_ext = new_dir.empty() ? new_stem : (new_dir + "/" + new_stem);
+
+    auto iequals = [](std::string_view a, std::string_view b) -> bool {
+        if (a.size() != b.size()) return false;
+        for (size_t idx = 0; idx < a.size(); ++idx) {
+            if (std::tolower(static_cast<unsigned char>(a[idx])) !=
+                std::tolower(static_cast<unsigned char>(b[idx]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto url_decode = [](std::string_view str) -> std::string {
+        std::string dec;
+        dec.reserve(str.size());
+        for (size_t idx = 0; idx < str.size(); ++idx) {
+            if (str[idx] == '%' && idx + 2 < str.size()) {
+                auto hex_val = [](int c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    return -1;
+                };
+                int v1 = hex_val(str[idx + 1]);
+                int v2 = hex_val(str[idx + 2]);
+                if (v1 >= 0 && v2 >= 0) {
+                    dec.push_back(static_cast<char>((v1 << 4) | v2));
+                    idx += 2;
+                    continue;
+                }
+            }
+            dec.push_back(str[idx]);
+        }
+        return dec;
+    };
+
+    auto match_and_replace = [&](const std::string& raw_doc) -> std::optional<std::string> {
+        std::string doc = raw_doc;
+        bool has_dot_slash = false;
+        if (doc.starts_with("./")) {
+            has_dot_slash = true;
+            doc = doc.substr(2);
+        }
+
+        std::string decoded = url_decode(doc);
+        bool is_encoded = (decoded != doc);
+
+        std::string replacement;
+        bool matched = false;
+
+        // 1. Full path match (e.g. "guides/intro.md")
+        if (iequals(doc, norm_old) || iequals(decoded, norm_old)) {
+            replacement = norm_new;
+            matched = true;
+        }
+        // 2. Path without extension match (e.g. "guides/intro")
+        else if (iequals(doc, old_path_no_ext) || iequals(decoded, old_path_no_ext)) {
+            replacement = new_path_no_ext;
+            matched = true;
+        }
+        // 3. Filename match (e.g. "intro.md")
+        else if (iequals(doc, old_filename) || iequals(decoded, old_filename)) {
+            if (old_dir == new_dir) {
+                replacement = new_filename;
+            } else {
+                replacement = norm_new;
+            }
+            matched = true;
+        }
+        // 4. Stem match (e.g. "intro")
+        else if (iequals(doc, old_stem) || iequals(decoded, old_stem)) {
+            replacement = new_stem;
+            matched = true;
+        }
+        // 5. Relative path from ref_doc's directory
+        else if (!ref_doc_path.empty()) {
+            std::filesystem::path ref_p(ref_doc_path);
+            std::string ref_dir = ref_p.parent_path().string();
+            if (ref_dir == ".") ref_dir = "";
+
+            if (!ref_dir.empty()) {
+                std::error_code ec;
+                std::filesystem::path cand_p = std::filesystem::path(ref_dir) / doc;
+                std::string cand_norm = std::filesystem::weakly_canonical(cand_p, ec).lexically_normal().string();
+                while (!cand_norm.empty() && cand_norm.front() == '/') cand_norm.erase(0, 1);
+
+                if (!ec && (iequals(cand_norm, norm_old) || iequals(cand_norm, old_path_no_ext))) {
+                    bool keep_no_ext = iequals(cand_norm, old_path_no_ext);
+                    std::filesystem::path target_p = keep_no_ext ? std::filesystem::path(new_path_no_ext) : std::filesystem::path(norm_new);
+                    std::filesystem::path rel_new = std::filesystem::relative(target_p, ref_dir, ec);
+                    if (!ec && !rel_new.empty()) {
+                        replacement = rel_new.string();
+                        matched = true;
+                    }
+                }
+            }
+        }
+
+        if (!matched) {
+            return std::nullopt;
+        }
+
+        if (is_encoded && replacement.find(' ') != std::string::npos) {
+            std::string enc;
+            for (char c : replacement) {
+                if (c == ' ') enc += "%20";
+                else enc += c;
+            }
+            replacement = enc;
+        }
+
+        if (has_dot_slash) {
+            replacement = "./" + replacement;
+        }
+
+        return replacement;
+    };
+
+    return transform_markdown_wikilinks(content, match_and_replace);
+}
+
+std::string update_markdown_wikilinks_for_directory(
+    std::string_view content,
+    const std::string& old_dir_path,
+    const std::string& new_dir_path
+) {
+    std::string norm_old = old_dir_path;
+    while (!norm_old.empty() && (norm_old.front() == '/' || norm_old.front() == '\\')) norm_old.erase(0, 1);
+    while (!norm_old.empty() && (norm_old.back() == '/' || norm_old.back() == '\\')) norm_old.pop_back();
+
+    std::string norm_new = new_dir_path;
+    while (!norm_new.empty() && (norm_new.front() == '/' || norm_new.front() == '\\')) norm_new.erase(0, 1);
+    while (!norm_new.empty() && (norm_new.back() == '/' || norm_new.back() == '\\')) norm_new.pop_back();
+
+    if (norm_old.empty() || norm_new.empty() || norm_old == norm_new) {
+        return std::string(content);
+    }
+
+    std::string old_prefix = norm_old + "/";
+    std::string new_prefix = norm_new + "/";
+
+    auto iequals = [](std::string_view a, std::string_view b) -> bool {
+        if (a.size() != b.size()) return false;
+        for (size_t idx = 0; idx < a.size(); ++idx) {
+            if (std::tolower(static_cast<unsigned char>(a[idx])) !=
+                std::tolower(static_cast<unsigned char>(b[idx]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto istarts_with = [&](std::string_view str, std::string_view prefix) -> bool {
+        if (str.size() < prefix.size()) return false;
+        return iequals(str.substr(0, prefix.size()), prefix);
+    };
+
+    auto match_and_replace = [&](const std::string& raw_doc) -> std::optional<std::string> {
+        std::string doc = raw_doc;
+        bool has_dot_slash = false;
+        if (doc.starts_with("./")) {
+            has_dot_slash = true;
+            doc = doc.substr(2);
+        }
+
+        if (istarts_with(doc, old_prefix)) {
+            std::string replaced = new_prefix + doc.substr(old_prefix.size());
+            if (has_dot_slash) replaced = "./" + replaced;
+            return replaced;
+        }
+
+        return std::nullopt;
+    };
+
+    return transform_markdown_wikilinks(content, match_and_replace);
+}
 
 DocumentService::DocumentService(
     std::shared_ptr<db::ConnectionPool> db_pool,
@@ -541,6 +879,9 @@ Result<std::string> DocumentService::rename_directory(
         );
 
         tx.commit();
+
+        // Automatically update wikilinks referencing old directory prefix across the workspace
+        update_referencing_wikilinks_for_dir(norm_old, norm_new, user);
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] rename_directory DB update failed: " << e.what() << "\n";
         // Attempt rollback storage move
@@ -1266,6 +1607,13 @@ Result<DocumentRecord> DocumentService::move_document(
 
         bool is_bundle = storage_->is_bundle(norm_new_path).value_or(false);
 
+        // Automatically update wikilinks referencing old_fs_path across the workspace
+        std::vector<std::string> updated_referencing_docs;
+        auto ref_res = update_referencing_wikilinks(old_fs_path, norm_new_path, user);
+        if (ref_res.has_value()) {
+            updated_referencing_docs = std::move(ref_res.value());
+        }
+
         return DocumentRecord{
             .id = doc_id,
             .path = norm_new_path,
@@ -1275,12 +1623,145 @@ Result<DocumentRecord> DocumentService::move_document(
             .owner_user_id = owner_id,
             .number_headers = num_h,
             .created_at = created_at,
-            .updated_at = updated_at
+            .updated_at = updated_at,
+            .updated_referencing_docs = std::move(updated_referencing_docs)
         };
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] move_document failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
+}
+
+Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks(
+    const std::string& old_fs_path,
+    const std::string& new_fs_path,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    std::vector<std::string> updated_doc_ids;
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        auto rows = tx.exec(
+            "SELECT id::text, fs_path FROM documents WHERE deleted_at IS NULL;"
+        );
+
+        for (const auto& r : rows) {
+            std::string doc_id = r[0].as<std::string>();
+            std::string fs_path = r[1].as<std::string>();
+
+            auto access = check_access(user, doc_id, fs_path);
+            if (!access.has_value() || access.value() < db::AccessLevel::Edit) {
+                continue;
+            }
+
+            bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+            std::string content_file = is_bundle ? (fs_path + "/index.md") : fs_path;
+
+            auto content_res = storage_->read_file(content_file);
+            if (!content_res.has_value()) {
+                continue;
+            }
+
+            const std::string& orig_content = content_res.value();
+            if (orig_content.find("[[") == std::string::npos) {
+                continue;
+            }
+
+            std::string updated_content = update_markdown_wikilinks(
+                orig_content, fs_path, old_fs_path, new_fs_path
+            );
+
+            if (updated_content != orig_content) {
+                auto write_res = storage_->write_file(content_file, updated_content, true);
+                if (write_res.has_value()) {
+                    updated_doc_ids.push_back(doc_id);
+                }
+            }
+        }
+
+        tx.commit();
+    } catch (const std::exception& e) {
+        std::cerr << "[WARN] update_referencing_wikilinks error: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    return updated_doc_ids;
+}
+
+Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks_for_dir(
+    const std::string& old_dir,
+    const std::string& new_dir,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    std::vector<std::string> updated_doc_ids;
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        auto rows = tx.exec(
+            "SELECT id::text, fs_path FROM documents WHERE deleted_at IS NULL;"
+        );
+
+        for (const auto& r : rows) {
+            std::string doc_id = r[0].as<std::string>();
+            std::string fs_path = r[1].as<std::string>();
+
+            auto access = check_access(user, doc_id, fs_path);
+            if (!access.has_value() || access.value() < db::AccessLevel::Edit) {
+                continue;
+            }
+
+            bool is_bundle = storage_->is_bundle(fs_path).value_or(false);
+            std::string content_file = is_bundle ? (fs_path + "/index.md") : fs_path;
+
+            auto content_res = storage_->read_file(content_file);
+            if (!content_res.has_value()) {
+                continue;
+            }
+
+            const std::string& orig_content = content_res.value();
+            if (orig_content.find("[[") == std::string::npos) {
+                continue;
+            }
+
+            std::string updated_content = update_markdown_wikilinks_for_directory(
+                orig_content, old_dir, new_dir
+            );
+
+            if (updated_content != orig_content) {
+                auto write_res = storage_->write_file(content_file, updated_content, true);
+                if (write_res.has_value()) {
+                    updated_doc_ids.push_back(doc_id);
+                }
+            }
+        }
+
+        tx.commit();
+    } catch (const std::exception& e) {
+        std::cerr << "[WARN] update_referencing_wikilinks_for_dir error: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    return updated_doc_ids;
 }
 
 Result<DocumentRecord> DocumentService::convert_document(

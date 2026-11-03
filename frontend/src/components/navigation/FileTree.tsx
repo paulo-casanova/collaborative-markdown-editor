@@ -359,7 +359,8 @@ export const FileTree: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
       queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
-      queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
+      queryClient.invalidateQueries({ queryKey: ['document'] });
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
       queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
       updateTabMetadata(updatedDoc.id, {
         path: updatedDoc.path,
@@ -380,7 +381,8 @@ export const FileTree: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
       queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
-      queryClient.invalidateQueries({ queryKey: ['document', updatedDoc.id] });
+      queryClient.invalidateQueries({ queryKey: ['document'] });
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
       queryClient.setQueryData(['document', updatedDoc.id], updatedDoc);
       updateTabMetadata(updatedDoc.id, {
         path: updatedDoc.path,
@@ -449,6 +451,8 @@ export const FileTree: React.FC = () => {
       queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       queryClient.invalidateQueries({ queryKey: ['directory-details'] });
+      queryClient.invalidateQueries({ queryKey: ['document'] });
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
 
       const oldPath = res.old_path;
       const newPath = res.new_path;

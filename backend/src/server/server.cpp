@@ -2261,6 +2261,27 @@ Result<void> Server::start() {
                 if (active_room) {
                     active_room->set_fs_path(doc_res.value().path);
                 }
+                for (const auto& ref_id : doc_res.value().updated_referencing_docs) {
+                    auto ref_room = room_manager_->get_room(ref_id);
+                    if (ref_room) {
+                        auto ref_doc = document_service_->get_document_by_id(ref_id, *auth_res.value());
+                        if (ref_doc.has_value()) {
+                            ref_room->set_content(ref_doc.value().content);
+                            auto diff = ref_room->compute_sync_step2({});
+                            if (!diff.empty()) {
+                                std::string sync_msg;
+                                sync_msg.reserve(2 + diff.size());
+                                sync_msg.push_back('\x00');
+                                sync_msg.push_back('\x02');
+                                sync_msg.append(reinterpret_cast<const char*>(diff.data()), diff.size());
+                                broadcast_to_room(ref_id, sync_msg, true);
+                                if (storage_) {
+                                    storage_->save_crdt_state(ref_id, diff);
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             send_json(res, "200 OK", doc_res.value().to_json(false));
