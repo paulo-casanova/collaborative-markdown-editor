@@ -21,6 +21,12 @@ export const UserProfilePill: React.FC = () => {
     retry: false,
   });
 
+  const { data: health } = useQuery({
+    queryKey: ['system-health'],
+    queryFn: fetchHealthStatus,
+    staleTime: 30000,
+  });
+
   const logoutMutation = useMutation({
     mutationFn: logoutUser,
     onSuccess: () => {
@@ -50,12 +56,6 @@ export const UserProfilePill: React.FC = () => {
       <div className="h-8 w-24 bg-cme-bg-subtle animate-pulse rounded-full border border-cme-border-base" />
     );
   }
-
-  const { data: health } = useQuery({
-    queryKey: ['system-health'],
-    queryFn: fetchHealthStatus,
-    staleTime: 30000,
-  });
 
   const isDelegated = (user?.authn_provider || health?.authn_provider || getStoredAuthnProvider()) === 'delegated';
 
