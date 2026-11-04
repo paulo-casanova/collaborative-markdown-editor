@@ -24,7 +24,7 @@ interface TabContextMenuState {
 
 export const TabBar: React.FC = () => {
   const navigate = useNavigate();
-  const { viewMode, setGoToPermalinkModalOpen } = useUIStore();
+  const { viewMode } = useUIStore();
   const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
   const {
     tabs,
@@ -203,15 +203,6 @@ export const TabBar: React.FC = () => {
 
       {/* Right Controls: Split Layout Toggles */}
       <div className="flex items-center gap-1 border-l border-cme-border-base pl-2 flex-shrink-0">
-        <button
-          onClick={() => setGoToPermalinkModalOpen(true)}
-          className="p-1.5 rounded-lg border border-transparent text-cme-text-muted hover:text-indigo-500 hover:bg-cme-bg-hover transition-colors"
-          title="Go to Permalink (Alt+P or Cmd+Shift+P)"
-          data-testid="tabbar-goto-permalink-btn"
-        >
-          <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-        </button>
-
         <button
           onClick={() => setSplitMode(splitMode === 'vertical' ? 'none' : 'vertical')}
           className={`p-1.5 rounded-lg border transition-colors ${

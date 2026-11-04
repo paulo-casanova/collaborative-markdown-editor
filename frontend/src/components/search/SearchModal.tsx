@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Search, FileText, CornerDownLeft, X, Loader2, Link2 } from 'lucide-react';
+import { Search, FileText, CornerDownLeft, X, Loader2 } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { searchDocuments } from '../../api/documents';
@@ -14,7 +14,6 @@ export const SearchModal: React.FC = () => {
     setSearchModalOpen,
     searchTitleOnly,
     setSearchTitleOnly,
-    setGoToPermalinkModalOpen,
     viewMode,
   } = useUIStore();
   const { openTab } = useWorkspaceStore();
@@ -277,18 +276,6 @@ export const SearchModal: React.FC = () => {
         {/* Footer info */}
         <div className="px-4 py-2 border-t border-cme-border-base bg-cme-bg-subtle text-[11px] text-cme-text-muted flex items-center justify-between">
           <span>{results.length} results</span>
-          <button
-            type="button"
-            onClick={() => {
-              setSearchModalOpen(false);
-              setGoToPermalinkModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 hover:text-cme-primary text-cme-text-muted transition-colors cursor-pointer"
-            title="Open document directly by permalink or UUID"
-          >
-            <Link2 className="w-3.5 h-3.5 text-indigo-500" />
-            <span>Go to Permalink</span>
-          </button>
           <span className="font-mono">{searchTitleOnly ? 'CME Title Search' : 'CME Full-Text Index'}</span>
         </div>
       </div>

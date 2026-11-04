@@ -144,7 +144,7 @@ export const FileTree: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { viewMode, setGoToPermalinkModalOpen } = useUIStore();
+  const { viewMode } = useUIStore();
   const { openTab, updateTabMetadata, closeTab } = useWorkspaceStore();
 
   const isReadMode = viewMode === 'read' || location.pathname.startsWith('/docs/');
@@ -987,14 +987,6 @@ export const FileTree: React.FC = () => {
             data-testid="filetree-root-permissions-btn"
           >
             <Shield className="w-3.5 h-3.5 text-blue-500" />
-          </button>
-          <button
-            onClick={() => setGoToPermalinkModalOpen(true)}
-            className="p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-indigo-500 transition-colors"
-            title="Go to Permalink (Alt+P or Cmd+Shift+P)"
-            data-testid="filetree-goto-permalink-btn"
-          >
-            <Link2 className="w-3.5 h-3.5 text-indigo-500" />
           </button>
           <button
             onClick={() => refetch()}
