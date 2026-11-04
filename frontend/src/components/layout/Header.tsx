@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   PanelLeft,
   CheckCircle,
@@ -8,8 +9,10 @@ import {
   Radio,
   ChevronRight,
   Search,
+  AtSign,
 } from 'lucide-react';
 import { useUIStore, SyncStatus } from '../../stores/uiStore';
+import { fetchUnreadMentionsCount } from '../../api/mentions';
 import { HealthPopover } from './HealthPopover';
 import { ThemeToggle } from '../common/ThemeToggle';
 import { UserProfilePill } from '../auth/UserProfilePill';
@@ -17,6 +20,13 @@ import { UserProfilePill } from '../auth/UserProfilePill';
 export const Header: React.FC = () => {
   const location = useLocation();
   const { sidebarOpen, toggleSidebar, breadcrumbs, syncStatus, setSearchModalOpen } = useUIStore();
+
+  const { data: unreadMentionsData } = useQuery({
+    queryKey: ['mentions-count'],
+    queryFn: fetchUnreadMentionsCount,
+    staleTime: 5000,
+  });
+  const unreadMentionsCount = unreadMentionsData?.unread_count || 0;
 
   const isEditorMode = location.pathname.startsWith('/documents/');
   const isReaderMode = location.pathname.startsWith('/docs/');
@@ -148,6 +158,24 @@ export const Header: React.FC = () => {
             ⌘K
           </kbd>
         </button>
+
+        {/* Mentions Inbox Shortcut */}
+        <Link
+          to="/mentions"
+          className="relative flex items-center justify-center p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-subtle hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+          title="Mentions & Notifications"
+          data-testid="header-mentions-btn"
+        >
+          <AtSign className="w-4 h-4" />
+          {unreadMentionsCount > 0 && (
+            <span
+              className="absolute -top-1 -right-1 flex h-4 min-w-[16px] px-1 items-center justify-center rounded-full bg-cme-primary text-[10px] font-bold text-white shadow-xs"
+              data-testid="header-mentions-badge"
+            >
+              {unreadMentionsCount > 99 ? '99+' : unreadMentionsCount}
+            </span>
+          )}
+        </Link>
 
         {/* Sync Status Badge */}
         {(isEditorMode || isReaderMode) && (

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CheckSquare,
@@ -13,30 +13,64 @@ import {
   Trash2,
   Inbox,
   Pencil,
+  AtSign,
 } from 'lucide-react';
 import { fetchAllTasks, updateTask, deleteTask } from '../api/reviews';
 import { fetchCurrentUser } from '../api/auth';
+import { fetchUnreadMentionsCount } from '../api/mentions';
 import { TaskRecord } from '../review/types';
 import { useUIStore } from '../stores/uiStore';
 import { EditTaskModal } from '../components/review/EditTaskModal';
+import { MentionsView } from '../components/mentions/MentionsView';
 
-export const TaskDashboardPage: React.FC = () => {
+export interface TaskDashboardPageProps {
+  initialTab?: 'tasks' | 'mentions';
+}
+
+export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab }) => {
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { viewMode, setBreadcrumbs } = useUIStore();
   const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
+
+  const defaultTab = initialTab || (location.pathname === '/mentions' ? 'mentions' : 'tasks');
+  const [dashboardTab, setDashboardTab] = useState<'tasks' | 'mentions'>(defaultTab);
+
+  useEffect(() => {
+    if (location.pathname === '/mentions') {
+      setDashboardTab('mentions');
+    } else if (location.pathname === '/tasks' || location.pathname === '/') {
+      if (!initialTab) {
+        setDashboardTab('tasks');
+      }
+    }
+  }, [location.pathname, initialTab]);
+
   const [filterTab, setFilterTab] = useState<'all' | 'assigned' | 'open' | 'completed'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [editingTask, setEditingTask] = useState<TaskRecord | null>(null);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: 'Task Dashboard', path: '/', isCurrent: true }]);
-  }, [setBreadcrumbs]);
+    if (dashboardTab === 'mentions') {
+      setBreadcrumbs([{ label: 'Mentions Inbox', path: '/mentions', isCurrent: true }]);
+    } else {
+      setBreadcrumbs([{ label: 'Task Dashboard', path: '/tasks', isCurrent: true }]);
+    }
+  }, [setBreadcrumbs, dashboardTab]);
 
   // Fetch current user info
   const { data: currentUser } = useQuery({
     queryKey: ['auth-me'],
     queryFn: fetchCurrentUser,
   });
+
+  // Fetch unread mentions count for header tab badge
+  const { data: unreadMentionsData } = useQuery({
+    queryKey: ['mentions-count'],
+    queryFn: fetchUnreadMentionsCount,
+    staleTime: 5000,
+  });
+  const unreadMentionsCount = unreadMentionsData?.unread_count || 0;
 
   // Fetch all tasks
   const { data: tasks = [], isLoading } = useQuery({
@@ -185,19 +219,84 @@ export const TaskDashboardPage: React.FC = () => {
         <div>
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-cme-primary/10 text-cme-primary">
-              <CheckSquare className="w-6 h-6" />
+              {dashboardTab === 'tasks' ? (
+                <CheckSquare className="w-6 h-6" />
+              ) : (
+                <AtSign className="w-6 h-6" />
+              )}
             </div>
             <div>
-              <h1 className="text-xl font-bold text-cme-text-base">Task Dashboard</h1>
+              <h1 className="text-xl font-bold text-cme-text-base">
+                {dashboardTab === 'tasks' ? 'Task Dashboard' : 'Mentions Inbox'}
+              </h1>
               <p className="text-xs text-cme-text-muted mt-0.5">
-                Centralized action items and review tasks across your workspaces
+                {dashboardTab === 'tasks'
+                  ? 'Centralized action items and review tasks across your workspaces'
+                  : 'Notifications and mentions addressed to you across documents'}
               </p>
             </div>
           </div>
         </div>
+
+        {/* Top-level Section Switcher: Tasks vs Mentions */}
+        <div className="flex items-center gap-1.5 bg-cme-bg-surface p-1 rounded-xl border border-cme-border-base shadow-xs text-xs">
+          <button
+            type="button"
+            data-testid="dashboard-tab-tasks"
+            onClick={() => setDashboardTab('tasks')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+              dashboardTab === 'tasks'
+                ? 'bg-cme-primary text-white shadow-xs'
+                : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+            }`}
+          >
+            <CheckSquare className="w-4 h-4" />
+            <span>Tasks</span>
+            {metrics.open > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  dashboardTab === 'tasks'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                }`}
+              >
+                {metrics.open}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            data-testid="dashboard-tab-mentions"
+            onClick={() => setDashboardTab('mentions')}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+              dashboardTab === 'mentions'
+                ? 'bg-cme-primary text-white shadow-xs'
+                : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+            }`}
+          >
+            <AtSign className="w-4 h-4" />
+            <span>Mentions</span>
+            {unreadMentionsCount > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  dashboardTab === 'mentions'
+                    ? 'bg-white text-cme-primary'
+                    : 'bg-cme-primary text-white'
+                }`}
+              >
+                {unreadMentionsCount}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Metrics Cards */}
+      {dashboardTab === 'mentions' ? (
+        <MentionsView />
+      ) : (
+        <>
+          {/* Metrics Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3.5">
         <div className="p-4 rounded-xl bg-cme-bg-surface border border-cme-border-base shadow-xs">
           <div className="flex items-center justify-between">
@@ -449,6 +548,8 @@ export const TaskDashboardPage: React.FC = () => {
           ))
         )}
       </div>
+        </>
+      )}
 
       {editingTask && (
         <EditTaskModal

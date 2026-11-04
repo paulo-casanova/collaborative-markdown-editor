@@ -21,6 +21,7 @@ import {
   forceReviewRebuild,
 } from './codemirror/inlineReviewPlugin';
 import { cmeEditorTheme } from './codemirror/theme';
+import { createMentionAutocompleteExtension } from './codemirror/mentionAutocomplete';
 import { CodeMirrorEditorAdapter } from './codemirror/editorAdapter';
 import { EditorToolbar } from './EditorToolbar';
 import { CmeCollabProvider } from '../../api/collabProvider';
@@ -382,6 +383,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     const extensions: Extension[] = [
       lineNumbersCompartmentRef.current.of(showLineNumbers ? lineNumbers() : []),
       markdown(),
+      createMentionAutocompleteExtension(),
       createLivePreviewPlugin(isDark, documentPath),
       createInlineReviewPlugin(provider, isDark, canComment),
       cmeEditorTheme,

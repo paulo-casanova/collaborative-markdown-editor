@@ -3369,6 +3369,31 @@ function renderInlineFormatted(
       }
     }
 
+    // Mention rendering: @username
+    if (/(?:^|\s)@[a-zA-Z0-9_\-\.]+/.test(part)) {
+      const mentionParts = part.split(/(?<=\s|^)(@[a-zA-Z0-9_\-\.]+)/g);
+      if (mentionParts.length > 1) {
+        return (
+          <React.Fragment key={idx}>
+            {mentionParts.map((mp, midx) => {
+              if (mp.startsWith('@')) {
+                return (
+                  <span
+                    key={midx}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded-md font-medium text-xs bg-cme-primary/10 text-cme-primary border border-cme-primary/20 align-baseline"
+                    title={`Mention: ${mp}`}
+                  >
+                    {mp}
+                  </span>
+                );
+              }
+              return mp;
+            })}
+          </React.Fragment>
+        );
+      }
+    }
+
     return part;
   });
 }

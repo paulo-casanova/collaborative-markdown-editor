@@ -6,9 +6,11 @@ import {
   Settings,
   Shield,
   CheckSquare,
+  AtSign,
 } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 import { fetchCurrentUser } from '../../api/auth';
+import { fetchUnreadMentionsCount } from '../../api/mentions';
 import { FileTree } from '../navigation/FileTree';
 import { RecentDocuments } from '../navigation/RecentDocuments';
 
@@ -48,6 +50,13 @@ export const Sidebar: React.FC = () => {
     retry: false,
   });
 
+  const { data: unreadMentionsData } = useQuery({
+    queryKey: ['mentions-count'],
+    queryFn: fetchUnreadMentionsCount,
+    staleTime: 5000,
+  });
+  const unreadMentionsCount = unreadMentionsData?.unread_count || 0;
+
   if (!sidebarOpen) return null;
 
   const isActive = (path: string) => location.pathname === path;
@@ -80,6 +89,29 @@ export const Sidebar: React.FC = () => {
         >
           <CheckSquare className="w-4 h-4" />
           <span>Task Dashboard</span>
+        </Link>
+
+        <Link
+          to="/mentions"
+          className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+            isActive('/mentions')
+              ? 'bg-cme-primary/10 text-cme-primary font-medium'
+              : 'text-cme-text-base hover:bg-cme-bg-hover'
+          }`}
+          data-testid="sidebar-mentions-link"
+        >
+          <div className="flex items-center gap-2">
+            <AtSign className="w-4 h-4" />
+            <span>Mentions</span>
+          </div>
+          {unreadMentionsCount > 0 && (
+            <span
+              className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-cme-primary text-white"
+              data-testid="sidebar-mentions-badge"
+            >
+              {unreadMentionsCount}
+            </span>
+          )}
         </Link>
 
         <Link

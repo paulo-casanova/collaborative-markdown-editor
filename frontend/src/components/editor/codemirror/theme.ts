@@ -181,4 +181,42 @@ export const cmeEditorTheme = EditorView.theme({
     minWidth: '2.5rem',
     textAlign: 'right',
   },
+
+  // Autocomplete Tooltip
+  '.cm-tooltip-autocomplete': {
+    backgroundColor: 'var(--cme-bg-surface, #ffffff)',
+    border: '1px solid var(--cme-border-base, rgba(0, 0, 0, 0.1))',
+    borderRadius: '0.625rem',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+    overflow: 'hidden',
+    minWidth: '180px',
+    maxWidth: '320px',
+    zIndex: '50',
+  },
+  '.cm-tooltip-autocomplete > ul': {
+    fontFamily: 'inherit',
+    fontSize: '0.8125rem',
+    maxHeight: '240px',
+    padding: '0.25rem',
+  },
+  '.cm-tooltip-autocomplete > ul > li': {
+    padding: '0.375rem 0.625rem',
+    borderRadius: '0.375rem',
+    margin: '0.125rem 0',
+    color: 'var(--cme-text-base, #111827)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    cursor: 'pointer',
+  },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+    backgroundColor: 'var(--cme-primary, #3b82f6) !important',
+    color: '#ffffff !important',
+  },
+  '.cm-tooltip-autocomplete .cm-completionDetail': {
+    fontSize: '0.75rem',
+    opacity: '0.75',
+    marginLeft: 'auto',
+    fontStyle: 'normal',
+  },
 });
