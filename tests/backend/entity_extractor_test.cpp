@@ -89,6 +89,21 @@ int main() {
         assert(tags[2].tag == "v1-release");
         assert(tags[3].tag == "important");
 
+        // Frontmatter Tags (Obsidian YAML metadata)
+        std::string fm_markdown =
+            "---\n"
+            "title: Architecture Spec\n"
+            "tags: [obsidian/yaml, architecture]\n"
+            "---\n"
+            "# Content\n"
+            "Here is #inline_tag.\n";
+
+        auto fm_tags = cme::document::EntityExtractor::extract_tags(fm_markdown);
+        assert(fm_tags.size() == 3);
+        assert(fm_tags[0].tag == "obsidian/yaml");
+        assert(fm_tags[1].tag == "architecture");
+        assert(fm_tags[2].tag == "inline_tag");
+
         std::cout << "     [PASS] Tags extraction and exclusions verified.\n";
     }
 

@@ -4511,6 +4511,49 @@ Result<void> Server::start() {
     });
 
     // =========================================================================
+    // Document Tags REST Endpoints
+    // =========================================================================
+
+    // GET /api/v1/tags
+    app.get("/api/v1/tags", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        std::string q = url_decode(req->getQuery("q"));
+        auto tags_res = document_service_->list_tags(*user, q);
+        if (!tags_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list tags"}});
+            return;
+        }
+
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& t : tags_res.value()) {
+            out.push_back(t.to_json());
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    // GET /api/v1/tags/documents
+    app.get("/api/v1/tags/documents", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        std::string tag = url_decode(req->getQuery("tag"));
+        if (tag.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Missing required query parameter 'tag'"}});
+            return;
+        }
+
+        auto docs_res = document_service_->get_tag_documents(*user, tag);
+        if (!docs_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to fetch documents for tag"}});
+            return;
+        }
+
+        send_json(res, "200 OK", docs_res.value().to_json());
+    });
+
+    // =========================================================================
     // Dialog & Local Agent Management REST Endpoints
     // =========================================================================
 

@@ -702,6 +702,7 @@ Result<DocumentRecord> DocumentService::create_document(
         }
 
         reconcile_document_mentions(tx, doc.id, user.user_id, req.content);
+        reconcile_document_tags(tx, doc.id, req.content);
 
         tx.commit();
         return doc;
@@ -1503,6 +1504,7 @@ Result<DocumentRecord> DocumentService::update_document(
 
         if (content.has_value()) {
             reconcile_document_mentions(tx, doc_id, user.user_id, final_content);
+            reconcile_document_tags(tx, doc_id, final_content);
         }
 
         tx.commit();
@@ -4344,6 +4346,200 @@ Result<nlohmann::json> DocumentService::get_mention_candidates(
         return candidates;
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] [MENTIONS] get_mention_candidates failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<void> DocumentService::reconcile_document_tags(
+    pqxx::transaction_base& tx,
+    const std::string& document_id,
+    std::string_view content
+) {
+    if (document_id.empty() || !is_valid_uuid(document_id)) {
+        return {};
+    }
+
+    try {
+        auto tags = EntityExtractor::extract_tags(content);
+
+        // Clear existing tags for this document
+        tx.exec_params(
+            "DELETE FROM document_tags WHERE document_id = $1::uuid;",
+            document_id
+        );
+
+        if (tags.empty()) {
+            return {};
+        }
+
+        // Deduplicate tags on (tag, heading_anchor, line_number)
+        std::unordered_set<std::string> seen;
+        for (const auto& t : tags) {
+            std::string key = t.tag + ":" + t.heading_anchor + ":" + std::to_string(t.line_number);
+            if (!seen.insert(key).second) {
+                continue;
+            }
+
+            tx.exec_params(
+                "INSERT INTO document_tags (document_id, tag, heading_anchor, line_number) "
+                "VALUES ($1::uuid, $2, $3, $4) "
+                "ON CONFLICT (document_id, tag, heading_anchor, line_number) DO NOTHING;",
+                document_id, t.tag, t.heading_anchor, static_cast<int>(t.line_number)
+            );
+        }
+
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [TAGS] reconcile_document_tags failed for doc "
+                  << document_id << ": " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<std::vector<TagSummary>> DocumentService::list_tags(
+    const auth::UserIdentity& user,
+    const std::string& query
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+
+        std::string pattern = query.empty() ? "%" : ("%" + query + "%");
+        auto rows = tx.exec_params(
+            "SELECT dt.tag, dt.document_id::text, COALESCE(d.fs_path, ''), COUNT(dt.id) "
+            "FROM document_tags dt "
+            "JOIN documents d ON dt.document_id = d.id "
+            "WHERE d.fs_path NOT LIKE '.trash/%' AND LOWER(dt.tag) LIKE LOWER($1) "
+            "GROUP BY dt.tag, dt.document_id, d.fs_path "
+            "ORDER BY dt.tag ASC;",
+            pattern
+        );
+
+        struct TagAccumulator {
+            std::string tag;
+            std::unordered_set<std::string> document_ids;
+            int total_occurrences{0};
+        };
+        std::map<std::string, TagAccumulator> tag_map;
+
+        for (const auto& r : rows) {
+            std::string tag = r[0].as<std::string>();
+            std::string doc_id = r[1].as<std::string>();
+            std::string fs_path = r[2].as<std::string>();
+            int occ_count = r[3].as<int>();
+
+            // Verify user read permission on the document
+            auto access = check_access(user, doc_id, fs_path);
+            if (!access.has_value() || access.value() < db::AccessLevel::Read) {
+                continue;
+            }
+
+            auto& acc = tag_map[tag];
+            acc.tag = tag;
+            acc.document_ids.insert(doc_id);
+            acc.total_occurrences += occ_count;
+        }
+
+        std::vector<TagSummary> result;
+        result.reserve(tag_map.size());
+        for (auto& [_, acc] : tag_map) {
+            TagSummary sum;
+            sum.tag = std::move(acc.tag);
+            sum.document_count = static_cast<int>(acc.document_ids.size());
+            sum.occurrence_count = acc.total_occurrences;
+            result.push_back(std::move(sum));
+        }
+
+        // Sort by document_count DESC, then tag ASC
+        std::sort(result.begin(), result.end(), [](const TagSummary& a, const TagSummary& b) {
+            if (a.document_count != b.document_count) {
+                return a.document_count > b.document_count;
+            }
+            return a.tag < b.tag;
+        });
+
+        return result;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [TAGS] list_tags failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<TagDocumentsResult> DocumentService::get_tag_documents(
+    const auth::UserIdentity& user,
+    const std::string& raw_tag
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    std::string tag = raw_tag;
+    if (tag.starts_with('#')) tag.erase(0, 1);
+    for (auto& c : tag) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+
+        auto rows = tx.exec_params(
+            "SELECT dt.document_id::text, COALESCE(d.title, ''), COALESCE(d.fs_path, ''), "
+            "       TO_CHAR(d.updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "       COALESCE(dt.heading_anchor, ''), dt.line_number "
+            "FROM document_tags dt "
+            "JOIN documents d ON dt.document_id = d.id "
+            "WHERE LOWER(dt.tag) = LOWER($1) AND d.fs_path NOT LIKE '.trash/%' "
+            "ORDER BY d.updated_at DESC, dt.line_number ASC;",
+            tag
+        );
+
+        TagDocumentsResult result;
+        result.tag = tag;
+
+        std::map<std::string, DocumentTagMatch> doc_map;
+        std::vector<std::string> doc_order;
+
+        for (const auto& r : rows) {
+            std::string doc_id = r[0].as<std::string>();
+            std::string title = r[1].as<std::string>();
+            std::string fs_path = r[2].as<std::string>();
+            std::string updated_at = r[3].as<std::string>();
+            std::string heading_anchor = r[4].as<std::string>();
+            int line_number = r[5].as<int>();
+
+            // Check read permission
+            auto access = check_access(user, doc_id, fs_path);
+            if (!access.has_value() || access.value() < db::AccessLevel::Read) {
+                continue;
+            }
+
+            auto it = doc_map.find(doc_id);
+            if (it == doc_map.end()) {
+                doc_order.push_back(doc_id);
+                DocumentTagMatch match;
+                match.document_id = doc_id;
+                match.document_title = title.empty() ? fs_path : title;
+                match.document_path = fs_path;
+                match.updated_at = updated_at;
+                match.occurrence_count = 1;
+                match.occurrences.push_back({heading_anchor, line_number});
+                doc_map.emplace(doc_id, std::move(match));
+            } else {
+                it->second.occurrence_count++;
+                it->second.occurrences.push_back({heading_anchor, line_number});
+            }
+        }
+
+        result.documents.reserve(doc_order.size());
+        for (const auto& doc_id : doc_order) {
+            result.documents.push_back(std::move(doc_map[doc_id]));
+        }
+        result.total_documents = static_cast<int>(result.documents.size());
+
+        return result;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [TAGS] get_tag_documents failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
 }

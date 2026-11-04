@@ -7,6 +7,7 @@ import {
   Shield,
   CheckSquare,
   AtSign,
+  Hash,
 } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 import { fetchCurrentUser } from '../../api/auth';
@@ -113,6 +114,19 @@ export const Sidebar: React.FC = () => {
               {unreadMentionsCount}
             </span>
           )}
+        </Link>
+
+        <Link
+          to="/tags"
+          className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-colors ${
+            isActive('/tags') || location.pathname.startsWith('/tags/')
+              ? 'bg-cme-primary/10 text-cme-primary font-medium'
+              : 'text-cme-text-base hover:bg-cme-bg-hover'
+          }`}
+          data-testid="sidebar-tags-link"
+        >
+          <Hash className="w-4 h-4 text-amber-500" />
+          <span>Tags</span>
         </Link>
 
         <Link

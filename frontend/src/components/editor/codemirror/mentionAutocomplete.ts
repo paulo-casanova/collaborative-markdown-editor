@@ -1,5 +1,6 @@
 import { autocompletion, CompletionContext, CompletionResult } from '@codemirror/autocomplete';
 import { fetchMentionCandidates } from '../../../api/mentions';
+import { tagCompletionSource } from './tagAutocomplete';
 
 /**
  * Autocompletion source that triggers when user types '@' in the editor,
@@ -47,11 +48,11 @@ export async function mentionCompletionSource(
 }
 
 /**
- * Creates the CodeMirror 6 autocompletion extension configured for @mentions.
+ * Creates the CodeMirror 6 autocompletion extension configured for @mentions and #tags.
  */
 export function createMentionAutocompleteExtension() {
   return autocompletion({
-    override: [mentionCompletionSource],
+    override: [mentionCompletionSource, tagCompletionSource],
     defaultKeymap: true,
     icons: false,
   });

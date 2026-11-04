@@ -111,6 +111,93 @@ std::string extract_snippet_around(std::string_view line, size_t match_pos, size
     return normalized;
 }
 
+std::string to_lower_str(std::string_view s) {
+    std::string res;
+    res.reserve(s.size());
+    for (char c : s) {
+        res.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return res;
+}
+
+void parse_frontmatter_tags(std::string_view fm_text, std::vector<ExtractedTag>& out_tags) {
+    size_t pos = 0;
+    bool in_tags_block = false;
+    size_t line_num = 2; // Line 1 was '---'
+
+    while (pos < fm_text.size()) {
+        size_t next_nl = fm_text.find('\n', pos);
+        size_t line_end = (next_nl != std::string_view::npos) ? next_nl : fm_text.size();
+        std::string_view line = fm_text.substr(pos, line_end - pos);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+
+        size_t start_sp = 0;
+        while (start_sp < line.size() && (line[start_sp] == ' ' || line[start_sp] == '\t')) start_sp++;
+        std::string_view trimmed = line.substr(start_sp);
+
+        if (trimmed.starts_with("tags:") || trimmed.starts_with("tag:")) {
+            size_t colon_pos = trimmed.find(':');
+            std::string_view val = trimmed.substr(colon_pos + 1);
+            while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.remove_prefix(1);
+
+            if (val.starts_with('[') && val.find(']') != std::string_view::npos) {
+                // Inline array: [tag1, tag2, tag3]
+                size_t close_bracket = val.find(']');
+                std::string_view inner = val.substr(1, close_bracket - 1);
+                size_t item_start = 0;
+                while (item_start < inner.size()) {
+                    size_t comma = inner.find(',', item_start);
+                    size_t item_end = (comma != std::string_view::npos) ? comma : inner.size();
+                    std::string_view item = inner.substr(item_start, item_end - item_start);
+                    while (!item.empty() && (item.front() == ' ' || item.front() == '"' || item.front() == '\'' || item.front() == '#')) item.remove_prefix(1);
+                    while (!item.empty() && (item.back() == ' ' || item.back() == '"' || item.back() == '\'')) item.remove_suffix(1);
+                    if (!item.empty()) {
+                        ExtractedTag t;
+                        t.tag = to_lower_str(item);
+                        t.line_number = line_num;
+                        t.char_offset = 0;
+                        out_tags.push_back(std::move(t));
+                    }
+                    item_start = (comma != std::string_view::npos) ? comma + 1 : inner.size();
+                }
+                in_tags_block = false;
+            } else if (!val.empty()) {
+                std::string_view item = val;
+                while (!item.empty() && (item.front() == ' ' || item.front() == '"' || item.front() == '\'' || item.front() == '#')) item.remove_prefix(1);
+                while (!item.empty() && (item.back() == ' ' || item.back() == '"' || item.back() == '\'')) item.remove_suffix(1);
+                if (!item.empty()) {
+                    ExtractedTag t;
+                    t.tag = to_lower_str(item);
+                    t.line_number = line_num;
+                    t.char_offset = 0;
+                    out_tags.push_back(std::move(t));
+                }
+                in_tags_block = false;
+            } else {
+                in_tags_block = true;
+            }
+        } else if (in_tags_block) {
+            if (trimmed.starts_with("- ")) {
+                std::string_view item = trimmed.substr(2);
+                while (!item.empty() && (item.front() == ' ' || item.front() == '"' || item.front() == '\'' || item.front() == '#')) item.remove_prefix(1);
+                while (!item.empty() && (item.back() == ' ' || item.back() == '"' || item.back() == '\'')) item.remove_suffix(1);
+                if (!item.empty()) {
+                    ExtractedTag t;
+                    t.tag = to_lower_str(item);
+                    t.line_number = line_num;
+                    t.char_offset = 0;
+                    out_tags.push_back(std::move(t));
+                }
+            } else if (!trimmed.empty()) {
+                in_tags_block = false;
+            }
+        }
+
+        pos = (next_nl != std::string_view::npos) ? next_nl + 1 : fm_text.size();
+        line_num++;
+    }
+}
+
 } // namespace
 
 std::string EntityExtractor::compute_mention_fingerprint(
@@ -152,6 +239,26 @@ ExtractedEntities EntityExtractor::extract_all(std::string_view content) {
     size_t line_start = 0;
     size_t line_num = 1;
     const size_t total_len = content.size();
+
+    // Check for YAML Frontmatter at document root (--- ... ---)
+    if (content.starts_with("---\n") || content.starts_with("---\r\n")) {
+        size_t fm_content_start = (content[3] == '\r') ? 5 : 4;
+        size_t fm_close_pos = content.find("\n---", fm_content_start);
+        if (fm_close_pos != std::string_view::npos) {
+            std::string_view fm_text = content.substr(fm_content_start, fm_close_pos - fm_content_start);
+            parse_frontmatter_tags(fm_text, result.tags);
+
+            // Locate the start of the next line following the closing ---
+            size_t close_eol = content.find('\n', fm_close_pos + 4);
+            size_t next_line = (close_eol != std::string_view::npos) ? close_eol + 1 : total_len;
+
+            // Update line number for the consumed frontmatter header
+            for (size_t k = 0; k < next_line; ++k) {
+                if (content[k] == '\n') line_num++;
+            }
+            line_start = next_line;
+        }
+    }
 
     while (line_start < total_len) {
         size_t line_end = content.find('\n', line_start);

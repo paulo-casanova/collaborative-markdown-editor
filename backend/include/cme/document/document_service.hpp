@@ -149,6 +149,90 @@ struct ListMentionsResult {
 };
 
 /**
+ * @struct DocumentTagOccurrence
+ * @brief Represents an individual occurrence of a tag within a document.
+ */
+struct DocumentTagOccurrence {
+    std::string heading_anchor;
+    int line_number{1};
+
+    [[nodiscard]] nlohmann::json to_json() const {
+        return {
+            {"heading_anchor", heading_anchor},
+            {"line_number", line_number}
+        };
+    }
+};
+
+/**
+ * @struct DocumentTagMatch
+ * @brief Represents a document containing one or more occurrences of a tag.
+ */
+struct DocumentTagMatch {
+    std::string document_id;
+    std::string document_title;
+    std::string document_path;
+    std::string updated_at;
+    int occurrence_count{0};
+    std::vector<DocumentTagOccurrence> occurrences;
+
+    [[nodiscard]] nlohmann::json to_json() const {
+        nlohmann::json occ_arr = nlohmann::json::array();
+        for (const auto& o : occurrences) {
+            occ_arr.push_back(o.to_json());
+        }
+        return {
+            {"id", document_id},
+            {"title", document_title},
+            {"path", document_path},
+            {"updated_at", updated_at},
+            {"occurrence_count", occurrence_count},
+            {"occurrences", std::move(occ_arr)}
+        };
+    }
+};
+
+/**
+ * @struct TagSummary
+ * @brief Summary of a distinct tag across accessible documents.
+ */
+struct TagSummary {
+    std::string tag;
+    int document_count{0};
+    int occurrence_count{0};
+
+    [[nodiscard]] nlohmann::json to_json() const {
+        return {
+            {"tag", tag},
+            {"document_count", document_count},
+            {"occurrence_count", occurrence_count}
+        };
+    }
+};
+
+/**
+ * @struct TagDocumentsResult
+ * @brief Container of all accessible documents for a specific tag.
+ */
+struct TagDocumentsResult {
+    std::string tag;
+    int total_documents{0};
+    std::vector<DocumentTagMatch> documents;
+
+    [[nodiscard]] nlohmann::json to_json() const {
+        nlohmann::json doc_arr = nlohmann::json::array();
+        for (const auto& d : documents) {
+            doc_arr.push_back(d.to_json());
+        }
+        return {
+            {"tag", tag},
+            {"total_documents", total_documents},
+            {"documents", std::move(doc_arr)}
+        };
+    }
+};
+
+/**
  * @struct CreateDocumentRequest
  * @brief Request parameters for document instantiation.
  */
@@ -568,6 +652,31 @@ public:
      */
     Result<nlohmann::json> get_mention_candidates(
         const std::string& query = ""
+    );
+
+    /**
+     * @brief Reconciles tags extracted from document content with the document_tags database table.
+     */
+    static Result<void> reconcile_document_tags(
+        pqxx::transaction_base& tx,
+        const std::string& document_id,
+        std::string_view content
+    );
+
+    /**
+     * @brief Lists distinct tags accessible to the user, with document and occurrence counts.
+     */
+    Result<std::vector<TagSummary>> list_tags(
+        const auth::UserIdentity& user,
+        const std::string& query = ""
+    );
+
+    /**
+     * @brief Retrieves all documents mentioning a given tag that are accessible to the user.
+     */
+    Result<TagDocumentsResult> get_tag_documents(
+        const auth::UserIdentity& user,
+        const std::string& tag
     );
 
 private:

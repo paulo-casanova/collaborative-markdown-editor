@@ -338,6 +338,17 @@ set_tests_properties(mentions_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Document Tags Service & REST API Test
+add_executable(tags_test
+    backend/tags_test.cpp
+)
+target_link_libraries(tags_test PRIVATE cme_core)
+target_compile_features(tags_test PRIVATE cxx_std_23)
+add_test(NAME tags_test COMMAND tags_test)
+set_tests_properties(tags_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 
 

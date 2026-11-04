@@ -3394,6 +3394,33 @@ function renderInlineFormatted(
       }
     }
 
+    // Tag rendering: #tag or #project/subtag
+    if (/(?:^|\s)#[a-zA-Z0-9_\-\/]+/.test(part)) {
+      const tagParts = part.split(/(?<=\s|^)(#[a-zA-Z0-9_\-\/]+)/g);
+      if (tagParts.length > 1) {
+        return (
+          <React.Fragment key={idx}>
+            {tagParts.map((tp, tidx) => {
+              if (tp.startsWith('#') && /[a-zA-Z_]/.test(tp)) {
+                const tagRaw = tp.slice(1);
+                return (
+                  <Link
+                    key={tidx}
+                    to={`/tags/${encodeURIComponent(tagRaw)}`}
+                    className="inline-flex items-center px-1.5 py-0.5 rounded-md font-medium text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 align-baseline hover:underline"
+                    title={`Tag: ${tp}`}
+                  >
+                    {tp}
+                  </Link>
+                );
+              }
+              return tp;
+            })}
+          </React.Fragment>
+        );
+      }
+    }
+
     return part;
   });
 }

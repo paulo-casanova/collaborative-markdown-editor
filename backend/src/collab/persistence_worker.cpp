@@ -206,6 +206,11 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
                     document::DocumentService::reconcile_document_mentions(
                         tx, room.document_id(), author_id_str, snapshot.content
                     );
+
+                    // Reconcile document tags with database
+                    document::DocumentService::reconcile_document_tags(
+                        tx, room.document_id(), snapshot.content
+                    );
                 }
                 tx.commit();
             } catch (const std::exception& e) {
