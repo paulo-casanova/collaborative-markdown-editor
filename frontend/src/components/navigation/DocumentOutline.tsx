@@ -1,5 +1,18 @@
-import React, { useEffect, useState } from 'react';
-import { AlignLeft, Hash } from 'lucide-react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import {
+  AlignLeft,
+  Heading1,
+  Heading2,
+  Heading3,
+  Heading4,
+  Heading5,
+  Heading6,
+  Heading,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+} from 'lucide-react';
 import {
   matchesHeadingTarget,
   stripHeadingNumberPrefix,
@@ -284,7 +297,117 @@ export function renderOutlineFormatted(text: string): React.ReactNode {
   });
 }
 
-interface DocumentOutlineProps {
+export interface OutlineTreeNode extends OutlineItem {
+  children: OutlineTreeNode[];
+  parentId?: string;
+}
+
+export function buildOutlineTree(items: OutlineItem[]): OutlineTreeNode[] {
+  const root: OutlineTreeNode[] = [];
+  const stack: { node: OutlineTreeNode; level: number }[] = [];
+
+  for (const item of items) {
+    const treeNode: OutlineTreeNode = {
+      ...item,
+      children: [],
+    };
+
+    while (stack.length > 0 && stack[stack.length - 1].level >= item.level) {
+      stack.pop();
+    }
+
+    if (stack.length === 0) {
+      root.push(treeNode);
+    } else {
+      treeNode.parentId = stack[stack.length - 1].node.id;
+      stack[stack.length - 1].node.children.push(treeNode);
+    }
+
+    stack.push({ node: treeNode, level: item.level });
+  }
+
+  return root;
+}
+
+export function countDescendants(node: OutlineTreeNode): number {
+  let count = 0;
+  for (const child of node.children) {
+    count += 1 + countDescendants(child);
+  }
+  return count;
+}
+
+export function getAllParentIds(nodes: OutlineTreeNode[]): string[] {
+  const ids: string[] = [];
+  function traverse(list: OutlineTreeNode[]) {
+    for (const node of list) {
+      if (node.children.length > 0) {
+        ids.push(node.id);
+        traverse(node.children);
+      }
+    }
+  }
+  traverse(nodes);
+  return ids;
+}
+
+export function getAncestorIds(nodeId: string, tree: OutlineTreeNode[]): string[] {
+  const ancestors: string[] = [];
+  function find(list: OutlineTreeNode[], currentPath: string[]): boolean {
+    for (const n of list) {
+      if (n.id === nodeId) {
+        ancestors.push(...currentPath);
+        return true;
+      }
+      if (n.children.length > 0) {
+        if (find(n.children, [...currentPath, n.id])) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+  find(tree, []);
+  return ancestors;
+}
+
+export function getHeadingIcon(level: number, isActive: boolean = false): React.ReactElement {
+  const baseClasses = `w-3.5 h-3.5 flex-shrink-0 transition-opacity ${
+    isActive ? 'opacity-100 text-cme-primary' : 'opacity-70 group-hover:opacity-100'
+  }`;
+
+  switch (level) {
+    case 1:
+      return <Heading1 className={`${baseClasses} ${!isActive ? 'text-indigo-500 dark:text-indigo-400' : ''}`} />;
+    case 2:
+      return <Heading2 className={`${baseClasses} ${!isActive ? 'text-blue-500 dark:text-blue-400' : ''}`} />;
+    case 3:
+      return <Heading3 className={`${baseClasses} ${!isActive ? 'text-teal-600 dark:text-teal-400' : ''}`} />;
+    case 4:
+      return <Heading4 className={`${baseClasses} ${!isActive ? 'text-emerald-600 dark:text-emerald-400' : ''}`} />;
+    case 5:
+      return <Heading5 className={`${baseClasses} ${!isActive ? 'text-amber-600 dark:text-amber-400' : ''}`} />;
+    case 6:
+      return <Heading6 className={`${baseClasses} ${!isActive ? 'text-rose-500 dark:text-rose-400' : ''}`} />;
+    default:
+      return <Heading className={`${baseClasses} ${!isActive ? 'text-cme-text-muted' : ''}`} />;
+  }
+}
+
+export function getHeadingFontClass(level: number): string {
+  switch (level) {
+    case 1:
+      return 'font-semibold text-xs';
+    case 2:
+      return 'font-medium text-xs';
+    case 3:
+      return 'text-xs';
+    default:
+      return 'text-xs text-cme-text-muted';
+  }
+}
+
+export interface DocumentOutlineProps {
   headings?: OutlineItem[];
   markdown?: string;
   className?: string;
@@ -302,26 +425,33 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
   cursorLine,
 }) => {
   const { numberHeaders } = useUIStore();
-  const [headings, setHeadings] = useState<OutlineItem[]>([]);
   const [activeId, setActiveId] = useState<string>('');
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
 
-  // Compute headings from props, markdown, or DOM
-  useEffect(() => {
+  // Synchronously compute headings if provided via props or markdown
+  const computedHeadings = useMemo(() => {
     if (propHeadings !== undefined) {
-      setHeadings(propHeadings);
-      return;
+      return propHeadings;
     }
-
     if (markdown !== undefined) {
-      const parsed = extractHeadingsFromMarkdown(markdown, numberHeaders);
-      setHeadings(parsed);
-      return;
+      return extractHeadingsFromMarkdown(markdown, numberHeaders);
     }
+    return [];
+  }, [propHeadings, markdown, numberHeaders]);
 
-    // Fallback: scan DOM for heading elements
-    const elements = Array.from(document.querySelectorAll('article h1, article h2, article h3, article h4, article h5, article h6, .cme-content h1, .cme-content h2, .cme-content h3, .cme-content h4, .cme-content h5, .cme-content h6'));
+  const [domHeadings, setDomHeadings] = useState<OutlineItem[]>([]);
+
+  // Fallback: scan DOM for heading elements only if neither propHeadings nor markdown was provided
+  useEffect(() => {
+    if (propHeadings !== undefined || markdown !== undefined) return;
+
+    const elements = Array.from(
+      document.querySelectorAll(
+        'article h1, article h2, article h3, article h4, article h5, article h6, .cme-content h1, .cme-content h2, .cme-content h3, .cme-content h4, .cme-content h5, .cme-content h6'
+      )
+    );
     if (elements.length > 0) {
-      const domHeadings: OutlineItem[] = elements.map((el, idx) => {
+      const scanned: OutlineItem[] = elements.map((el, idx) => {
         const level = parseInt(el.tagName.replace('H', ''), 10) || 1;
         const text = el.textContent || `Section ${idx + 1}`;
         if (!el.id) {
@@ -333,11 +463,30 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
           level,
         };
       });
-      setHeadings(domHeadings);
+      setDomHeadings(scanned);
     }
-  }, [propHeadings, markdown, numberHeaders]);
+  }, [propHeadings, markdown]);
 
-  const isClickScrolling = React.useRef(false);
+  const headings =
+    propHeadings !== undefined || markdown !== undefined ? computedHeadings : domHeadings;
+
+  const tree = useMemo(() => buildOutlineTree(headings), [headings]);
+
+  // Reset collapse state when switching to a different document
+  const prevHeadingSignature = useRef<string>('');
+  useEffect(() => {
+    if (headings.length === 0) return;
+    const currentSignature = headings.map((h) => h.id).slice(0, 3).join('|');
+    if (prevHeadingSignature.current && prevHeadingSignature.current !== currentSignature) {
+      const hasOverlap = headings.some((h) => prevHeadingSignature.current.includes(h.id));
+      if (!hasOverlap) {
+        setCollapsedIds(new Set());
+      }
+    }
+    prevHeadingSignature.current = currentSignature;
+  }, [headings]);
+
+  const isClickScrolling = useRef(false);
 
   // Update activeId when explicit activeHeadingId or cursorLine changes in Editor mode
   useEffect(() => {
@@ -397,6 +546,31 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
     };
   }, [headings, cursorLine]);
 
+  // Auto-expand ancestors of active item so it is visible in the tree
+  useEffect(() => {
+    if (activeId && collapsedIds.size > 0) {
+      const ancestors = getAncestorIds(activeId, tree);
+      if (ancestors.length > 0) {
+        let hasCollapsedAncestor = false;
+        for (const ancId of ancestors) {
+          if (collapsedIds.has(ancId)) {
+            hasCollapsedAncestor = true;
+            break;
+          }
+        }
+        if (hasCollapsedAncestor) {
+          setCollapsedIds((prev) => {
+            const next = new Set(prev);
+            for (const ancId of ancestors) {
+              next.delete(ancId);
+            }
+            return next;
+          });
+        }
+      }
+    }
+  }, [activeId, tree, collapsedIds]);
+
   const handleHeadingClick = (e: React.MouseEvent, id: string) => {
     e.preventDefault();
     setActiveId(id);
@@ -418,6 +592,103 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
         targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }
+  };
+
+  const toggleCollapse = (id: string, e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const allParentIds = useMemo(() => getAllParentIds(tree), [tree]);
+  const hasCollapsibleNodes = allParentIds.length > 0;
+  const isAllCollapsed = hasCollapsibleNodes && allParentIds.every((id) => collapsedIds.has(id));
+
+  const toggleAll = () => {
+    if (isAllCollapsed) {
+      setCollapsedIds(new Set());
+    } else {
+      setCollapsedIds(new Set(allParentIds));
+    }
+  };
+
+  const renderTreeNode = (node: OutlineTreeNode, depth: number) => {
+    const isCollapsed = collapsedIds.has(node.id);
+    const hasChildren = node.children.length > 0;
+    const isActive = activeId === node.id;
+    const fontClass = getHeadingFontClass(node.level);
+    const descendantCount = isCollapsed ? countDescendants(node) : 0;
+
+    return (
+      <React.Fragment key={node.id}>
+        <div
+          className={`group flex items-center gap-1 py-0.5 pr-1.5 rounded-lg text-left transition-colors ${
+            isActive
+              ? 'text-cme-primary font-semibold border-l-2 border-cme-primary bg-cme-primary/10'
+              : 'hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base'
+          }`}
+          style={{ paddingLeft: `${depth * 14 + 4}px` }}
+        >
+          {hasChildren ? (
+            <button
+              type="button"
+              onClick={(e) => toggleCollapse(node.id, e)}
+              className="p-0.5 -ml-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors flex-shrink-0"
+              title={isCollapsed ? `Expand section "${node.text}"` : `Collapse section "${node.text}"`}
+              data-testid={isCollapsed ? `toc-expand-${node.id}` : `toc-collapse-${node.id}`}
+              aria-label={isCollapsed ? `Expand section ${node.text}` : `Collapse section ${node.text}`}
+            >
+              {isCollapsed ? (
+                <ChevronRight className="w-3.5 h-3.5 text-cme-text-muted" />
+              ) : (
+                <ChevronDown className="w-3.5 h-3.5 text-cme-text-muted" />
+              )}
+            </button>
+          ) : (
+            <span className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
+          )}
+
+          <a
+            href={`#${node.id}`}
+            onClick={(e) => handleHeadingClick(e, node.id)}
+            className={`flex items-center gap-1.5 flex-1 min-w-0 py-0.5 pr-1 cursor-pointer truncate ${fontClass} ${
+              isActive
+                ? 'text-cme-primary font-semibold'
+                : 'text-cme-text-muted group-hover:text-cme-text-base'
+            }`}
+            data-testid={`toc-item-${node.id}`}
+            data-active={isActive ? 'true' : 'false'}
+            title={node.text}
+          >
+            {getHeadingIcon(node.level, isActive)}
+            <span className="truncate flex-1">{renderOutlineFormatted(node.rawText || node.text)}</span>
+            {isCollapsed && descendantCount > 0 && (
+              <span
+                className="text-[10px] px-1.5 py-0.2 rounded-full bg-cme-bg-subtle text-cme-text-muted font-mono flex-shrink-0 ml-1 border border-cme-border-base"
+                title={`${descendantCount} hidden subheadings`}
+                data-testid={`toc-badge-${node.id}`}
+              >
+                +{descendantCount}
+              </span>
+            )}
+          </a>
+        </div>
+
+        {!isCollapsed && hasChildren && (
+          node.children.map((child) => renderTreeNode(child, depth + 1))
+        )}
+      </React.Fragment>
+    );
   };
 
   if (headings.length === 0) {
@@ -446,44 +717,31 @@ export const DocumentOutline: React.FC<DocumentOutlineProps> = ({
           <AlignLeft className="w-3.5 h-3.5 text-cme-primary" />
           <span>Table of Contents</span>
         </div>
-        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cme-bg-subtle text-cme-text-muted">
-          {headings.length}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {hasCollapsibleNodes && (
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title={isAllCollapsed ? 'Expand all sections' : 'Collapse all sections'}
+              data-testid="toc-toggle-all-btn"
+              aria-label={isAllCollapsed ? 'Expand all sections' : 'Collapse all sections'}
+            >
+              {isAllCollapsed ? (
+                <ChevronsUpDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronsDownUp className="w-3.5 h-3.5" />
+              )}
+            </button>
+          )}
+          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cme-bg-subtle text-cme-text-muted">
+            {headings.length}
+          </span>
+        </div>
       </div>
 
-      <div className="space-y-1 max-h-[calc(100vh-14rem)] overflow-y-auto no-scrollbar">
-        {headings.map((item) => {
-          const isActive = activeId === item.id;
-          const indentClass =
-            item.level === 1
-              ? 'pl-1 font-semibold text-xs'
-              : item.level === 2
-              ? 'pl-4 font-medium text-xs'
-              : item.level === 3
-              ? 'pl-7 text-xs text-cme-text-muted'
-              : item.level === 4
-              ? 'pl-10 text-xs text-cme-text-muted'
-              : 'pl-12 text-xs text-cme-text-muted';
-
-          return (
-            <a
-              key={item.id}
-              href={`#${item.id}`}
-              onClick={(e) => handleHeadingClick(e, item.id)}
-              className={`group flex items-center gap-1.5 py-1 px-2 rounded-lg text-left transition-colors cursor-pointer truncate ${indentClass} ${
-                isActive
-                  ? 'text-cme-primary font-semibold border-l-2 border-cme-primary bg-cme-primary/10'
-                  : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
-              }`}
-              data-testid={`toc-item-${item.id}`}
-              data-active={isActive ? 'true' : 'false'}
-              title={item.text}
-            >
-              <Hash className={`w-3 h-3 flex-shrink-0 opacity-40 group-hover:opacity-100 ${isActive ? 'text-cme-primary opacity-100' : ''}`} />
-              <span className="truncate">{renderOutlineFormatted(item.rawText || item.text)}</span>
-            </a>
-          );
-        })}
+      <div className="space-y-0.5 max-h-[calc(100vh-14rem)] overflow-y-auto no-scrollbar">
+        {tree.map((node) => renderTreeNode(node, 0))}
       </div>
     </nav>
   );
