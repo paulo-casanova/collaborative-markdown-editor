@@ -327,6 +327,17 @@ set_tests_properties(entity_extractor_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Document Mentions Service & REST API Test
+add_executable(mentions_test
+    backend/mentions_test.cpp
+)
+target_link_libraries(mentions_test PRIVATE cme_core)
+target_compile_features(mentions_test PRIVATE cxx_std_23)
+add_test(NAME mentions_test COMMAND mentions_test)
+set_tests_properties(mentions_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 
 

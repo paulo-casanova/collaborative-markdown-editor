@@ -89,6 +89,66 @@ struct DocumentRevision {
 };
 
 /**
+ * @struct DocumentMentionRecord
+ * @brief Complete representation of an extracted document mention and its acknowledgement status.
+ */
+struct DocumentMentionRecord {
+    std::string id;
+    std::string document_id;
+    std::string document_title;
+    std::string document_path;
+    std::string recipient_id;
+    std::string author_id;
+    std::string author_username;
+    std::string heading_anchor;
+    std::string context_snippet;
+    std::string fingerprint;
+    std::string status;       // "UNREAD", "ACKNOWLEDGED"
+    bool is_active{true};
+    std::string created_at;
+    std::string acknowledged_at;
+
+    [[nodiscard]] nlohmann::json to_json() const {
+        return {
+            {"id", id},
+            {"document_id", document_id},
+            {"document_title", document_title},
+            {"document_path", document_path},
+            {"recipient_id", recipient_id},
+            {"author_id", author_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(author_id)},
+            {"author_username", author_username},
+            {"heading_anchor", heading_anchor},
+            {"context_snippet", context_snippet},
+            {"fingerprint", fingerprint},
+            {"status", status},
+            {"is_active", is_active},
+            {"created_at", created_at},
+            {"acknowledged_at", acknowledged_at.empty() ? nlohmann::json(nullptr) : nlohmann::json(acknowledged_at)}
+        };
+    }
+};
+
+/**
+ * @struct ListMentionsResult
+ * @brief Paginated list of document mentions along with global unread count.
+ */
+struct ListMentionsResult {
+    std::vector<DocumentMentionRecord> mentions;
+    int64_t total_unread{0};
+
+    [[nodiscard]] nlohmann::json to_json() const {
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& m : mentions) {
+            arr.push_back(m.to_json());
+        }
+        return {
+            {"mentions", std::move(arr)},
+            {"unread_count", total_unread}
+        };
+    }
+};
+
+/**
  * @struct CreateDocumentRequest
  * @brief Request parameters for document instantiation.
  */
@@ -468,6 +528,46 @@ public:
         const std::string& document_id,
         const std::string& author_id,
         std::string_view content
+    );
+
+    /**
+     * @brief Lists active document mentions for a recipient with optional status filter and pagination.
+     */
+    Result<ListMentionsResult> list_mentions(
+        const std::string& recipient_id,
+        const std::string& status_filter = "UNREAD",
+        size_t limit = 50,
+        size_t offset = 0
+    );
+
+    /**
+     * @brief Retrieves total count of active unread mentions for a recipient.
+     */
+    Result<int64_t> get_unread_mentions_count(
+        const std::string& recipient_id
+    );
+
+    /**
+     * @brief Acknowledges a specific active mention for a recipient.
+     */
+    Result<void> acknowledge_mention(
+        const std::string& mention_id,
+        const std::string& recipient_id
+    );
+
+    /**
+     * @brief Acknowledges all unread mentions for a recipient.
+     * @return Number of mentions marked acknowledged.
+     */
+    Result<int64_t> acknowledge_all_mentions(
+        const std::string& recipient_id
+    );
+
+    /**
+     * @brief Searches candidate users for mention autocomplete.
+     */
+    Result<nlohmann::json> get_mention_candidates(
+        const std::string& query = ""
     );
 
 private:

@@ -4409,6 +4409,108 @@ Result<void> Server::start() {
     });
 
     // =========================================================================
+    // Document Mentions REST Endpoints
+    // =========================================================================
+
+    // GET /api/v1/mentions/count
+    app.get("/api/v1/mentions/count", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        auto count_res = document_service_->get_unread_mentions_count(user->user_id);
+        if (!count_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to retrieve unread mentions count"}});
+            return;
+        }
+
+        send_json(res, "200 OK", {{"unread_count", count_res.value()}});
+    });
+
+    // GET /api/v1/mentions
+    app.get("/api/v1/mentions", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        std::string status_param = std::string(req->getQuery("status"));
+        if (status_param.empty()) status_param = "UNREAD";
+
+        std::string limit_param = std::string(req->getQuery("limit"));
+        size_t limit = 50;
+        if (!limit_param.empty()) {
+            try { limit = std::stoul(limit_param); } catch (...) {}
+        }
+
+        std::string offset_param = std::string(req->getQuery("offset"));
+        size_t offset = 0;
+        if (!offset_param.empty()) {
+            try { offset = std::stoul(offset_param); } catch (...) {}
+        }
+
+        auto list_res = document_service_->list_mentions(user->user_id, status_param, limit, offset);
+        if (!list_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list mentions"}});
+            return;
+        }
+
+        send_json(res, "200 OK", list_res.value().to_json());
+    });
+
+    // POST /api/v1/mentions/ack-all
+    app.post("/api/v1/mentions/ack-all", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        auto ack_res = document_service_->acknowledge_all_mentions(user->user_id);
+        if (!ack_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to acknowledge mentions"}});
+            return;
+        }
+
+        send_json(res, "200 OK", {{"status", "acknowledged"}, {"count", ack_res.value()}});
+    });
+
+    // PATCH /api/v1/mentions/:id/ack and POST /api/v1/mentions/:id/ack
+    auto handle_ack_mention = [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        std::string mention_id = url_decode(req->getParameter(0));
+        auto ack_res = document_service_->acknowledge_mention(mention_id, user->user_id);
+        if (!ack_res.has_value()) {
+            if (ack_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Mention not found"}});
+            } else if (ack_res.error() == ErrorCode::InvalidArgument) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid mention ID"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to acknowledge mention"}});
+            }
+            return;
+        }
+
+        send_json(res, "200 OK", {{"status", "acknowledged"}});
+    };
+
+    app.patch("/api/v1/mentions/:id/ack", handle_ack_mention);
+    app.post("/api/v1/mentions/:id/ack", handle_ack_mention);
+
+    // GET /api/v1/users/mention-candidates
+    app.get("/api/v1/users/mention-candidates", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        std::string q = url_decode(req->getQuery("q"));
+        auto cand_res = document_service_->get_mention_candidates(q);
+        if (!cand_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to fetch mention candidates"}});
+            return;
+        }
+
+        send_json(res, "200 OK", cand_res.value());
+    });
+
+    // =========================================================================
     // Dialog & Local Agent Management REST Endpoints
     // =========================================================================
 

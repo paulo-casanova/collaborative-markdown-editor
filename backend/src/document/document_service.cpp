@@ -4137,4 +4137,215 @@ Result<void> DocumentService::reconcile_document_mentions(
     }
 }
 
+Result<ListMentionsResult> DocumentService::list_mentions(
+    const std::string& recipient_id,
+    const std::string& status_filter,
+    size_t limit,
+    size_t offset
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    if (recipient_id.empty() || !is_valid_uuid(recipient_id)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        ListMentionsResult result;
+
+        // 1. Get total unread count
+        auto count_row = tx.exec_params(
+            "SELECT COUNT(*) FROM document_mentions "
+            "WHERE recipient_id = $1::uuid AND is_active = TRUE AND status = 'UNREAD';",
+            recipient_id
+        );
+        if (!count_row.empty()) {
+            result.total_unread = count_row[0][0].as<int64_t>();
+        }
+
+        // 2. Fetch mentions
+        pqxx::result rows;
+        std::string upper_filter = status_filter;
+        for (auto& c : upper_filter) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+
+        if (upper_filter == "ALL") {
+            rows = tx.exec_params(
+                "SELECT dm.id::text, dm.document_id::text, COALESCE(d.title, ''), COALESCE(d.fs_path, ''), "
+                "       dm.recipient_id::text, COALESCE(dm.author_id::text, ''), COALESCE(u.username, 'Collaborator'), "
+                "       dm.heading_anchor, dm.context_snippet, dm.fingerprint, dm.status, dm.is_active, "
+                "       TO_CHAR(dm.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "       TO_CHAR(dm.acknowledged_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM document_mentions dm "
+                "LEFT JOIN documents d ON dm.document_id = d.id "
+                "LEFT JOIN users u ON dm.author_id = u.id "
+                "WHERE dm.recipient_id = $1::uuid AND dm.is_active = TRUE "
+                "ORDER BY dm.created_at DESC "
+                "LIMIT $2 OFFSET $3;",
+                recipient_id, limit, offset
+            );
+        } else {
+            std::string match_status = (upper_filter == "ACKNOWLEDGED") ? "ACKNOWLEDGED" : "UNREAD";
+            rows = tx.exec_params(
+                "SELECT dm.id::text, dm.document_id::text, COALESCE(d.title, ''), COALESCE(d.fs_path, ''), "
+                "       dm.recipient_id::text, COALESCE(dm.author_id::text, ''), COALESCE(u.username, 'Collaborator'), "
+                "       dm.heading_anchor, dm.context_snippet, dm.fingerprint, dm.status, dm.is_active, "
+                "       TO_CHAR(dm.created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+                "       TO_CHAR(dm.acknowledged_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM document_mentions dm "
+                "LEFT JOIN documents d ON dm.document_id = d.id "
+                "LEFT JOIN users u ON dm.author_id = u.id "
+                "WHERE dm.recipient_id = $1::uuid AND dm.is_active = TRUE AND dm.status = $2 "
+                "ORDER BY dm.created_at DESC "
+                "LIMIT $3 OFFSET $4;",
+                recipient_id, match_status, limit, offset
+            );
+        }
+
+        for (const auto& r : rows) {
+            DocumentMentionRecord rec;
+            rec.id = r[0].as<std::string>();
+            rec.document_id = r[1].as<std::string>();
+            rec.document_title = r[2].as<std::string>();
+            rec.document_path = r[3].as<std::string>();
+            rec.recipient_id = r[4].as<std::string>();
+            rec.author_id = r[5].as<std::string>();
+            rec.author_username = r[6].as<std::string>();
+            rec.heading_anchor = r[7].is_null() ? "" : r[7].as<std::string>();
+            rec.context_snippet = r[8].is_null() ? "" : r[8].as<std::string>();
+            rec.fingerprint = r[9].as<std::string>();
+            rec.status = r[10].as<std::string>();
+            rec.is_active = r[11].as<bool>();
+            rec.created_at = r[12].is_null() ? "" : r[12].as<std::string>();
+            rec.acknowledged_at = r[13].is_null() ? "" : r[13].as<std::string>();
+            result.mentions.push_back(std::move(rec));
+        }
+
+        return result;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [MENTIONS] list_mentions failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<int64_t> DocumentService::get_unread_mentions_count(
+    const std::string& recipient_id
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    if (recipient_id.empty() || !is_valid_uuid(recipient_id)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto row = tx.exec_params(
+            "SELECT COUNT(*) FROM document_mentions "
+            "WHERE recipient_id = $1::uuid AND is_active = TRUE AND status = 'UNREAD';",
+            recipient_id
+        );
+        int64_t count = 0;
+        if (!row.empty()) {
+            count = row[0][0].as<int64_t>();
+        }
+        return count;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [MENTIONS] get_unread_mentions_count failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<void> DocumentService::acknowledge_mention(
+    const std::string& mention_id,
+    const std::string& recipient_id
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    if (mention_id.empty() || !is_valid_uuid(mention_id) || recipient_id.empty() || !is_valid_uuid(recipient_id)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto res = tx.exec_params(
+            "UPDATE document_mentions SET status = 'ACKNOWLEDGED', acknowledged_at = NOW() "
+            "WHERE id = $1::uuid AND recipient_id = $2::uuid AND is_active = TRUE RETURNING id;",
+            mention_id, recipient_id
+        );
+        if (res.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        tx.commit();
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [MENTIONS] acknowledge_mention failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<int64_t> DocumentService::acknowledge_all_mentions(
+    const std::string& recipient_id
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    if (recipient_id.empty() || !is_valid_uuid(recipient_id)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto res = tx.exec_params(
+            "UPDATE document_mentions SET status = 'ACKNOWLEDGED', acknowledged_at = NOW() "
+            "WHERE recipient_id = $1::uuid AND status = 'UNREAD' AND is_active = TRUE;",
+            recipient_id
+        );
+        int64_t count = res.affected_rows();
+        tx.commit();
+        return count;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [MENTIONS] acknowledge_all_mentions failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<nlohmann::json> DocumentService::get_mention_candidates(
+    const std::string& query
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        std::string pattern = query.empty() ? "%" : (query + "%");
+        auto rows = tx.exec_params(
+            "SELECT id::text, username, COALESCE(display_name, username) "
+            "FROM users "
+            "WHERE LOWER(username) LIKE LOWER($1) OR LOWER(COALESCE(display_name, '')) LIKE LOWER($1) "
+            "ORDER BY username ASC LIMIT 20;",
+            pattern
+        );
+
+        nlohmann::json candidates = nlohmann::json::array();
+        for (const auto& r : rows) {
+            candidates.push_back({
+                {"id", r[0].as<std::string>()},
+                {"username", r[1].as<std::string>()},
+                {"display_name", r[2].as<std::string>()}
+            });
+        }
+        return candidates;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [MENTIONS] get_mention_candidates failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 } // namespace cme::document
