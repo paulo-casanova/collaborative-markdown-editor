@@ -183,40 +183,67 @@ export const cmeEditorTheme = EditorView.theme({
   },
 
   // Autocomplete Tooltip
-  '.cm-tooltip-autocomplete': {
+  '.cm-tooltip.cm-tooltip-autocomplete': {
     backgroundColor: 'var(--cme-bg-surface, #ffffff)',
     border: '1px solid var(--cme-border-base, rgba(0, 0, 0, 0.1))',
-    borderRadius: '0.625rem',
+    borderRadius: '0.5rem',
     boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
     overflow: 'hidden',
-    minWidth: '180px',
-    maxWidth: '320px',
+    minWidth: '260px',
+    maxWidth: '380px',
     zIndex: '50',
   },
-  '.cm-tooltip-autocomplete > ul': {
+  '.cm-tooltip.cm-tooltip-autocomplete > ul': {
     fontFamily: 'inherit',
     fontSize: '0.8125rem',
-    maxHeight: '240px',
+    maxHeight: '260px',
     padding: '0.25rem',
+    margin: '0',
+    listStyle: 'none',
   },
-  '.cm-tooltip-autocomplete > ul > li': {
-    padding: '0.375rem 0.625rem',
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li': {
+    padding: '0.375rem 0.625rem !important',
     borderRadius: '0.375rem',
     margin: '0.125rem 0',
     color: 'var(--cme-text-base, #111827)',
     display: 'flex',
     alignItems: 'center',
-    gap: '0.5rem',
+    justifyContent: 'space-between',
+    gap: '0.75rem',
     cursor: 'pointer',
+    boxSizing: 'border-box',
+    width: '100%',
+    lineHeight: '1.4',
   },
-  '.cm-tooltip-autocomplete > ul > li[aria-selected]': {
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected]': {
     backgroundColor: 'var(--cme-primary, #3b82f6) !important',
     color: '#ffffff !important',
   },
-  '.cm-tooltip-autocomplete .cm-completionDetail': {
+  '.cm-completionIcon': {
+    display: 'none !important',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete .cm-completionLabel': {
+    fontWeight: '600',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+    whiteSpace: 'nowrap',
+    flexShrink: '0',
+    color: 'inherit',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete .cm-completionDetail': {
     fontSize: '0.75rem',
-    opacity: '0.75',
-    marginLeft: 'auto',
+    opacity: '0.7',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    textAlign: 'right',
     fontStyle: 'normal',
+    marginLeft: 'auto',
+    flexShrink: '1',
+    minWidth: '0',
+    color: 'inherit',
+  },
+  '.cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionDetail': {
+    opacity: '0.9',
+    color: 'rgba(255, 255, 255, 0.9) !important',
   },
 });

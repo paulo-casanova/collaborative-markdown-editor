@@ -30,11 +30,11 @@ export async function mentionCompletionSource(
       from: match.from,
       options: candidates.map((cand) => ({
         label: `@${cand.username}`,
-        displayLabel:
+        displayLabel: `@${cand.username}`,
+        detail:
           cand.display_name && cand.display_name !== cand.username
-            ? `${cand.display_name} (@${cand.username})`
-            : `@${cand.username}`,
-        detail: cand.display_name !== cand.username ? cand.display_name : undefined,
+            ? cand.display_name
+            : undefined,
         type: 'user',
         apply: `@${cand.username} `,
         boost: cand.username.toLowerCase().startsWith(query.toLowerCase()) ? 2 : 1,
@@ -53,6 +53,6 @@ export function createMentionAutocompleteExtension() {
   return autocompletion({
     override: [mentionCompletionSource],
     defaultKeymap: true,
-    icons: true,
+    icons: false,
   });
 }

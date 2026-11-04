@@ -141,7 +141,8 @@ describe('MentionsView & Mentions Autocomplete', () => {
     expect(resValid?.options).toHaveLength(2);
     expect(resValid?.options[0].label).toBe('@alice');
     expect(resValid?.options[0].apply).toBe('@alice ');
-    expect(resValid?.options[0].displayLabel).toBe('Alice Admin (@alice)');
+    expect(resValid?.options[0].displayLabel).toBe('@alice');
+    expect(resValid?.options[0].detail).toBe('Alice Admin');
   });
 
   it('mentionCompletionSource suppresses completion inside email addresses', async () => {
