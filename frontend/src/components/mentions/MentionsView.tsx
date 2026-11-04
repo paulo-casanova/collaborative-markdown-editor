@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -80,6 +80,12 @@ export const MentionsView: React.FC = () => {
 
   const mentions = data?.mentions || [];
   const unreadCount = data?.unread_count || 0;
+
+  useEffect(() => {
+    if (data?.unread_count !== undefined) {
+      queryClient.setQueryData(['mentions-count'], { unread_count: data.unread_count });
+    }
+  }, [data?.unread_count, queryClient]);
 
   // Acknowledge single mention mutation
   const ackMutation = useMutation({

@@ -54,6 +54,7 @@ export const Sidebar: React.FC = () => {
     queryKey: ['mentions-count'],
     queryFn: fetchUnreadMentionsCount,
     staleTime: 5000,
+    refetchInterval: 15000,
   });
   const unreadMentionsCount = unreadMentionsData?.unread_count || 0;
 
