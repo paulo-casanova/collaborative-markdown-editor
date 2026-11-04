@@ -534,11 +534,14 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
         />
       )}
       <div
-        className="editor-content-viewport flex-1 overflow-y-auto cursor-text"
+        className="editor-content-viewport flex-1 overflow-hidden cursor-text"
         onClick={(e) => {
           if (e.target === e.currentTarget && adapterRef.current) {
             const view = adapterRef.current.getView();
-            view.dispatch({ selection: { anchor: view.state.doc.length } });
+            view.dispatch({
+              selection: { anchor: view.state.doc.length },
+              effects: EditorView.scrollIntoView(view.state.doc.length, { y: 'nearest' }),
+            });
             view.focus();
           }
         }}

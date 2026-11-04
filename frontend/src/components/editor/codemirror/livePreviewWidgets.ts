@@ -123,11 +123,28 @@ export class MathBlockWidget extends WidgetType {
       });
     });
 
-    body.addEventListener('click', () => {
+    card.addEventListener('mousedown', (e) => {
+      if ((e.target as HTMLElement)?.tagName !== 'TEXTAREA') {
+        e.stopPropagation();
+      }
+    });
+
+    body.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const targetPos = Math.min(this.from + 2, this.to);
       view.dispatch({
-        selection: { anchor: this.from + 2 },
+        selection: { anchor: targetPos },
+        effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
       });
       view.focus();
+      requestAnimationFrame(() => {
+        if (view?.dom?.isConnected) {
+          view.dispatch({
+            effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
+          });
+        }
+      });
     });
 
     return container;
@@ -244,9 +261,41 @@ export class MermaidBlockWidget extends WidgetType {
       }
     });
 
-    svgWrapper.addEventListener('click', () => {
-      view.dispatch({ selection: { anchor: this.from + 10 } });
+    // Intercept mousedown on card so CodeMirror does not trigger text selection / scrolling
+    card.addEventListener('mousedown', (e) => {
+      if ((e.target as HTMLElement)?.tagName !== 'TEXTAREA') {
+        e.stopPropagation();
+      }
+    });
+
+    // Clicking the diagram collapses the preview widget and switches to live source editing
+    const activateSourceEditing = (e?: MouseEvent) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      const doc = view.state.doc;
+      const firstLine = doc.lineAt(this.from);
+      // Place cursor right after the opening fence (start of first line inside mermaid block)
+      const targetPos = Math.min(firstLine.to + 1, this.to);
+
+      view.dispatch({
+        selection: { anchor: targetPos },
+        effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
+      });
       view.focus();
+
+      requestAnimationFrame(() => {
+        if (view?.dom?.isConnected) {
+          view.dispatch({
+            effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
+          });
+        }
+      });
+    };
+
+    svgWrapper.addEventListener('click', (e) => {
+      activateSourceEditing(e);
     });
 
     // Render Mermaid async
@@ -654,8 +703,16 @@ export class DividerWidget extends WidgetType {
     const hr = document.createElement('hr');
     hr.className = 'w-full border-t border-cme-border-base m-0 p-0 pointer-events-none';
     wrap.appendChild(hr);
-    wrap.addEventListener('click', () => {
-      view.dispatch({ selection: { anchor: this.from } });
+    wrap.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+    });
+    wrap.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      view.dispatch({
+        selection: { anchor: this.from },
+        effects: EditorView.scrollIntoView(this.from, { y: 'nearest', yMargin: 60 }),
+      });
       view.focus();
     });
     return wrap;
@@ -933,9 +990,27 @@ export class CodeBlockWidget extends WidgetType {
     body.appendChild(gutter);
     body.appendChild(pre);
 
-    body.addEventListener('click', () => {
-      view.dispatch({ selection: { anchor: Math.min(this.from + 4, this.to) } });
+    card.addEventListener('mousedown', (e) => {
+      e.stopPropagation();
+    });
+
+    body.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const firstLine = view.state.doc.lineAt(this.from);
+      const targetPos = Math.min(firstLine.to + 1, this.to);
+      view.dispatch({
+        selection: { anchor: targetPos },
+        effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
+      });
       view.focus();
+      requestAnimationFrame(() => {
+        if (view?.dom?.isConnected) {
+          view.dispatch({
+            effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
+          });
+        }
+      });
     });
 
     card.appendChild(header);

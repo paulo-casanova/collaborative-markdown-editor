@@ -1026,7 +1026,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
       {/* Main Workspace Body: Full-Width Collaborative Editor & Right Docked Sidebars */}
       <div className="flex-1 flex overflow-hidden min-h-0 gap-3">
-        <div className="flex-1 overflow-y-auto min-w-0 flex flex-col h-full">
+        <div className="flex-1 overflow-hidden min-w-0 flex flex-col h-full">
           <CollaborativeEditor
             key={provider?.ydoc.guid || 'editor'}
             provider={provider}
