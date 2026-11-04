@@ -757,6 +757,8 @@ export const FileTree: React.FC = () => {
         (node.id && location.pathname.includes(node.id)) ||
         location.search.includes(encodeURIComponent(node.path));
 
+      const displayName = node.name.replace(/\.(md|bundle)$/, '') || node.name;
+
       return (
         <div
           key={node.path}
@@ -779,20 +781,20 @@ export const FileTree: React.FC = () => {
                 openTab({
                   id: node.id,
                   path: node.path,
-                  title: node.title || node.name.replace(/\.(md|bundle)$/, ''),
+                  title: node.title || displayName,
                   is_bundle: isBundle,
                 });
               }
             }}
             className="flex items-center gap-2 min-w-0 flex-1 truncate"
-            title={node.title || node.name}
+            title={node.title ? `${displayName} (${node.title})` : node.name}
           >
             {isBundle ? (
               <Package className="w-3.5 h-3.5 text-purple-500 flex-shrink-0" />
             ) : (
               <FileText className="w-3.5 h-3.5 text-cme-text-subtle flex-shrink-0" />
             )}
-            <span className="truncate">{node.title || node.name}</span>
+            <span className="truncate">{displayName}</span>
           </Link>
 
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">

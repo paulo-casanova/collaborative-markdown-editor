@@ -57,9 +57,9 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
     await expect(page.getByText('guides', { exact: true })).toBeVisible();
     await expect(page.getByText('specs', { exact: true })).toBeVisible();
 
-    // Verify bundle item has bundle styling or package indicator
-    await expect(fileTree.getByText(`Architecture Bundle ${uniqueId}`)).toBeVisible();
-    await expect(fileTree.getByText(`Tutorial Guide ${uniqueId}`)).toBeVisible();
+    // Verify bundle item has bundle styling or package indicator (shows file names without extensions)
+    await expect(fileTree.getByText(`architecture_${uniqueId}`)).toBeVisible();
+    await expect(fileTree.getByText(`tutorial_${uniqueId}`)).toBeVisible();
   });
 
   test('creates a new document via FileTree modal and navigates to editor', async ({ page }) => {
@@ -222,7 +222,7 @@ test.describe('Navigation, FileTree, Search & Trash (Step 5.1)', () => {
 
     // 2. Locate node in FileTree and right-click to open context menu
     const fileTree = page.locator('[data-testid="file-tree-container"]');
-    const treeItem = fileTree.getByText(`Tutorial Guide ${uniqueId}`);
+    const treeItem = fileTree.getByText(`tutorial_${uniqueId}`);
     await expect(treeItem).toBeVisible();
     await treeItem.click({ button: 'right' });
 
