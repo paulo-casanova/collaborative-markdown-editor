@@ -7,6 +7,7 @@ import { Sidebar } from './Sidebar';
 import { LoginModal } from '../auth/LoginModal';
 import { TokensModal } from '../auth/TokensModal';
 import { SearchModal } from '../search/SearchModal';
+import { GoToPermalinkModal } from '../navigation/GoToPermalinkModal';
 import { AgentPairingModal } from '../dialog/AgentPairingModal';
 import { useThemeStore } from '../../stores/themeStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -115,6 +116,13 @@ export const AppShell: React.FC = () => {
         e.preventDefault();
         e.stopPropagation();
         useUIStore.getState().toggleDialogSidecar();
+      } else if (
+        (e.altKey && (e.key === 'p' || e.key === 'P')) ||
+        ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'p' || e.key === 'P'))
+      ) {
+        e.preventDefault();
+        e.stopPropagation();
+        useUIStore.getState().toggleGoToPermalinkModal();
       }
     };
     window.addEventListener('keydown', handleKeyDown, { capture: true });
@@ -224,6 +232,7 @@ export const AppShell: React.FC = () => {
       <LoginModal />
       <TokensModal />
       <SearchModal />
+      <GoToPermalinkModal />
       <AgentPairingModal />
     </div>
   );

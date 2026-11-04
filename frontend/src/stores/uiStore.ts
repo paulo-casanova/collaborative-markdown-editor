@@ -19,6 +19,7 @@ interface UIState {
   tokensModalOpen: boolean;
   searchModalOpen: boolean;
   searchTitleOnly: boolean;
+  goToPermalinkModalOpen: boolean;
   toggleSidebar: () => void;
   setSidebarOpen: (open: boolean) => void;
   setSidebarWidth: (width: number) => void;
@@ -34,6 +35,8 @@ interface UIState {
   setSearchModalOpen: (open: boolean, titleOnly?: boolean) => void;
   setSearchTitleOnly: (titleOnly: boolean) => void;
   toggleSearchModal: (titleOnly?: boolean) => void;
+  setGoToPermalinkModalOpen: (open: boolean) => void;
+  toggleGoToPermalinkModal: () => void;
   numberHeaders: boolean;
   setNumberHeaders: (enabled: boolean) => void;
   toggleNumberHeaders: () => void;
@@ -98,6 +101,7 @@ const uiStore = createStore<UIState>((set) => ({
   tokensModalOpen: false,
   searchModalOpen: false,
   searchTitleOnly: false,
+  goToPermalinkModalOpen: false,
   numberHeaders: getInitialNumberHeaders(),
   lineNumbers: getInitialLineNumbers(),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
@@ -133,6 +137,9 @@ const uiStore = createStore<UIState>((set) => ({
       searchModalOpen: !state.searchModalOpen,
       searchTitleOnly: titleOnly !== undefined ? titleOnly : state.searchTitleOnly,
     })),
+  setGoToPermalinkModalOpen: (goToPermalinkModalOpen) => set({ goToPermalinkModalOpen }),
+  toggleGoToPermalinkModal: () =>
+    set((state) => ({ goToPermalinkModalOpen: !state.goToPermalinkModalOpen })),
   setNumberHeaders: (enabled) => {
     set({ numberHeaders: enabled });
   },

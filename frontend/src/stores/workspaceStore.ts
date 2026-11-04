@@ -24,6 +24,7 @@ interface WorkspaceState {
 
   // Tab Actions
   openTab: (tab: Omit<WorkspaceTab, 'isPinned' | 'isDirty'>, activate?: boolean) => void;
+  replaceActiveTab: (tab: Omit<WorkspaceTab, 'isPinned' | 'isDirty'>) => void;
   updateTabMetadata: (tabId: string, metadata: Partial<Omit<WorkspaceTab, 'id'>>) => void;
   closeTab: (tabId: string) => void;
   closeOtherTabs: (tabId: string) => void;
@@ -102,6 +103,37 @@ const workspaceStore = createStore<WorkspaceState>()(
             ...(activate ? { activeTabId: newTab.id } : {}),
             secondaryTabId: nextSecondary,
           });
+        }
+      },
+
+      replaceActiveTab: (newTab) => {
+        if (!newTab.id || newTab.id === 'by-path') return;
+        const { tabs, activeTabId } = get();
+        const existingIndex = tabs.findIndex((t) => t.id === newTab.id);
+
+        if (existingIndex >= 0) {
+          // Tab already exists in workspace; switch to it
+          set({ activeTabId: newTab.id });
+          return;
+        }
+
+        const activeIndex = tabs.findIndex((t) => t.id === activeTabId);
+        if (activeIndex >= 0 && !tabs[activeIndex].isPinned) {
+          // Replace current unpinned tab
+          const updatedTabs = [...tabs];
+          updatedTabs[activeIndex] = {
+            ...newTab,
+            is_bundle: Boolean(newTab.is_bundle && newTab.path?.endsWith('.bundle')),
+            isPinned: false,
+            isDirty: false,
+          };
+          set({
+            tabs: updatedTabs,
+            activeTabId: newTab.id,
+          });
+        } else {
+          // No unpinned active tab; open normally
+          get().openTab(newTab, true);
         }
       },
 

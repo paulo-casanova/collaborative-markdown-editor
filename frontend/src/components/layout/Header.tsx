@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Search,
   AtSign,
+  Link2,
 } from 'lucide-react';
 import { useUIStore, SyncStatus } from '../../stores/uiStore';
 import { fetchUnreadMentionsCount } from '../../api/mentions';
@@ -19,7 +20,7 @@ import { UserProfilePill } from '../auth/UserProfilePill';
 
 export const Header: React.FC = () => {
   const location = useLocation();
-  const { sidebarOpen, toggleSidebar, breadcrumbs, syncStatus, setSearchModalOpen } = useUIStore();
+  const { sidebarOpen, toggleSidebar, breadcrumbs, syncStatus, setSearchModalOpen, setGoToPermalinkModalOpen } = useUIStore();
 
   const { data: unreadMentionsData } = useQuery({
     queryKey: ['mentions-count'],
@@ -158,6 +159,17 @@ export const Header: React.FC = () => {
           <kbd className="hidden sm:inline-block text-[10px] font-mono px-1 py-0.2 rounded bg-cme-bg-surface border border-cme-border-base text-cme-text-subtle">
             ⌘K
           </kbd>
+        </button>
+
+        {/* Go to Permalink Shortcut */}
+        <button
+          onClick={() => setGoToPermalinkModalOpen(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-cme-border-base bg-cme-bg-subtle hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base text-xs transition-colors"
+          title="Go to Permalink (Alt+P or Cmd+Shift+P)"
+          data-testid="header-goto-permalink-btn"
+        >
+          <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+          <span className="hidden md:inline text-[11px]">Go to Permalink</span>
         </button>
 
         {/* Mentions Inbox Shortcut */}
