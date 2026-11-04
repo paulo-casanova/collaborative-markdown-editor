@@ -1661,7 +1661,7 @@ Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks(
         pqxx::work tx(conn_res->get());
 
         auto rows = tx.exec(
-            "SELECT id::text, fs_path FROM documents WHERE deleted_at IS NULL;"
+            "SELECT id::text, fs_path FROM documents WHERE fs_path NOT LIKE '.trash/%';"
         );
 
         for (const auto& r : rows) {
@@ -1727,7 +1727,7 @@ Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks_f
         pqxx::work tx(conn_res->get());
 
         auto rows = tx.exec(
-            "SELECT id::text, fs_path FROM documents WHERE deleted_at IS NULL;"
+            "SELECT id::text, fs_path FROM documents WHERE fs_path NOT LIKE '.trash/%';"
         );
 
         for (const auto& r : rows) {
