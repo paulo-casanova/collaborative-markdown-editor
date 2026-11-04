@@ -1,4 +1,5 @@
 #include "cme/document/document_service.hpp"
+#include "cme/document/entity_extractor.hpp"
 #include <filesystem>
 #include <iostream>
 #include <sstream>
@@ -699,6 +700,8 @@ Result<DocumentRecord> DocumentService::create_document(
                 doc.id, author, req.content
             );
         }
+
+        reconcile_document_mentions(tx, doc.id, user.user_id, req.content);
 
         tx.commit();
         return doc;
@@ -1496,6 +1499,10 @@ Result<DocumentRecord> DocumentService::update_document(
                     );
                 }
             }
+        }
+
+        if (content.has_value()) {
+            reconcile_document_mentions(tx, doc_id, user.user_id, final_content);
         }
 
         tx.commit();
@@ -4038,6 +4045,94 @@ Result<DocumentRevision> DocumentService::get_revision(
         };
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] [REVISION] Failed to get revision: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<void> DocumentService::reconcile_document_mentions(
+    pqxx::transaction_base& tx,
+    const std::string& document_id,
+    const std::string& author_id,
+    std::string_view content
+) {
+    if (document_id.empty() || !is_valid_uuid(document_id)) {
+        return {};
+    }
+
+    try {
+        auto mentions = EntityExtractor::extract_mentions(content);
+        std::unordered_set<std::string> current_fingerprints;
+
+        for (const auto& m : mentions) {
+            current_fingerprints.insert(m.fingerprint);
+
+            // Lookup recipient username in database
+            auto user_rows = tx.exec_params(
+                "SELECT id FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1;",
+                m.username
+            );
+
+            if (user_rows.empty()) {
+                continue; // User does not exist in CME
+            }
+
+            std::string recipient_id = user_rows[0][0].as<std::string>();
+
+            // Upsert mention row:
+            // ON CONFLICT: leaves existing status (e.g. ACKNOWLEDGED) unchanged!
+            if (!author_id.empty() && is_valid_uuid(author_id)) {
+                tx.exec_params(
+                    "INSERT INTO document_mentions ("
+                    "  document_id, recipient_id, author_id, heading_anchor, context_snippet, fingerprint, status, is_active"
+                    ") VALUES ("
+                    "  $1::uuid, $2::uuid, $3::uuid, $4, $5, $6, 'UNREAD', TRUE"
+                    ") ON CONFLICT (document_id, recipient_id, fingerprint) DO UPDATE SET "
+                    "  is_active = TRUE, "
+                    "  heading_anchor = EXCLUDED.heading_anchor, "
+                    "  context_snippet = EXCLUDED.context_snippet;",
+                    document_id, recipient_id, author_id, m.heading_anchor, m.context_snippet, m.fingerprint
+                );
+            } else {
+                tx.exec_params(
+                    "INSERT INTO document_mentions ("
+                    "  document_id, recipient_id, author_id, heading_anchor, context_snippet, fingerprint, status, is_active"
+                    ") VALUES ("
+                    "  $1::uuid, $2::uuid, NULL, $3, $4, $5, 'UNREAD', TRUE"
+                    ") ON CONFLICT (document_id, recipient_id, fingerprint) DO UPDATE SET "
+                    "  is_active = TRUE, "
+                    "  heading_anchor = EXCLUDED.heading_anchor, "
+                    "  context_snippet = EXCLUDED.context_snippet;",
+                    document_id, recipient_id, m.heading_anchor, m.context_snippet, m.fingerprint
+                );
+            }
+        }
+
+        // Mark mentions removed from text as inactive
+        if (current_fingerprints.empty()) {
+            tx.exec_params(
+                "UPDATE document_mentions SET is_active = FALSE WHERE document_id = $1::uuid AND is_active = TRUE;",
+                document_id
+            );
+        } else {
+            auto active_rows = tx.exec_params(
+                "SELECT id, fingerprint FROM document_mentions WHERE document_id = $1::uuid AND is_active = TRUE;",
+                document_id
+            );
+            for (const auto& row : active_rows) {
+                std::string mention_id = row[0].as<std::string>();
+                std::string fp = row[1].as<std::string>();
+                if (!current_fingerprints.contains(fp)) {
+                    tx.exec_params(
+                        "UPDATE document_mentions SET is_active = FALSE WHERE id = $1::uuid;",
+                        mention_id
+                    );
+                }
+            }
+        }
+
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[WARN] [MENTIONS] Failed to reconcile mentions for doc " << document_id << ": " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
 }

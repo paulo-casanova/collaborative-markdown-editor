@@ -20,6 +20,7 @@ add_library(cme_core
     src/auth/auth_provider.cpp
     src/document/document_service.cpp
     src/document/integrity_verifier.cpp
+    src/document/entity_extractor.cpp
     src/renderer/markdown_renderer.cpp
     src/admin/admin_service.cpp
     src/collab/crdt_doc.cpp

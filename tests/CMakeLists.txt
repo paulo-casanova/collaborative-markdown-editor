@@ -316,6 +316,17 @@ set_tests_properties(agent_gateway_ws_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Entity Extractor Unit Test (mentions, tags, tasks)
+add_executable(entity_extractor_test
+    backend/entity_extractor_test.cpp
+)
+target_link_libraries(entity_extractor_test PRIVATE cme_core)
+target_compile_features(entity_extractor_test PRIVATE cxx_std_23)
+add_test(NAME entity_extractor_test COMMAND entity_extractor_test)
+set_tests_properties(entity_extractor_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 
 

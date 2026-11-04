@@ -1,4 +1,5 @@
 #include "cme/collab/persistence_worker.hpp"
+#include "cme/document/document_service.hpp"
 #include "cme/common.hpp"
 #include <iostream>
 
@@ -200,6 +201,11 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
                             room.document_id(), next_rev, author_str, snapshot.content
                         );
                     }
+
+                    // Reconcile document mentions with database
+                    document::DocumentService::reconcile_document_mentions(
+                        tx, room.document_id(), author_id_str, snapshot.content
+                    );
                 }
                 tx.commit();
             } catch (const std::exception& e) {

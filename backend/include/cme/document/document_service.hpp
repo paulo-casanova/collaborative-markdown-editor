@@ -459,6 +459,17 @@ public:
         const auth::UserIdentity& user
     );
 
+    /**
+     * @brief Reconciles mentions extracted from document content with the document_mentions database table.
+     * Inserts new mentions as 'UNREAD', preserves existing ACK status, and updates active state.
+     */
+    static Result<void> reconcile_document_mentions(
+        pqxx::transaction_base& tx,
+        const std::string& document_id,
+        const std::string& author_id,
+        std::string_view content
+    );
+
 private:
     std::shared_ptr<db::ConnectionPool> db_pool_;
     std::shared_ptr<storage::IStorageBackend> storage_;
