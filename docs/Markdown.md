@@ -350,7 +350,96 @@ sequenceDiagram
 
 ---
 
-## 11. Mathematics & Formulas (KaTeX / LaTeX)
+## 11. Interactive Hierarchical Gantt Charts (`gantt`)
+
+CME provides a native, interactive **Hierarchical Gantt Chart** engine built on [Vega](https://vega.github.io/vega/), inspired by Madison Giammaria's hierarchical Gantt visualizations ([Giammaria/Vega-Visuals](https://github.com/Giammaria/Vega-Visuals)).
+
+Unlike standard Mermaid Gantt diagrams, CME's hierarchical Gantt supports:
+* **Multi-Level Tree Breakdowns**: Deeply nested work breakdown structures (Epics $\rightarrow$ Phases $\rightarrow$ Subtasks) with WBS index numbering and automatic parent summary rollups.
+* **Dynamic Durations**: Define task spans using duration strings (`5d`, `2w`, `1m`) instead of hardcoding end dates.
+* **Waterfall Dependency Scheduling**: Tasks can specify `dependsOn: taskA`, automatically sequencing start dates to the predecessor's completion and drawing visual connector arrows.
+* **Resource Assignment & `@mentions`**: Assign team members directly with CME `@username` syntax (with editor autocompletion) and color-code tasks by resource.
+* **Interactive Live Preview & Reader Integration**: Rendered directly in CodeMirror Live Preview and Reader mode with click-to-edit support, hover tooltips, and theme synchronization.
+
+### Authoring Syntax (YAML)
+
+To create a Gantt chart, use a ```` ```gantt ```` or ```` ```hierarchical-gantt ```` code fence with a clean YAML specification:
+
+````markdown
+```gantt
+title: Q1 Cloud Infrastructure & Migration
+colorBy: assignee              # Options: 'phase' (default) or 'assignee'
+calendar: calendar             # Options: 'calendar' (default) or 'workdays' (skips weekends)
+
+tasks:
+  - id: p1
+    name: Phase 1: Planning & Assessment
+    children:
+      - id: audit
+        name: Legacy Architecture Audit
+        start: 2026-03-01
+        duration: 2w
+        assignee: @pasc
+        progress: 100%
+
+      - id: terraform
+        name: Terraform Cloud Provisioning
+        dependsOn: audit
+        duration: 10d
+        assignee: [@pasc, @alice]
+        progress: 60%
+
+  - id: p2
+    name: Phase 2: Application Migration
+    children:
+      - id: db-sync
+        name: Database Replication & Cutover
+        dependsOn: terraform
+        duration: 3w
+        assignee: @bob
+        progress: 30%
+
+      - id: api-switch
+        name: DNS & Gateway Traffic Switch
+        dependsOn: [audit, db-sync]
+        duration: 5d
+        assignee: @alice
+        progress: 0%
+
+      - id: go-live
+        name: Production Go-Live
+        dependsOn: api-switch
+        milestone: true
+```
+````
+
+### Supported Field Attributes
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `string` | Unique task ID used for dependencies (e.g. `audit`). Auto-generated if omitted. |
+| `name` | `string` | Title displayed in the left tree column and timeline tooltip. |
+| `start` | `date string` | Start date (`YYYY-MM-DD`). Optional if `dependsOn` is provided. |
+| `end` | `date string` | Explicit completion date (`YYYY-MM-DD`). Optional if `duration` is provided. |
+| `duration` | `string \| number` | Span in days (`5d`), weeks (`2w`), months (`1m`), or zero (`0d`). |
+| `dependsOn` | `string \| string[]` | Predecessor ID(s). Supports lag offsets like `task1 + 2d`. |
+| `assignee` | `string \| string[]` | Contributor username(s), team names, or `@mentions`. |
+| `progress` | `number \| string` | Completion percentage (e.g. `75%`, `0.75`, or `75`). |
+| `milestone` | `boolean` | Flags a zero-duration deliverable marker (diamond symbol). |
+| `children` | `Task[]` | Nested subtasks. Parent `start`, `end`, and `progress` auto-roll up. |
+
+### Configuration Options
+
+* **`colorBy`**:
+  * `'phase'` (default): Color task bars by top-level project phase.
+  * `'assignee'`: Color task bars by assigned team member or team name, providing an instant visual breakdown of ownership across the schedule.
+* **`calendar`**:
+  * `'calendar'` (default): Standard 7-day calendar arithmetic.
+  * `'workdays'`: Skips Saturdays and Sundays when adding task durations.
+
+---
+
+## 12. Mathematics & Formulas (KaTeX / LaTeX)
 
 CME renders mathematical expressions using **KaTeX**, providing fast, typographical formula rendering.
 
@@ -376,7 +465,7 @@ $$\oint_C \mathbf{B} \cdot d\mathbf{l} = \mu_0 \left( I_{\text{enc}} + \varepsil
 
 # Part II: Technical Specifications & Parsing Engine
 
-## 12. Parser Architecture & Pipeline
+## 13. Parser Architecture & Pipeline
 
 CME implements a unified Markdown processing architecture across three runtime subsystems:
 
@@ -386,7 +475,7 @@ flowchart TD
     Raw --> HTML["2. Client HTML Parser<br/>(markdownToHtml.ts)"]
     Raw --> SSR["3. Server C++ Renderer<br/>(md4c + MarkdownRenderer)"]
 
-    CM6 --> Decos["Live Preview StateField<br/>• Widgets (Table, Math, Mermaid)<br/>• Mark Decorations (Bold, Italic, Code)<br/>• Callout Header Widgets"]
+    CM6 --> Decos["Live Preview StateField<br/>• Widgets (Table, Math, Mermaid, Gantt)<br/>• Mark Decorations (Bold, Italic, Code)<br/>• Callout Header Widgets"]
     HTML --> DOM["TipTap / ProseMirror / Dialog<br/>• Semantic HTML Elements<br/>• Sanitized DOM tree"]
     SSR --> Static["REST API / Rendered Exports<br/>• Standalone HTML5 Document<br/>• Embedded CSS & KaTeX styles"]
 
@@ -399,7 +488,8 @@ flowchart TD
 
 ### 1. CodeMirror 6 Live Preview (`livePreviewPlugin.ts`)
 * Implemented as an incremental `StateField<DecorationSet>` that dynamically generates CodeMirror decorations based on visible viewport lines.
-* Operates on cursor proximity: when the cursor enters a styled block (e.g., a callout header or table row), the decoration unfolds into raw Markdown. When the cursor leaves the line, the interactive preview widget replaces the raw syntax.
+* Operates on cursor proximity: when the cursor enters a styled block (e.g., a callout header, table row, or Gantt chart), the decoration unfolds into raw Markdown. When the cursor leaves the line, the interactive preview widget replaces the raw syntax.
+* Dedicated widgets for KaTeX math, Mermaid diagrams, interactive tables, and hierarchical Gantt charts.
 
 ### 2. Client-Side HTML Parser (`markdownToHtml.ts`)
 * Lightweight, zero-dependency Markdown-to-HTML parser used for AI agent chat dialogs, inline review comments, and TipTap editor initialization.
@@ -411,7 +501,7 @@ flowchart TD
 
 ---
 
-## 13. Lexical Tokenization & Escaping Rules
+## 14. Lexical Tokenization & Escaping Rules
 
 ### 1. Code Span Isolation
 Inline code spans (`` `...` `` and ```` ``...`` ````) are masked prior to inline formatting passes:
@@ -426,9 +516,12 @@ Because Markdown tables use the pipe character (`|`) as a column separator, pill
 ### 3. Semicolon & Delimiter Safety in Mermaid Diagrams
 In Mermaid sequence diagrams, semicolons (`;`) act as line/statement terminators. Any arrow label containing semicolons (such as HTTP header strings like `Set-Cookie: cme_session=...; HttpOnly; SameSite=Lax`) must omit raw semicolons or enclose parameters in parentheses to prevent syntax parser errors.
 
+### 4. YAML `@mention` Normalization in Gantt Charts
+Standard YAML 1.2 treats the `@` symbol as a reserved indicator at the start of unquoted scalar values. CME's Gantt parser automatically detects unquoted `@mentions` (e.g. `assignee: @pasc` or `assignee: [@alice, @bob]`) and auto-quotes them prior to YAML parsing, allowing document authors to write natural mention syntax without manual quotation marks.
+
 ---
 
-## 14. HTML Output Specifications
+## 15. HTML Output Specifications
 
 ### 1. Callouts / GFM Alerts
 ```html
@@ -462,9 +555,14 @@ flowchart LR
 </div>
 ```
 
+### 5. Hierarchical Gantt Charts
+```html
+<div class="gantt" data-source="title: Roadmap&#10;tasks: ..."></div>
+```
+
 ---
 
-## 15. Summary of Markdown Extensions in CME
+## 16. Summary of Markdown Extensions in CME
 
 | Feature | Syntax Example | Extension Origin | CME Support |
 | :--- | :--- | :--- | :--- |
@@ -480,4 +578,5 @@ flowchart LR
 | **Fenced Code Highlighting** | ```` ```typescript ```` | CommonMark / GFM | Full (50+ languages via Highlight.js) |
 | **Code Transclusion** | ```` ```snippet="path" ```` | CME Extension | Full (Dynamic repo sync) |
 | **LaTeX Mathematics** | `$E = mc^2$` and `$$...$$` | LaTeX / KaTeX | Full (Inline and display equations) |
-| **Diagrams as Code** | \`\`\`mermaid | Mermaid.js | Full (11 diagram types with dark/light themes) |
+| **Diagrams as Code** | ```` ```mermaid ```` | Mermaid.js | Full (11 diagram types with dark/light themes) |
+| **Hierarchical Gantt** | ```` ```gantt ```` | Vega / Giammaria | Full (Multi-level tree, durations, dependencies, @mentions) |

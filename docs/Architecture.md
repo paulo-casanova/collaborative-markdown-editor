@@ -135,6 +135,13 @@ flowchart LR
    * [`dialogStore`](file:///home/pasc/cme/frontend/src/stores/dialogStore.ts): Manages active AI dialog threads, message history, live streaming tokens, tool activity status, automatic WebSocket reconnection with exponential backoff, tab visibility recovery, and fallback HTTP polling.
    * [`reviewStore`](file:///home/pasc/cme/frontend/src/stores/reviewStore.ts): Coordinates comments, replies, actionable task items, and inline diff proposals.
    * [`authStore`](file:///home/pasc/cme/frontend/src/stores/authStore.ts): Handles session storage, user profile state, login challenges, and session expiry recovery.
+4. **Hierarchical Gantt & Visualization Engine**:
+   - Parses Markdown YAML Gantt blocks into scheduled task models with dynamic duration resolution (`5d`, `2w`), topological dependency scheduling (`dependsOn`), and parent summary rollups.
+   - Built on Vega templates with lazy-loaded `vega-embed` chunks, theme synchronization, WBS hierarchy tree, progress bars, milestone diamonds, and orthogonal connector arrows.
+5. **Document Checkout & External File Lifecycle Subsystem**:
+   - Manages exclusive checkout locks for non-markdown documents (Office documents, PDFs, binary assets).
+   - Coordinates local folder downloads/sync using the Web File System Access API with standard browser download fallbacks.
+   - Provides check-in modals for uploading updated binary files, capturing change summaries, and browsing historical revisions.
 
 ---
 
@@ -187,6 +194,9 @@ flowchart TD
    * Tracks in-flight prompts, handles graceful cancellations (`stop_prompt`), detects agent disconnects, and broadcasts fallback failure notifications.
 5. **Distributed Instance Leadership Coordinator**:
    * Uses PostgreSQL table `instance_lease` with TTL timestamps and atomic lease acquisition queries (`DELETE FROM instance_lease WHERE expires_at < NOW()`) to ensure single-primary room coordination in multi-node topologies.
+6. **Document Checkout & Revision Service (`DocumentService`)**:
+   * Manages exclusive checkout locks (`document_checkouts` table) for binary and Office files, preventing concurrent editing collisions.
+   * On check-in, archives prior versions to `.cme/history/<path>/rev_<N>.<ext>` with author metadata, timestamps, byte size, and SHA-256 hashes.
 
 ---
 
@@ -420,6 +430,14 @@ flowchart LR
    * `POST /admin/users`: Provisions new user accounts with password hashes and admin flags.
    * `POST /admin/teams`: Creates teams and manages parent-child DAG relationships.
    * `POST /admin/backup/barrier`: Freezes in-memory flushers and yields safe POSIX filesystem point-in-time backup barrier.
+7. **Document Checkouts & Binary Revision History (`/api/v1/workspaces/checkouts`)**:
+   * `POST /checkouts`: Acquires an exclusive checkout lock on a non-markdown file.
+   * `DELETE /checkouts`: Cancels an active checkout, releasing the exclusive lock.
+   * `POST /checkins`: Uploads updated binary content, archives the prior version to `.cme/history/`, and releases the lock.
+   * `GET /checkouts`: Lists all active checkouts held by the authenticated user.
+   * `GET /checkouts/status?path=...`: Returns checkout status and owner for a specific file.
+   * `GET /checkouts/history?path=...`: Lists historical binary revisions for a file.
+   * `GET /checkouts/history/download?path=...&rev=N`: Downloads a specific historical binary revision snapshot.
 
 ---
 
