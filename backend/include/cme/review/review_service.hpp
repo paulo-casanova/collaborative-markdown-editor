@@ -170,6 +170,12 @@ struct TaskRecord {
     std::optional<int> line_number;
 
     [[nodiscard]] nlohmann::json to_json() const {
+        std::optional<std::string> formatted_due = due_date;
+        if (formatted_due.has_value()) {
+            if (formatted_due->size() >= 10 && (*formatted_due)[4] == '-' && (*formatted_due)[7] == '-') {
+                *formatted_due = formatted_due->substr(0, 10);
+            }
+        }
         nlohmann::json j = {
             {"id", id},
             {"document_id", document_id},
@@ -177,7 +183,7 @@ struct TaskRecord {
             {"description", description},
             {"assignee", assignee.has_value() ? assignee->to_json() : nlohmann::json(nullptr)},
             {"is_completed", is_completed},
-            {"due_date", due_date.has_value() ? nlohmann::json(due_date.value()) : nlohmann::json(nullptr)},
+            {"due_date", formatted_due.has_value() ? nlohmann::json(formatted_due.value()) : nlohmann::json(nullptr)},
             {"created_at", created_at},
             {"completed_at", completed_at.has_value() ? nlohmann::json(completed_at.value()) : nlohmann::json(nullptr)},
             {"source", source}

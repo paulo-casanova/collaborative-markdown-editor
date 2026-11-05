@@ -1475,7 +1475,7 @@ Result<std::vector<TaskRecord>> ReviewService::list_tasks(
         pqxx::work tx(conn_res->get());
         auto rows = tx.exec_params(
             "SELECT t.id::text, t.document_id::text, t.comment_id::text, t.description, "
-            "       t.is_completed, t.due_date::text, t.created_at::text, t.completed_at::text, "
+            "       t.is_completed, to_char(t.due_date, 'YYYY-MM-DD'), t.created_at::text, t.completed_at::text, "
             "       u.id::text, u.username, u.display_name, u.avatar_color, "
             "       COALESCE(t.source, 'review'), t.line_number "
             "FROM tasks t "
@@ -1534,7 +1534,7 @@ Result<std::vector<TaskRecord>> ReviewService::list_all_tasks(
         pqxx::work tx(conn_res->get());
         std::string q =
             "SELECT t.id::text, t.document_id::text, t.comment_id::text, t.description, "
-            "       t.is_completed, t.due_date::text, t.created_at::text, t.completed_at::text, "
+            "       t.is_completed, to_char(t.due_date, 'YYYY-MM-DD'), t.created_at::text, t.completed_at::text, "
             "       u.id::text, u.username, u.display_name, u.avatar_color, "
             "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, ''), "
             "       COALESCE(t.source, 'review'), t.line_number "
@@ -1602,7 +1602,7 @@ Result<TaskRecord> ReviewService::get_task(
         pqxx::work tx(conn_res->get());
         auto rows = tx.exec_params(
             "SELECT t.id::text, t.document_id::text, t.comment_id::text, t.description, "
-            "       t.is_completed, t.due_date::text, t.created_at::text, t.completed_at::text, "
+            "       t.is_completed, to_char(t.due_date, 'YYYY-MM-DD'), t.created_at::text, t.completed_at::text, "
             "       u.id::text, u.username, u.display_name, u.avatar_color, "
             "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, ''), "
             "       COALESCE(t.source, 'review'), t.line_number "

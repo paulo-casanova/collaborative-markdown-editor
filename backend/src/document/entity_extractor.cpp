@@ -354,34 +354,17 @@ ExtractedEntities EntityExtractor::extract_all(std::string_view content) {
                     std::string task_body = std::string(line.substr(b_start + 3));
                     while (!task_body.empty() && (task_body.front() == ' ' || task_body.front() == '\t')) task_body.erase(task_body.begin());
 
-                    // Parse due dates & deadlines:
-                    // 1. 📅 YYYY-MM-DD
-                    // 2. due:YYYY-MM-DD or due: YYYY-MM-DD
-                    // 3. deadline:YYYY-MM-DD or deadline: YYYY-MM-DD
-                    // 4. @due(YYYY-MM-DD)
-                    static const std::regex due_regex(R"((?:📅\s*|(?:\b(?:due|deadline):\s*)|@due\s*\()(\d{4}-\d{2}-\d{2})\)?)", std::regex::icase);
-                    static const std::regex sched_regex(R"(⏳\s*(\d{4}-\d{2}-\d{2}))");
-                    static const std::regex start_regex(R"(🛫\s*(\d{4}-\d{2}-\d{2}))");
-                    static const std::regex done_regex(R"(✅\s*(\d{4}-\d{2}-\d{2}))");
-                    static const std::regex priority_regex(R"((🔺|⏫|🔼|🔽|⏬))");
-                    // Assignee: @user, [[@user]], assignee:@user, assignee:user
-                    static const std::regex assignee_regex(R"((?:(?:\bassignee:\s*@?)|\[\[@|@)([a-zA-Z0-9_\-\.]+)(?:\]\])?)", std::regex::icase);
+                    // Parse deadline (due:YYYY-MM-DD) and assignee (@user)
+                    static const std::regex due_regex(R"(\bdue:\s*(\d{4}-\d{2}-\d{2})\b)", std::regex::icase);
+                    static const std::regex assignee_regex(R"((?:^|\s)@([a-zA-Z0-9_\-\.]+))");
 
                     std::smatch m;
                     if (std::regex_search(task_body, m, due_regex)) task.due_date = m[1].str();
-                    if (std::regex_search(task_body, m, sched_regex)) task.scheduled_date = m[1].str();
-                    if (std::regex_search(task_body, m, start_regex)) task.start_date = m[1].str();
-                    if (std::regex_search(task_body, m, done_regex)) task.completion_date = m[1].str();
-                    if (std::regex_search(task_body, m, priority_regex)) task.priority = m[1].str();
                     if (std::regex_search(task_body, m, assignee_regex)) task.assignee_username = m[1].str();
 
                     // Clean task description of metadata tags for crisp display in UI
                     std::string clean_desc = task_body;
                     clean_desc = std::regex_replace(clean_desc, due_regex, "");
-                    clean_desc = std::regex_replace(clean_desc, sched_regex, "");
-                    clean_desc = std::regex_replace(clean_desc, start_regex, "");
-                    clean_desc = std::regex_replace(clean_desc, done_regex, "");
-                    clean_desc = std::regex_replace(clean_desc, priority_regex, "");
                     clean_desc = std::regex_replace(clean_desc, assignee_regex, "");
 
                     std::string trimmed_desc;

@@ -654,7 +654,7 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
                         {task.due_date && (
                           <span className="flex items-center gap-0.5">
                             <Calendar className="w-3 h-3 text-cme-text-muted" />
-                            {task.due_date}
+                            {task.due_date.includes('T') ? task.due_date.split('T')[0] : task.due_date.split(' ')[0]}
                           </span>
                         )}
 

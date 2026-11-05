@@ -832,7 +832,7 @@ int main() {
         std::string md_with_tasks =
             "# Sprint Tasks\n\n"
             "- [ ] Implement markdown task syncing @rev_alice due:2026-11-20\n"
-            "- [x] Pre-existing completed task @rev_bob 📅 2026-11-05\n";
+            "- [x] Pre-existing completed task @rev_bob due:2026-11-05\n";
 
         nlohmann::json update_doc_body = {
             {"content", md_with_tasks}
@@ -865,6 +865,7 @@ int main() {
                 assert(!t["assignee"].is_null());
                 assert(t["assignee"]["username"] == "rev_alice");
                 assert(!t["due_date"].is_null());
+                assert(t["due_date"] == "2026-11-20");
             }
             if (t.contains("description") && t["description"] == "Pre-existing completed task") {
                 found_completed_task = true;
@@ -872,6 +873,8 @@ int main() {
                 assert(t["source"] == "markdown");
                 assert(!t["assignee"].is_null());
                 assert(t["assignee"]["username"] == "rev_bob");
+                assert(!t["due_date"].is_null());
+                assert(t["due_date"] == "2026-11-05");
             }
         }
         assert(found_syncing_task);

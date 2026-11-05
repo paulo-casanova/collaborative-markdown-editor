@@ -109,41 +109,42 @@ int main() {
 
     // 3. Tasks Extraction Test
     {
-        std::cout << "  -> Testing Obsidian tasks extraction and metadata parsing...\n";
+        std::cout << "  -> Testing single syntax tasks extraction (@user and due:YYYY-MM-DD)...\n";
 
         std::string task_markdown =
             "# Sprint 42\n\n"
-            "- [ ] Review pull request #101 📅 2026-11-15 @alice 🔺\n"
-            "- [x] Write unit tests ✅ 2026-11-04 [[@bob]]\n"
-            "* [ ] Draft architecture document ⏳ 2026-11-10 🛫 2026-11-08\n"
+            "- [ ] Review pull request #101 @alice due:2026-11-15\n"
+            "- [x] Write unit tests @bob\n"
+            "* [ ] Draft architecture document due:2026-11-10\n"
             "+ [X] Deploy backend service\n"
             "- [ ] Refactor auth module @carol due:2026-11-20\n"
-            "1. [ ] Prepare release checklist deadline: 2026-12-01 @david\n"
+            "1. [ ] Prepare release checklist @david due:2026-12-01\n"
             "- Regular list item (not a task)\n";
 
         auto tasks = cme::document::EntityExtractor::extract_tasks(task_markdown);
 
         assert(tasks.size() == 6);
 
-        // Task 1: Uncompleted with due date, assignee, priority
+        // Task 1: Uncompleted with due date & assignee
         assert(!tasks[0].is_completed);
         assert(tasks[0].due_date.has_value() && *tasks[0].due_date == "2026-11-15");
         assert(tasks[0].assignee_username.has_value() && *tasks[0].assignee_username == "alice");
-        assert(tasks[0].priority.has_value() && *tasks[0].priority == "🔺");
+        assert(tasks[0].description == "Review pull request #101");
         assert(tasks[0].heading_anchor == "sprint-42");
 
-        // Task 2: Completed with completion date & wikilink assignee
+        // Task 2: Completed with assignee
         assert(tasks[1].is_completed);
-        assert(tasks[1].completion_date.has_value() && *tasks[1].completion_date == "2026-11-04");
         assert(tasks[1].assignee_username.has_value() && *tasks[1].assignee_username == "bob");
+        assert(tasks[1].description == "Write unit tests");
 
-        // Task 3: Scheduled and start dates
+        // Task 3: Uncompleted with due date
         assert(!tasks[2].is_completed);
-        assert(tasks[2].scheduled_date.has_value() && *tasks[2].scheduled_date == "2026-11-10");
-        assert(tasks[2].start_date.has_value() && *tasks[2].start_date == "2026-11-08");
+        assert(tasks[2].due_date.has_value() && *tasks[2].due_date == "2026-11-10");
+        assert(tasks[2].description == "Draft architecture document");
 
         // Task 4: Marked with [X]
         assert(tasks[3].is_completed);
+        assert(tasks[3].description == "Deploy backend service");
 
         // Task 5: due:YYYY-MM-DD and @carol
         assert(!tasks[4].is_completed);
@@ -151,13 +152,13 @@ int main() {
         assert(tasks[4].assignee_username.has_value() && *tasks[4].assignee_username == "carol");
         assert(tasks[4].description == "Refactor auth module");
 
-        // Task 6: Numbered task, deadline: YYYY-MM-DD and @david
+        // Task 6: Numbered task, due:YYYY-MM-DD and @david
         assert(!tasks[5].is_completed);
         assert(tasks[5].due_date.has_value() && *tasks[5].due_date == "2026-12-01");
         assert(tasks[5].assignee_username.has_value() && *tasks[5].assignee_username == "david");
         assert(tasks[5].description == "Prepare release checklist");
 
-        std::cout << "     [PASS] Obsidian task parsing, dates, assignees, and priorities verified.\n";
+        std::cout << "     [PASS] Single syntax task parsing (@user and due:YYYY-MM-DD) verified.\n";
     }
 
     std::cout << "[ALL TESTS PASSED] EntityExtractor verified successfully!\n";
