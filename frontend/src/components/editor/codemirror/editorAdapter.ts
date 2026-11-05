@@ -205,6 +205,11 @@ export class CodeMirrorEditorAdapter {
           } else if (content?.type === 'mermaidBlock') {
             const src = content.attrs?.source || 'flowchart TD\n    A[Start] --> B[Finish]';
             this.insertString(`\`\`\`mermaid\n${src}\n\`\`\`\n`);
+          } else if (content?.type === 'ganttBlock') {
+            const defaultGantt =
+              'title: Project Timeline\ntasks:\n  - id: phase1\n    name: Phase 1: Planning\n    children:\n      - id: spec\n        name: Requirements & Architecture\n        start: 2026-03-01\n        duration: 2w\n        assignee: @lead\n        progress: 100%\n      - id: design\n        name: System Design\n        dependsOn: spec\n        duration: 1w\n        assignee: @team\n        progress: 50%\n  - id: phase2\n    name: Phase 2: Execution\n    children:\n      - id: dev\n        name: Implementation\n        dependsOn: design\n        duration: 3w\n        assignee: @devs\n        progress: 0%\n      - id: launch\n        name: Release Milestone\n        dependsOn: dev\n        milestone: true';
+            const src = content.attrs?.source || defaultGantt;
+            this.insertString(`\`\`\`gantt\n${src}\n\`\`\`\n`);
           } else if (content?.type === 'wikiLink') {
             const target = content.attrs?.target || 'guides/intro.md';
             const label = content.attrs?.label || target;

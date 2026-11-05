@@ -17,6 +17,7 @@ import {
   Code2,
   Sigma,
   GitGraph,
+  GanttChart,
   Link2,
   Undo,
   Redo,
@@ -387,6 +388,25 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
         title="Insert Mermaid Diagram"
       >
         <GitGraph className="w-3.5 h-3.5" />
+      </button>
+
+      {/* Hierarchical Gantt Chart */}
+      <button
+        type="button"
+        onClick={() =>
+          editor
+            .chain()
+            .focus()
+            .insertContent({
+              type: 'ganttBlock',
+            })
+            .run()
+        }
+        className={btnClass(false)}
+        title="Insert Hierarchical Gantt Chart"
+        data-testid="toolbar-insert-gantt-btn"
+      >
+        <GanttChart className="w-3.5 h-3.5" />
       </button>
 
       {/* Wiki Link */}

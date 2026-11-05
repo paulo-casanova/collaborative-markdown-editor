@@ -153,6 +153,8 @@ export function parseMarkdownToHtml(markdown: string): string {
         const code = codeLines.join('\n');
         if (codeLang === 'mermaid') {
           output.push(`<div class="mermaid" data-source="${code.replace(/"/g, '&quot;')}"></div>`);
+        } else if (codeLang === 'gantt' || codeLang === 'hierarchical-gantt') {
+          output.push(`<div class="gantt" data-source="${code.replace(/"/g, '&quot;')}"></div>`);
         } else {
           const isSnippet = codeLang.includes('|');
           const parts = codeLang.split('|').map((p) => p.trim());

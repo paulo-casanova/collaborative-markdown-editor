@@ -56,6 +56,7 @@ import { parseMarkdownToHtml } from '../utils/markdownToHtml';
 import { parseCalloutHeader, getCalloutReactIcon } from '../utils/calloutUtils';
 import { useUIStore } from '../stores/uiStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
+import { useThemeStore } from '../stores/themeStore';
 import { DialogSidecar } from '../components/dialog/DialogSidecar';
 import { useDialogStore } from '../stores/dialogStore';
 import {
@@ -65,6 +66,8 @@ import {
   findHeadingElement,
 } from '../components/navigation/DocumentOutline';
 import { renderMermaidSvg } from '../components/editor/utils/mermaidRenderer';
+import { parseGanttMarkdown } from '../utils/ganttParser';
+import { renderVegaGantt } from '../components/editor/utils/vegaGanttTemplate';
 import {
   validateLinkTarget,
   isExternalUrl,
@@ -2004,6 +2007,12 @@ export function renderMarkdown(
             startBlockLine,
             endBlockLine
           );
+        } else if (rawInfo === 'gantt' || rawInfo === 'hierarchical-gantt') {
+          addBlock(
+            <VegaGanttBlock key={`gantt-${startBlockLine}`} source={code} />,
+            startBlockLine,
+            endBlockLine
+          );
         } else {
           const langLower = (rawInfo || '').toLowerCase().trim();
           const effectiveLang = (langLower === 'none' || langLower === 'text') ? '' : langLower;
@@ -3454,6 +3463,59 @@ const MermaidBlock: React.FC<{ source: string }> = ({ source }) => {
       className="my-6 p-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-x-auto flex justify-center"
       data-testid="mermaid-viewer"
       dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+};
+
+// Hierarchical Gantt interactive container
+const VegaGanttBlock: React.FC<{ source: string }> = ({ source }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const isDark = resolvedTheme === 'dark';
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const model = parseGanttMarkdown(source);
+    if (model.errors.length > 0) {
+      setError(model.errors.join('; '));
+      return;
+    }
+    setError(null);
+    let viewResult: any = null;
+    let isCancelled = false;
+
+    renderVegaGantt(containerRef.current, model, isDark)
+      .then((res) => {
+        if (isCancelled) {
+          res.finalize();
+        } else {
+          viewResult = res;
+        }
+      })
+      .catch((err) => {
+        if (!isCancelled) setError(err?.message || 'Failed to render Gantt chart');
+      });
+
+    return () => {
+      isCancelled = true;
+      if (viewResult) viewResult.finalize();
+    };
+  }, [source, isDark]);
+
+  if (error) {
+    return (
+      <div className="my-4 p-4 border border-rose-500/20 bg-rose-500/10 rounded-xl text-xs text-rose-500 font-mono">
+        Failed to render Gantt chart: {error}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className="my-6 p-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-x-auto flex justify-center vega-gantt-container"
+      data-testid="gantt-viewer"
     />
   );
 };

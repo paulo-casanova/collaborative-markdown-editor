@@ -23,6 +23,12 @@ export function normalizeContentToMarkdown(content: string): string {
     (_, src) => `\n\`\`\`mermaid\n${src}\n\`\`\`\n`
   );
 
+  // 2b. Gantt blocks
+  md = md.replace(
+    /<div[^>]*class=["'][^"']*gantt[^"']*["'][^>]*data-source=["']([^"']*)["'][^>]*>[\s\S]*?<\/div>/gi,
+    (_, src) => `\n\`\`\`gantt\n${src}\n\`\`\`\n`
+  );
+
   // 3. Wiki links
   md = md.replace(
     /<a[^>]*class=["'][^"']*wiki-link[^"']*["'][^>]*data-target=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi,

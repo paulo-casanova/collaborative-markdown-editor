@@ -2,6 +2,8 @@ import { WidgetType, EditorView } from '@codemirror/view';
 import { StateEffect } from '@codemirror/state';
 import katex from 'katex';
 import { renderMermaidSvg } from '../utils/mermaidRenderer';
+import { parseGanttMarkdown } from '../../../utils/ganttParser';
+import { renderVegaGantt } from '../utils/vegaGanttTemplate';
 import hljs from 'highlight.js';
 import { findHeadingPosition, slugify } from '../../navigation/DocumentOutline';
 import {
@@ -306,6 +308,106 @@ export class MermaidBlockWidget extends WidgetType {
       .catch((err) => {
         svgWrapper.innerHTML = `<div class="text-xs text-rose-500 font-mono p-2">Mermaid render error: ${err.message || 'Syntax error'}</div>`;
       });
+
+    return container;
+  }
+}
+
+export class GanttBlockWidget extends WidgetType {
+  constructor(
+    public source: string,
+    public from: number,
+    public to: number,
+    public isDark: boolean = false
+  ) {
+    super();
+  }
+
+  eq(other: GanttBlockWidget): boolean {
+    return (
+      this.source === other.source &&
+      this.from === other.from &&
+      this.to === other.to &&
+      this.isDark === other.isDark
+    );
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const container = document.createElement('div');
+    container.className = 'gantt-block-node py-2 my-0 select-none';
+
+    const card = document.createElement('div');
+    card.className =
+      'rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm';
+
+    const model = parseGanttMarkdown(this.source);
+
+    // Header bar
+    const header = document.createElement('div');
+    header.className =
+      'flex items-center justify-between px-3.5 py-1.5 border-b border-cme-border-base bg-cme-bg-subtle text-xs';
+    header.innerHTML = `
+      <div class="flex items-center gap-2">
+        <span class="font-semibold text-[11px] text-cme-text-muted">Gantt Chart</span>
+        ${model.title ? `<span class="text-[11px] font-medium text-cme-text-base">${escapeHtml(model.title)}</span>` : ''}
+      </div>
+      <div class="flex items-center gap-1">
+        <button type="button" class="edit-source-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base">Edit Source</button>
+      </div>
+    `;
+    card.appendChild(header);
+
+    // Chart container
+    const chartWrapper = document.createElement('div');
+    chartWrapper.className =
+      'gantt-chart-container p-4 flex items-center justify-center overflow-x-auto min-h-[100px] cursor-pointer';
+    card.appendChild(chartWrapper);
+
+    container.appendChild(card);
+
+    const activateSourceEditing = (e?: MouseEvent) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      const doc = view.state.doc;
+      const firstLine = doc.lineAt(this.from);
+      const targetPos = Math.min(firstLine.to + 1, this.to);
+
+      view.dispatch({
+        selection: { anchor: targetPos },
+        effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
+      });
+      view.focus();
+
+      requestAnimationFrame(() => {
+        if (view?.dom?.isConnected) {
+          view.dispatch({
+            effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
+          });
+        }
+      });
+    };
+
+    const editSourceBtn = header.querySelector('.edit-source-btn') as HTMLButtonElement;
+    if (editSourceBtn) {
+      editSourceBtn.addEventListener('click', (e) => {
+        activateSourceEditing(e);
+      });
+    }
+
+    chartWrapper.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement)?.closest('.vega-actions')) return;
+      activateSourceEditing(e);
+    });
+
+    if (model.errors.length > 0) {
+      chartWrapper.innerHTML = `<div class="text-xs text-rose-500 font-mono p-2">Failed to render Gantt chart: ${model.errors.join('; ')}</div>`;
+    } else {
+      renderVegaGantt(chartWrapper, model, this.isDark).catch((err) => {
+        chartWrapper.innerHTML = `<div class="text-xs text-rose-500 font-mono p-2">Gantt render error: ${err?.message || 'Syntax error'}</div>`;
+      });
+    }
 
     return container;
   }

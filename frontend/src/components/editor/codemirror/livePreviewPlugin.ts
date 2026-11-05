@@ -13,6 +13,7 @@ import {
 import {
   MathBlockWidget,
   MermaidBlockWidget,
+  GanttBlockWidget,
   WikiLinkWidget,
   TaskCheckboxWidget,
   DividerWidget,
@@ -197,6 +198,21 @@ export function buildLivePreviewDecorations(
                 blockEndTo,
                 Decoration.replace({
                   widget: new MermaidBlockWidget(code.trim(), blockStartFrom, blockEndTo, isDark),
+                  block: true,
+                })
+              );
+            }
+          } else if (
+            rawInfo.toLowerCase() === 'gantt' ||
+            rawInfo.toLowerCase() === 'hierarchical-gantt' ||
+            rawInfo.toLowerCase().startsWith('gantt ')
+          ) {
+            if (code.trim().length > 0) {
+              addReplace(
+                blockStartFrom,
+                blockEndTo,
+                Decoration.replace({
+                  widget: new GanttBlockWidget(code.trim(), blockStartFrom, blockEndTo, isDark),
                   block: true,
                 })
               );
