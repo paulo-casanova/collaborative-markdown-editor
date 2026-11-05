@@ -400,6 +400,7 @@ export function buildVegaGanttSpec(
 
   const rowHeight = 36;
   const headerHeight = 45;
+  const timelineLeftGap = 20;
 
   // 1. Column configuration
   const maxLabelLen = Math.max(
@@ -429,7 +430,7 @@ export function buildVegaGanttSpec(
     } else if (k === 'duration' || k === 'dur') {
       colConfigs.push({ key: 'duration', title: 'Dur', width: 55, align: 'right' });
     } else if (k === 'progress' || k === 'prog') {
-      colConfigs.push({ key: 'progress', title: 'Progress', width: 65, align: 'right' });
+      colConfigs.push({ key: 'progress', title: 'Progress', width: 75, align: 'right' });
     } else if (k === 'assignee' || k === 'assignees' || k === 'resource' || k === 'resources') {
       colConfigs.push({ key: 'assignee', title: 'Assignee', width: 95, align: 'left' });
     }
@@ -1247,6 +1248,19 @@ export function buildVegaGanttSpec(
           },
         },
       },
+      // Horizontal baseline connector from 0 to timeline start
+      {
+        type: 'rule',
+        encode: {
+          enter: {
+            x: { value: 0 },
+            x2: { value: timelineLeftGap },
+            y: { value: 0 },
+            stroke: { value: theme.borderColor },
+            strokeWidth: { value: 1 },
+          },
+        },
+      },
       ...timelineMarks,
       ...resourceMarks
     );
@@ -1277,6 +1291,19 @@ export function buildVegaGanttSpec(
             x: { value: 0 },
             y: { value: 0 },
             y2: { value: totalChartHeight },
+            stroke: { value: theme.borderColor },
+            strokeWidth: { value: 1 },
+          },
+        },
+      },
+      // Horizontal baseline connector from divider rule (0) to timeline start
+      {
+        type: 'rule',
+        encode: {
+          enter: {
+            x: { value: 0 },
+            x2: { value: timelineLeftGap },
+            y: { value: 0 },
             stroke: { value: theme.borderColor },
             strokeWidth: { value: 1 },
           },
@@ -1451,7 +1478,7 @@ export function buildVegaGanttSpec(
               : []),
           ],
         },
-        range: 'width',
+        range: [timelineLeftGap, effectiveTimelineWidth],
       },
       {
         name: 'colorScale',
@@ -1477,6 +1504,7 @@ export function buildVegaGanttSpec(
       tickColor: theme.borderColor,
       domainColor: theme.borderColor,
       labelFontSize: 11,
+      labelFlush: true,
       title: mode === 'timeline' ? undefined : model.title,
       titleColor: theme.textColor,
       titleFontSize: 13,
@@ -1610,7 +1638,7 @@ export async function renderVegaGantt(
     if (k === 'name' || k === 'task') colConfigs.push({ width: nameWidth });
     else if (k === 'start' || k === 'startdate' || k === 'end' || k === 'enddate') colConfigs.push({ width: 85 });
     else if (k === 'duration' || k === 'dur') colConfigs.push({ width: 55 });
-    else if (k === 'progress' || k === 'prog') colConfigs.push({ width: 65 });
+    else if (k === 'progress' || k === 'prog') colConfigs.push({ width: 75 });
     else if (k === 'assignee' || k === 'assignees' || k === 'resource' || k === 'resources') colConfigs.push({ width: 95 });
   }
   const totalTableWidth = colConfigs.reduce((acc, c) => acc + c.width, 0);
