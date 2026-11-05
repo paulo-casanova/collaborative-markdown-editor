@@ -6,7 +6,7 @@ export interface VegaGanttTheme {
   textColor: string;
   textMuted: string;
   gridColor: string;
-  rowAltColor: string;
+  weekendColor: string;
   borderColor: string;
   primaryColor: string;
   progressColor: string;
@@ -19,11 +19,11 @@ export function getGanttTheme(isDark: boolean): VegaGanttTheme {
   if (isDark) {
     return {
       isDark: true,
-      background: '#18181b', // zinc-900
+      background: 'transparent',
       textColor: '#f4f4f5',
       textMuted: '#a1a1aa',
       gridColor: '#27272a',
-      rowAltColor: '#202024',
+      weekendColor: 'rgba(255, 255, 255, 0.04)',
       borderColor: '#3f3f46',
       primaryColor: '#3b82f6',
       progressColor: '#2563eb',
@@ -34,11 +34,11 @@ export function getGanttTheme(isDark: boolean): VegaGanttTheme {
   }
   return {
     isDark: false,
-    background: '#ffffff',
+    background: 'transparent',
     textColor: '#18181b',
     textMuted: '#71717a',
     gridColor: '#e4e4e7',
-    rowAltColor: '#f8fafc',
+    weekendColor: 'rgba(0, 0, 0, 0.035)',
     borderColor: '#e2e8f0',
     primaryColor: '#2563eb',
     progressColor: '#1d4ed8',
@@ -49,6 +49,40 @@ export function getGanttTheme(isDark: boolean): VegaGanttTheme {
 }
 
 /**
+ * Calculates all weekend (Saturday 00:00 to Monday 00:00) date spans between minDate and maxDate.
+ */
+export function getWeekendsBetween(
+  minDateStr: string,
+  maxDateStr: string
+): { start: string; end: string }[] {
+  const weekends: { start: string; end: string }[] = [];
+  if (!minDateStr || !maxDateStr) return weekends;
+
+  const cur = new Date(minDateStr + 'T00:00:00');
+  const end = new Date(maxDateStr + 'T00:00:00');
+  end.setDate(end.getDate() + 3);
+
+  let iterations = 0;
+  while (cur <= end && iterations < 365) {
+    iterations++;
+    if (cur.getDay() === 6) {
+      // Saturday
+      const sat = new Date(cur.getTime());
+      const mon = new Date(cur.getTime());
+      mon.setDate(mon.getDate() + 2); // Monday 00:00:00
+      const satStr = sat.toISOString().split('T')[0];
+      const monStr = mon.toISOString().split('T')[0];
+      weekends.push({ start: satStr, end: monStr });
+      cur.setDate(cur.getDate() + 2);
+    } else {
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+
+  return weekends;
+}
+
+/**
  * Builds a complete, standalone Vega specification for the hierarchical Gantt chart.
  */
 export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = false): any {
@@ -56,7 +90,13 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
 
   const rowHeight = 36;
   const headerHeight = 45;
-  const tableWidth = 260;
+
+  // Compute compact, snug tableWidth based on actual label lengths
+  const maxLabelLen = Math.max(
+    8,
+    ...model.tasks.map((t) => (t.wbs ? `${t.wbs} ` : '').length + t.name.length + t.depth * 2)
+  );
+  const tableWidth = Math.min(240, Math.max(110, Math.round(maxLabelLen * 7.5 + 20)));
   const minTimelineWidth = 600;
   const rowCount = Math.max(1, model.tasks.length);
   const chartHeight = rowCount * rowHeight;
@@ -74,7 +114,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
       yTop,
       barHeight,
       progressWidthPct: t.progress,
-      labelX: 12 + t.depth * 16,
+      labelX: 10 + t.depth * 14,
       displayAssigneeText: t.displayAssignee ? `[${t.displayAssignee}]` : '',
     };
   });
@@ -99,7 +139,10 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
     }
   }
 
-  // Assignee color palette
+  // Weekends dataset for shading
+  const weekendsData = getWeekendsBetween(model.minDate, model.maxDate);
+
+  // Assignee / Phase color palette
   const colorField = model.colorBy === 'assignee' ? 'assigneeKey' : 'phaseKey';
   const colorData = tasksData.map((t) => ({
     ...t,
@@ -107,16 +150,19 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
     phaseKey: t.phaseName || 'General',
   }));
 
+  // Only show the today line if today is within the active project date range
   const todayStr = new Date().toISOString().split('T')[0];
+  const isTodayInRange = todayStr >= model.minDate && todayStr <= model.maxDate;
+  const todayValues = isTodayInRange ? [{ date: todayStr }] : [];
 
   return {
     $schema: 'https://vega.github.io/schema/vega/v5.json',
     description: model.title || 'Hierarchical Gantt Chart',
     width: minTimelineWidth,
     height: chartHeight,
-    padding: { top: headerHeight, left: tableWidth + 10, right: 30, bottom: 20 },
+    padding: { top: headerHeight, left: tableWidth + 10, right: 24, bottom: 20 },
     autosize: { type: 'pad', contains: 'padding' },
-    background: theme.background,
+    background: 'transparent',
 
     signals: [
       {
@@ -130,6 +176,22 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
     ],
 
     data: [
+      {
+        name: 'weekends',
+        values: weekendsData,
+        transform: [
+          {
+            type: 'formula',
+            as: 'startTime',
+            expr: 'time(datetime(datum.start))',
+          },
+          {
+            type: 'formula',
+            as: 'endTime',
+            expr: 'time(datetime(datum.end))',
+          },
+        ],
+      },
       {
         name: 'tasks',
         values: colorData,
@@ -169,7 +231,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
       },
       {
         name: 'today',
-        values: [{ date: todayStr }],
+        values: todayValues,
         transform: [
           {
             type: 'formula',
@@ -191,7 +253,6 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           ],
         },
         range: 'width',
-        nice: 'week',
       },
       {
         name: 'colorScale',
@@ -222,23 +283,38 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
     ],
 
     marks: [
-      // 1. Table Background Panel (Left Side Tree Area)
+      // 0. Weekend Shading Columns
       {
         type: 'rect',
+        from: { data: 'weekends' },
         encode: {
           enter: {
-            x: { value: -(tableWidth + 10) },
-            width: { value: tableWidth },
+            fill: { value: theme.weekendColor },
             y: { value: 0 },
-            height: { value: chartHeight },
-            fill: { value: theme.isDark ? '#141417' : '#fafafa' },
+            y2: { value: chartHeight },
+          },
+          update: {
+            x: { scale: 'timeScale', field: 'startTime' },
+            x2: { scale: 'timeScale', field: 'endTime' },
+          },
+        },
+      },
+
+      // 1. Vertical table divider rule (separating task names from timeline)
+      {
+        type: 'rule',
+        encode: {
+          enter: {
+            x: { value: 0 },
+            y: { value: 0 },
+            y2: { value: chartHeight },
             stroke: { value: theme.borderColor },
             strokeWidth: { value: 1 },
           },
         },
       },
 
-      // 2. Row background bands & hover effect
+      // 2. Row hover bands
       {
         name: 'taskRow',
         type: 'rect',
@@ -254,11 +330,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
             fill: [
               {
                 test: 'datum.index === rowHover',
-                value: theme.isDark ? '#27272a' : '#f1f5f9',
-              },
-              {
-                test: 'datum.index % 2 === 1',
-                value: theme.rowAltColor,
+                value: theme.isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
               },
               { value: 'transparent' },
             ],
@@ -277,7 +349,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
             y: { field: 'index', mult: rowHeight, offset: rowHeight },
             stroke: { value: theme.gridColor },
             strokeWidth: { value: 1 },
-            opacity: { value: 0.6 },
+            opacity: { value: 0.5 },
           },
         },
       },
@@ -306,16 +378,16 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
             x: { field: 'labelX', offset: -(tableWidth + 6) },
             y: { field: 'yCenter' },
             baseline: { value: 'middle' },
-            limit: { value: tableWidth - 30 },
+            limit: { value: tableWidth - 10 },
             ellipsis: { value: '...' },
           },
           update: {
             text: {
-              signal: "datum.isParent ? (datum.wbs + ' ' + datum.name) : (datum.wbs + ' ' + datum.name)",
+              signal: "datum.wbs + ' ' + datum.name",
             },
             fontWeight: { signal: "datum.isParent ? 'bold' : 'normal'" },
             fontSize: { signal: "datum.isParent ? 12 : 11" },
-            fill: { signal: "datum.isParent ? '" + theme.textColor + "' : '" + theme.textColor + "'" },
+            fill: { value: theme.textColor },
           },
         },
       },
@@ -451,7 +523,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 12. Today Marker Line (Dashed red line)
+      // 12. Today Marker Line (Dashed red line) - Only rendered if today is in date range
       {
         type: 'rule',
         from: { data: 'today' },
@@ -468,8 +540,86 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           },
         },
       },
+
+      // 13. Today Marker Tag
+      {
+        type: 'text',
+        from: { data: 'today' },
+        encode: {
+          enter: {
+            text: { value: 'Today' },
+            fontSize: { value: 9 },
+            fontWeight: { value: 'bold' },
+            fill: { value: theme.todayLineColor },
+            baseline: { value: 'bottom' },
+            align: { value: 'center' },
+          },
+          update: {
+            x: { scale: 'timeScale', field: 'todayTime' },
+            y: { value: -2 },
+          },
+        },
+      },
     ],
   };
+}
+
+/**
+ * Copies the Gantt chart rendered in a Vega View to clipboard as a PNG image.
+ */
+export async function copyGanttAsPng(
+  viewResult: any,
+  fallbackTitle: string = 'gantt-chart'
+): Promise<boolean> {
+  const view = viewResult?.view || viewResult;
+  if (!view || typeof view.toCanvas !== 'function') {
+    throw new Error('Vega view instance not ready');
+  }
+
+  // 2x scaleFactor for crisp retina resolution
+  const canvas: HTMLCanvasElement = await view.toCanvas(2);
+
+  return new Promise((resolve) => {
+    canvas.toBlob(async (blob) => {
+      if (!blob) {
+        resolve(false);
+        return;
+      }
+
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard &&
+        typeof ClipboardItem !== 'undefined' &&
+        typeof navigator.clipboard.write === 'function'
+      ) {
+        try {
+          await navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': blob }),
+          ]);
+          resolve(true);
+          return;
+        } catch (e) {
+          console.warn('ClipboardItem write failed, using fallback:', e);
+        }
+      }
+
+      // Fallback: trigger browser PNG download
+      try {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const sanitized = fallbackTitle.toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+        a.download = `${sanitized || 'gantt-chart'}.png`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        resolve(true);
+      } catch {
+        resolve(false);
+      }
+    }, 'image/png');
+  });
 }
 
 /**

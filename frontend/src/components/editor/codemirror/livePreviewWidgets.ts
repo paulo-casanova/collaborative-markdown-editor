@@ -3,7 +3,7 @@ import { StateEffect } from '@codemirror/state';
 import katex from 'katex';
 import { renderMermaidSvg } from '../utils/mermaidRenderer';
 import { parseGanttMarkdown } from '../../../utils/ganttParser';
-import { renderVegaGantt } from '../utils/vegaGanttTemplate';
+import { renderVegaGantt, copyGanttAsPng } from '../utils/vegaGanttTemplate';
 import hljs from 'highlight.js';
 import { findHeadingPosition, slugify } from '../../navigation/DocumentOutline';
 import {
@@ -338,21 +338,23 @@ export class GanttBlockWidget extends WidgetType {
 
     const card = document.createElement('div');
     card.className =
-      'rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm';
+      'rounded-xl border border-cme-border-base bg-transparent overflow-hidden';
 
     const model = parseGanttMarkdown(this.source);
+    let activeVegaResult: any = null;
 
     // Header bar
     const header = document.createElement('div');
     header.className =
-      'flex items-center justify-between px-3.5 py-1.5 border-b border-cme-border-base bg-cme-bg-subtle text-xs';
+      'flex items-center justify-between px-3.5 py-1.5 border-b border-cme-border-base bg-transparent text-xs';
     header.innerHTML = `
       <div class="flex items-center gap-2">
         <span class="font-semibold text-[11px] text-cme-text-muted">Gantt Chart</span>
         ${model.title ? `<span class="text-[11px] font-medium text-cme-text-base">${escapeHtml(model.title)}</span>` : ''}
       </div>
-      <div class="flex items-center gap-1">
-        <button type="button" class="edit-source-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base">Edit Source</button>
+      <div class="flex items-center gap-1.5">
+        <button type="button" class="copy-png-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors flex items-center gap-1" title="Copy Gantt chart as PNG to clipboard">Copy PNG</button>
+        <button type="button" class="edit-source-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors">Edit Source</button>
       </div>
     `;
     card.appendChild(header);
@@ -360,7 +362,7 @@ export class GanttBlockWidget extends WidgetType {
     // Chart container
     const chartWrapper = document.createElement('div');
     chartWrapper.className =
-      'gantt-chart-container p-4 flex items-center justify-center overflow-x-auto min-h-[100px] cursor-pointer';
+      'gantt-chart-container p-4 flex items-center justify-center overflow-x-auto min-h-[100px] cursor-pointer bg-transparent';
     card.appendChild(chartWrapper);
 
     container.appendChild(card);
@@ -396,17 +398,48 @@ export class GanttBlockWidget extends WidgetType {
       });
     }
 
+    const copyPngBtn = header.querySelector('.copy-png-btn') as HTMLButtonElement;
+    if (copyPngBtn) {
+      copyPngBtn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!activeVegaResult) return;
+        try {
+          copyPngBtn.disabled = true;
+          const ok = await copyGanttAsPng(activeVegaResult, model.title || 'gantt-chart');
+          if (ok) {
+            const originalText = copyPngBtn.innerHTML;
+            copyPngBtn.innerHTML = '<span class="text-emerald-500 font-semibold">Copied!</span>';
+            setTimeout(() => {
+              copyPngBtn.innerHTML = originalText;
+              copyPngBtn.disabled = false;
+            }, 2000);
+          } else {
+            copyPngBtn.disabled = false;
+          }
+        } catch (err) {
+          console.error('Failed to copy PNG:', err);
+          copyPngBtn.disabled = false;
+        }
+      });
+    }
+
     chartWrapper.addEventListener('click', (e) => {
       if ((e.target as HTMLElement)?.closest('.vega-actions')) return;
+      if ((e.target as HTMLElement)?.closest('.copy-png-btn')) return;
       activateSourceEditing(e);
     });
 
     if (model.errors.length > 0) {
       chartWrapper.innerHTML = `<div class="text-xs text-rose-500 font-mono p-2">Failed to render Gantt chart: ${model.errors.join('; ')}</div>`;
     } else {
-      renderVegaGantt(chartWrapper, model, this.isDark).catch((err) => {
-        chartWrapper.innerHTML = `<div class="text-xs text-rose-500 font-mono p-2">Gantt render error: ${err?.message || 'Syntax error'}</div>`;
-      });
+      renderVegaGantt(chartWrapper, model, this.isDark)
+        .then((res) => {
+          activeVegaResult = res;
+        })
+        .catch((err) => {
+          chartWrapper.innerHTML = `<div class="text-xs text-rose-500 font-mono p-2">Gantt render error: ${err?.message || 'Syntax error'}</div>`;
+        });
     }
 
     return container;

@@ -67,7 +67,7 @@ import {
 } from '../components/navigation/DocumentOutline';
 import { renderMermaidSvg } from '../components/editor/utils/mermaidRenderer';
 import { parseGanttMarkdown } from '../utils/ganttParser';
-import { renderVegaGantt } from '../components/editor/utils/vegaGanttTemplate';
+import { renderVegaGantt, copyGanttAsPng } from '../components/editor/utils/vegaGanttTemplate';
 import {
   validateLinkTarget,
   isExternalUrl,
@@ -3471,12 +3471,15 @@ const MermaidBlock: React.FC<{ source: string }> = ({ source }) => {
 const VegaGanttBlock: React.FC<{ source: string }> = ({ source }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<boolean>(false);
+  const vegaViewRef = useRef<any>(null);
   const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
   const isDark = resolvedTheme === 'dark';
 
+  const model = useMemo(() => parseGanttMarkdown(source), [source]);
+
   useEffect(() => {
     if (!containerRef.current) return;
-    const model = parseGanttMarkdown(source);
     if (model.errors.length > 0) {
       setError(model.errors.join('; '));
       return;
@@ -3491,6 +3494,7 @@ const VegaGanttBlock: React.FC<{ source: string }> = ({ source }) => {
           res.finalize();
         } else {
           viewResult = res;
+          vegaViewRef.current = res;
         }
       })
       .catch((err) => {
@@ -3499,9 +3503,19 @@ const VegaGanttBlock: React.FC<{ source: string }> = ({ source }) => {
 
     return () => {
       isCancelled = true;
+      vegaViewRef.current = null;
       if (viewResult) viewResult.finalize();
     };
-  }, [source, isDark]);
+  }, [model, isDark]);
+
+  const handleCopyPng = async () => {
+    if (!vegaViewRef.current) return;
+    const ok = await copyGanttAsPng(vegaViewRef.current, model.title || 'gantt-chart');
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   if (error) {
     return (
@@ -3513,10 +3527,42 @@ const VegaGanttBlock: React.FC<{ source: string }> = ({ source }) => {
 
   return (
     <div
-      ref={containerRef}
-      className="my-6 p-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-x-auto flex justify-center vega-gantt-container"
+      className="my-6 rounded-xl border border-cme-border-base bg-transparent overflow-hidden shadow-sm"
       data-testid="gantt-viewer"
-    />
+    >
+      <div className="flex items-center justify-between px-3.5 py-1.5 border-b border-cme-border-base bg-transparent text-xs">
+        <div className="flex items-center gap-2">
+          <span className="font-semibold text-[11px] text-cme-text-muted">Gantt Chart</span>
+          {model.title && (
+            <span className="text-[11px] font-medium text-cme-text-base">{model.title}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleCopyPng}
+            className="copy-png-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base flex items-center gap-1 transition-colors"
+            title="Copy as PNG"
+          >
+            {copied ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                <span className="text-emerald-500 font-semibold">Copied!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3.5 h-3.5" />
+                <span>Copy PNG</span>
+              </>
+            )}
+          </button>
+        </div>
+      </div>
+      <div
+        ref={containerRef}
+        className="p-4 flex items-center justify-center overflow-x-auto min-h-[100px] vega-gantt-container bg-transparent"
+      />
+    </div>
   );
 };
 

@@ -350,26 +350,49 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
   const taskMap = new Map<string, IntermediateTask>();
   intermediateList.forEach((t) => taskMap.set(t.id, t));
 
+  function findTask(ref: string): IntermediateTask | undefined {
+    if (taskMap.has(ref)) return taskMap.get(ref);
+    const refLower = ref.toLowerCase().trim();
+    return (
+      taskMap.get(refLower) ||
+      intermediateList.find(
+        (t) => t.id.toLowerCase() === refLower || t.name.toLowerCase() === refLower
+      )
+    );
+  }
+
   // 2. Schedule dates (Topological resolution for dependencies)
   const resolvedDates = new Map<string, { start: Date; end: Date }>();
   const visiting = new Set<string>();
   const visited = new Set<string>();
 
-  const defaultProjectStart = new Date();
+  // Determine baseline project start date (earliest explicit start, or today if none specified)
+  let projectBaseStart: Date | null = null;
+  for (const t of intermediateList) {
+    if (t.explicitStart) {
+      const d = parseDate(t.explicitStart);
+      if (!projectBaseStart || d.getTime() < projectBaseStart.getTime()) {
+        projectBaseStart = d;
+      }
+    }
+  }
+
+  const defaultProjectStart = projectBaseStart || new Date();
   defaultProjectStart.setHours(0, 0, 0, 0);
 
   function resolveTask(id: string): { start: Date; end: Date } {
-    if (resolvedDates.has(id)) {
-      return resolvedDates.get(id)!;
-    }
-    const task = taskMap.get(id);
+    const task = findTask(id);
     if (!task) {
       errors.push(`Predecessor task '${id}' not found`);
       return { start: defaultProjectStart, end: addDays(defaultProjectStart, 1, isWorkdays) };
     }
+    const realId = task.id;
+    if (resolvedDates.has(realId)) {
+      return resolvedDates.get(realId)!;
+    }
 
-    if (visiting.has(id)) {
-      errors.push(`Circular dependency detected involving task '${id}'`);
+    if (visiting.has(realId)) {
+      errors.push(`Circular dependency detected involving task '${realId}'`);
       const fallbackStart = task.explicitStart ? parseDate(task.explicitStart) : defaultProjectStart;
       const fallbackEnd = task.explicitEnd
         ? parseDate(task.explicitEnd)
@@ -377,7 +400,7 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       return { start: fallbackStart, end: fallbackEnd };
     }
 
-    visiting.add(id);
+    visiting.add(realId);
 
     let startDate: Date;
     if (task.explicitStart) {
@@ -411,11 +434,11 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       endDate = addDays(startDate, task.durationDays, isWorkdays);
     }
 
-    visiting.delete(id);
-    visited.add(id);
+    visiting.delete(realId);
+    visited.add(realId);
 
     const result = { start: startDate, end: endDate };
-    resolvedDates.set(id, result);
+    resolvedDates.set(realId, result);
     return result;
   }
 
@@ -495,9 +518,10 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
     if (t.phaseName) phasesSet.add(t.phaseName);
 
     for (const dep of t.dependencies) {
-      if (taskMap.has(dep.id)) {
+      const pred = findTask(dep.id);
+      if (pred) {
         links.push({
-          source: dep.id,
+          source: pred.id,
           target: t.id,
         });
       }

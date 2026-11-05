@@ -207,6 +207,43 @@ tasks:
       expect(model.errors.some((e) => e.includes('Circular dependency'))).toBe(true);
     });
 
+    it('resolves dependencies by task name or case-insensitive id', () => {
+      const yaml = `
+tasks:
+  - id: database-design
+    name: Database Design
+    start: 2026-12-01
+    duration: 5d
+  - id: frontend-design
+    name: Frontend Design
+    dependsOn: Database Design
+    duration: 3d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      expect(model.links).toHaveLength(1);
+      expect(model.links[0].source).toBe('database-design');
+      expect(model.links[0].target).toBe('frontend-design');
+      expect(model.tasks[1].start).toBe('2026-12-06');
+    });
+
+    it('baselines unanchored tasks to earliest project start rather than today', () => {
+      const yaml = `
+tasks:
+  - id: phase-1
+    name: Phase 1
+    start: 2027-06-01
+    duration: 4d
+  - id: phase-2
+    name: Phase 2
+    duration: 5d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      expect(model.minDate).toBe('2027-06-01');
+      expect(model.tasks[1].start).toBe('2027-06-01');
+    });
+
     it('returns friendly syntax error for invalid YAML syntax without throwing', () => {
       const yaml = `
 tasks:
