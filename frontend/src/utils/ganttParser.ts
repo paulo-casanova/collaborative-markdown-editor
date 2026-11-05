@@ -420,9 +420,9 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       for (const dep of rawDeps) {
         if (!dep || typeof dep !== 'string') continue;
         const depStr = dep.trim();
-        const lagMatch = depStr.match(/^([a-zA-Z0-9_-]+)\s*([+-]\s*[0-9]+(?:\.[0-9]+)?[a-z]*)?$/);
-        if (lagMatch) {
-          const targetId = lagMatch[1];
+        const lagMatch = depStr.match(/^(.*?)\s*([+-]\s*[0-9]+(?:\.[0-9]+)?(?:d|w|days?|weeks?)?)$/i);
+        if (lagMatch && lagMatch[1].trim()) {
+          const targetId = lagMatch[1].trim();
           let lagDays = 0;
           if (lagMatch[2]) {
             const lagPart = lagMatch[2].replace(/\s+/g, '');
@@ -481,10 +481,17 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
     );
   }
 
-  // 2. Schedule dates (Topological resolution for dependencies)
+  // 2. Schedule dates (Hierarchical & Topological resolution for dependencies and summary tasks)
   const resolvedDates = new Map<string, { start: Date; end: Date }>();
-  const visiting = new Set<string>();
-  const visited = new Set<string>();
+  const resolvedKickoffs = new Map<string, Date>();
+  const resolvingTasks = new Set<string>();
+  const resolvingKickoffs = new Set<string>();
+
+  function addError(msg: string) {
+    if (!errors.includes(msg)) {
+      errors.push(msg);
+    }
+  }
 
   // Determine baseline project start date (earliest explicit start, or today if none specified)
   let projectBaseStart: Date | null = null;
@@ -500,10 +507,75 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
   const defaultProjectStart = projectBaseStart || new Date();
   defaultProjectStart.setHours(0, 0, 0, 0);
 
+  /**
+   * Resolves the kickoff start date for a task (leaf or summary).
+   * A summary task's kickoff is determined by its explicit start or predecessors.
+   * Tasks inside a summary task without their own start or dependency inherit
+   * the summary task's kickoff date.
+   */
+  function getKickoff(id: string): Date {
+    const task = findTask(id);
+    if (!task) return defaultProjectStart;
+    const realId = task.id;
+
+    if (resolvedKickoffs.has(realId)) {
+      return resolvedKickoffs.get(realId)!;
+    }
+
+    if (resolvingKickoffs.has(realId)) {
+      addError(`Circular dependency detected involving task '${realId}'`);
+      return defaultProjectStart;
+    }
+
+    resolvingKickoffs.add(realId);
+
+    let kickoff: Date | null = null;
+
+    if (task.explicitStart) {
+      kickoff = parseDate(task.explicitStart);
+    }
+
+    if (task.dependencies.length > 0) {
+      let maxDepEnd: Date | null = null;
+      for (const dep of task.dependencies) {
+        const predDates = resolveTask(dep.id);
+        const depEffectiveEnd = addDays(predDates.end, dep.lagDays, isWorkdays);
+        if (!maxDepEnd || depEffectiveEnd.getTime() > maxDepEnd.getTime()) {
+          maxDepEnd = depEffectiveEnd;
+        }
+      }
+      if (maxDepEnd) {
+        if (!kickoff || maxDepEnd.getTime() > kickoff.getTime()) {
+          kickoff = maxDepEnd;
+        }
+      }
+    }
+
+    if (!kickoff) {
+      if (task.parentId) {
+        kickoff = getKickoff(task.parentId);
+      } else {
+        kickoff = defaultProjectStart;
+      }
+    }
+
+    resolvingKickoffs.delete(realId);
+    resolvedKickoffs.set(realId, kickoff);
+    return kickoff;
+  }
+
+  /**
+   * Resolves the start and end dates of a task.
+   * If the task is a summary task (has children), it recursively resolves all of its
+   * subtasks and rolls up its start date (min start of children) and completion date
+   * (max end of children).
+   * Any dependent task referencing a summary task will therefore wait until all subtasks
+   * of the summary task have finished.
+   */
   function resolveTask(id: string): { start: Date; end: Date } {
     const task = findTask(id);
     if (!task) {
-      errors.push(`Predecessor task '${id}' not found`);
+      addError(`Predecessor task '${id}' not found`);
       return { start: defaultProjectStart, end: addDays(defaultProjectStart, 1, isWorkdays) };
     }
     const realId = task.id;
@@ -511,106 +583,86 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       return resolvedDates.get(realId)!;
     }
 
-    if (visiting.has(realId)) {
-      errors.push(`Circular dependency detected involving task '${realId}'`);
+    if (resolvingTasks.has(realId)) {
+      addError(`Circular dependency detected involving task '${realId}'`);
       const fallbackStart = task.explicitStart ? parseDate(task.explicitStart) : defaultProjectStart;
       const fallbackEnd = task.explicitEnd
         ? parseDate(task.explicitEnd)
-        : addDays(fallbackStart, task.durationDays, isWorkdays);
+        : addDays(fallbackStart, Math.max(1, task.durationDays), isWorkdays);
       return { start: fallbackStart, end: fallbackEnd };
     }
 
-    visiting.add(realId);
+    resolvingTasks.add(realId);
 
-    let startDate: Date;
-    if (task.explicitStart) {
-      startDate = parseDate(task.explicitStart);
-    } else if (task.dependencies.length > 0) {
-      // Start is determined by maximum end date of predecessors
-      let maxPredEnd: Date | null = null;
-      for (const dep of task.dependencies) {
-        const predDates = resolveTask(dep.id);
-        const depEffectiveEnd = addDays(predDates.end, dep.lagDays, isWorkdays);
-        if (!maxPredEnd || depEffectiveEnd.getTime() > maxPredEnd.getTime()) {
-          maxPredEnd = depEffectiveEnd;
+    let result: { start: Date; end: Date };
+
+    if (task.hasChildren) {
+      const children = intermediateList.filter((t) => t.parentId === realId);
+      if (children.length === 0) {
+        const kickoff = getKickoff(realId);
+        result = {
+          start: kickoff,
+          end: addDays(kickoff, Math.max(1, task.durationDays), isWorkdays),
+        };
+      } else {
+        let minStart: Date | null = null;
+        let maxEnd: Date | null = null;
+        let totalDuration = 0;
+        let weightedProgressSum = 0;
+
+        for (const child of children) {
+          const childDates = resolveTask(child.id);
+          if (!minStart || childDates.start.getTime() < minStart.getTime()) {
+            minStart = childDates.start;
+          }
+          if (!maxEnd || childDates.end.getTime() > maxEnd.getTime()) {
+            maxEnd = childDates.end;
+          }
+          const dur = Math.max(1, child.durationDays);
+          totalDuration += dur;
+          weightedProgressSum += child.progress * dur;
         }
+
+        const start = minStart || getKickoff(realId);
+        const end = maxEnd || start;
+
+        task.durationDays = Math.max(
+          1,
+          Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24))
+        );
+        task.progress = totalDuration > 0 ? weightedProgressSum / totalDuration : 0;
+
+        result = { start, end };
       }
-      startDate = maxPredEnd || defaultProjectStart;
     } else {
-      startDate = defaultProjectStart;
+      const startDate = getKickoff(realId);
+      let endDate: Date;
+      if (task.explicitEnd) {
+        endDate = parseDate(task.explicitEnd);
+        if (task.durationDays <= 1 && endDate.getTime() >= startDate.getTime()) {
+          const diffDays = Math.max(
+            1,
+            Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24))
+          );
+          task.durationDays = diffDays;
+        }
+      } else if (task.milestone) {
+        endDate = new Date(startDate.getTime());
+      } else {
+        endDate = addDays(startDate, task.durationDays, isWorkdays);
+      }
+      result = { start: startDate, end: endDate };
     }
 
-    let endDate: Date;
-    if (task.explicitEnd) {
-      endDate = parseDate(task.explicitEnd);
-      // Auto-compute durationDays if not specified
-      if (task.durationDays <= 1 && endDate.getTime() >= startDate.getTime()) {
-        const diffDays = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)));
-        task.durationDays = diffDays;
-      }
-    } else if (task.milestone) {
-      endDate = new Date(startDate.getTime());
-    } else {
-      endDate = addDays(startDate, task.durationDays, isWorkdays);
-    }
-
-    visiting.delete(realId);
-    visited.add(realId);
-
-    const result = { start: startDate, end: endDate };
+    resolvingTasks.delete(realId);
     resolvedDates.set(realId, result);
     return result;
   }
 
-  // Resolve leaf tasks first
+  // Resolve all tasks
   for (const t of intermediateList) {
-    if (!t.hasChildren) {
-      resolveTask(t.id);
-    }
+    resolveTask(t.id);
   }
-
-  // 3. Roll up summary parent dates and progress from children
-  function rollupParents(parentId: string | null) {
-    const children = intermediateList.filter((t) => t.parentId === parentId);
-    for (const child of children) {
-      if (child.hasChildren) {
-        rollupParents(child.id);
-        const subChildren = intermediateList.filter((t) => t.parentId === child.id);
-        if (subChildren.length > 0) {
-          let minStart: Date | null = null;
-          let maxEnd: Date | null = null;
-          let totalDuration = 0;
-          let weightedProgressSum = 0;
-
-          for (const sc of subChildren) {
-            const scDates = resolvedDates.get(sc.id);
-            if (scDates) {
-              if (!minStart || scDates.start.getTime() < minStart.getTime()) {
-                minStart = scDates.start;
-              }
-              if (!maxEnd || scDates.end.getTime() > maxEnd.getTime()) {
-                maxEnd = scDates.end;
-              }
-            }
-            const dur = Math.max(1, sc.durationDays);
-            totalDuration += dur;
-            weightedProgressSum += sc.progress * dur;
-          }
-
-          if (minStart && maxEnd) {
-            resolvedDates.set(child.id, { start: minStart, end: maxEnd });
-            child.durationDays = Math.max(
-              1,
-              Math.round((maxEnd.getTime() - minStart.getTime()) / (1000 * 60 * 60 * 24))
-            );
-          }
-          child.progress = totalDuration > 0 ? weightedProgressSum / totalDuration : 0;
-        }
-      }
-    }
-  }
-
-  rollupParents(null);
 
   // 4. Construct resolved tasks & links
   const resolvedTasks: ResolvedGanttTask[] = [];

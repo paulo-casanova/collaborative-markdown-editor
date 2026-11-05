@@ -137,6 +137,7 @@ flowchart LR
    * [`authStore`](file:///home/pasc/cme/frontend/src/stores/authStore.ts): Handles session storage, user profile state, login challenges, and session expiry recovery.
 4. **Hierarchical Gantt & Visualization Engine**:
    - Parses Markdown YAML Gantt blocks into scheduled task models with dynamic duration resolution (`5d`, `2w`), topological dependency scheduling (`dependsOn`), and parent summary rollups.
+   - Supports bidirectional dependencies involving summary tasks: tasks depending on a summary task wait for all subtasks within the summary task to complete, while summary tasks depending on predecessors cascade kickoff start dates down to any unanchored subtasks without explicit start dates or dependencies.
    - Built on Vega templates with lazy-loaded `vega-embed` chunks, theme synchronization, WBS hierarchy tree, progress bars, milestone diamonds, and orthogonal connector arrows.
    - **Split Frozen Layout & Independent Bar Scrolling**: Splits rendering into a fixed-width left table pane (`.gantt-table-pane`) and an independently horizontally scrollable timeline pane (`.gantt-timeline-pane`, `overflow-x-auto`). Supports explicit numeric widths or dynamic auto-scaling (`width: auto` / `as-needed`), forward wheel scrolling from table to timeline, bidirectional row hover synchronization via Vega signals (`rowHover`), and headless 2x retina canvas compilation for unified clipboard PNG export (`copyGanttAsPng`).
 5. **Document Checkout & External File Lifecycle Subsystem**:

@@ -357,7 +357,7 @@ CME provides a native, interactive **Hierarchical Gantt Chart** engine built on 
 Unlike standard Mermaid Gantt diagrams, CME's hierarchical Gantt supports:
 * **Multi-Level Tree Breakdowns**: Deeply nested work breakdown structures (Epics $\rightarrow$ Phases $\rightarrow$ Subtasks) with WBS index numbering and automatic parent summary rollups.
 * **Dynamic Durations**: Define task spans using duration strings (`5d`, `2w`, `1m`) instead of hardcoding end dates.
-* **Waterfall Dependency Scheduling**: Tasks can specify `dependsOn: taskA`, automatically sequencing start dates to the predecessor's completion and drawing visual connector arrows.
+* **Waterfall Dependency Scheduling**: Tasks can specify `dependsOn: taskA`, automatically sequencing start dates to the predecessor's completion and drawing visual connector arrows. Supports dependencies on individual tasks, milestones, and **summary tasks** (waiting for all subtasks within the summary task to complete). Summary tasks can also depend on other tasks or summary tasks, automatically scheduling unanchored subtasks when the summary task begins.
 * **Resource Assignment & `@mentions`**: Assign team members directly with CME `@username` syntax (with editor autocompletion) and color-code tasks by resource.
 * **Interactive Live Preview & Reader Integration**: Rendered directly in CodeMirror Live Preview and Reader mode with click-to-edit support, hover tooltips, and theme synchronization.
 
@@ -422,7 +422,7 @@ tasks:
 | `start` | `date string` | Start date (`YYYY-MM-DD`). Optional if `dependsOn` is provided. |
 | `end` | `date string` | Explicit completion date (`YYYY-MM-DD`). Optional if `duration` is provided. |
 | `duration` | `string \| number` | Span in days (`5d`), weeks (`2w`), months (`1m`), or zero (`0d`). |
-| `dependsOn` | `string \| string[]` | Predecessor ID(s). Supports lag offsets like `task1 + 2d`. |
+| `dependsOn` | `string \| string[]` | Predecessor ID(s) or summary task ID(s). Supports lag offsets like `task1 + 2d` or `phase1 + 3d`. Depending on a summary task waits for all its subtasks to complete; a summary task depending on a predecessor starts any unanchored subtasks when the summary task begins. |
 | `assignee` | `string \| string[]` | Contributor username(s), team names, or `@mentions`. Supports allocation percentages (e.g. `@alice (50%)`). |
 | `allocation` | `number \| string` | Default allocation percentage for the task (e.g. `50%` or `0.5`, defaults to `100%`). |
 | `progress` | `number \| string` | Completion percentage (e.g. `75%`, `0.75`, or `75`). |

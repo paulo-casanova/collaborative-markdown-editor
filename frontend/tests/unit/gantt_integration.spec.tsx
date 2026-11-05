@@ -127,4 +127,42 @@ tasks:
     expect(linksTable.values[0].sourceId).toBe('a');
     expect(linksTable.values[0].targetId).toBe('b');
   });
+
+  it('builds Vega links connecting summary tasks to dependent tasks', () => {
+    const rawYaml = `
+tasks:
+  - id: prep
+    name: Prep
+    start: 2026-01-01
+    duration: 3d
+  - id: phase1
+    name: Phase 1
+    dependsOn: prep
+    children:
+      - id: p1_task
+        duration: 4d
+  - id: launch
+    name: Launch
+    dependsOn: phase1
+    milestone: true
+`;
+    const model = parseGanttMarkdown(rawYaml);
+    const spec = buildVegaGanttSpec(model, false);
+
+    const linksTable = spec.data.find((d: any) => d.name === 'links');
+    expect(linksTable).toBeDefined();
+    expect(linksTable.values).toHaveLength(2);
+
+    // Link from prep to phase1
+    expect(linksTable.values[0].sourceId).toBe('prep');
+    expect(linksTable.values[0].targetId).toBe('phase1');
+    expect(linksTable.values[0].sourceEnd).toBe('2026-01-04');
+    expect(linksTable.values[0].targetStart).toBe('2026-01-04');
+
+    // Link from phase1 to launch
+    expect(linksTable.values[1].sourceId).toBe('phase1');
+    expect(linksTable.values[1].targetId).toBe('launch');
+    expect(linksTable.values[1].sourceEnd).toBe('2026-01-08');
+    expect(linksTable.values[1].targetStart).toBe('2026-01-08');
+  });
 });

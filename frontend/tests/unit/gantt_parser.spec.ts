@@ -340,4 +340,173 @@ tasks:
       expect(model.errors.some((e) => e.includes('YAML Syntax Error'))).toBe(true);
     });
   });
+
+  describe('Summary Task Dependencies & Start Inheritance', () => {
+    it('waits for all subtasks to complete when depending on a summary task', () => {
+      const yaml = `
+tasks:
+  - id: phase1
+    name: Phase 1
+    children:
+      - id: p1_task1
+        start: 2026-04-01
+        duration: 5d # Ends 2026-04-06
+      - id: p1_task2
+        start: 2026-04-03
+        duration: 8d # Ends 2026-04-11
+  - id: after_phase1
+    name: After Phase 1
+    dependsOn: phase1
+    duration: 3d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+
+      const p1 = model.tasks.find((t) => t.id === 'phase1')!;
+      const afterP1 = model.tasks.find((t) => t.id === 'after_phase1')!;
+
+      expect(p1.start).toBe('2026-04-01');
+      expect(p1.end).toBe('2026-04-11');
+
+      // after_phase1 must start after ALL subtasks in phase1 complete
+      expect(afterP1.start).toBe('2026-04-11');
+      expect(afterP1.end).toBe('2026-04-14');
+
+      expect(model.links).toContainEqual({ source: 'phase1', target: 'after_phase1' });
+    });
+
+    it('starts unanchored subtasks when their summary task starts via dependsOn', () => {
+      const yaml = `
+tasks:
+  - id: prep
+    name: Preparation
+    start: 2026-04-01
+    duration: 4d # Ends 2026-04-05
+  - id: phase2
+    name: Phase 2
+    dependsOn: prep
+    children:
+      - id: p2_unanchored1
+        name: Unanchored Task 1
+        duration: 3d
+      - id: p2_chained
+        name: Chained Task
+        dependsOn: p2_unanchored1
+        duration: 4d
+      - id: p2_explicit
+        name: Explicit Task
+        start: 2026-04-10
+        duration: 5d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+
+      const prep = model.tasks.find((t) => t.id === 'prep')!;
+      const p2 = model.tasks.find((t) => t.id === 'phase2')!;
+      const u1 = model.tasks.find((t) => t.id === 'p2_unanchored1')!;
+      const chained = model.tasks.find((t) => t.id === 'p2_chained')!;
+      const explicit = model.tasks.find((t) => t.id === 'p2_explicit')!;
+
+      expect(prep.end).toBe('2026-04-05');
+
+      // Unanchored child inherits phase2's kickoff from prep.end
+      expect(u1.start).toBe('2026-04-05');
+      expect(u1.end).toBe('2026-04-08');
+
+      // Chained task starts when u1 finishes
+      expect(chained.start).toBe('2026-04-08');
+      expect(chained.end).toBe('2026-04-12');
+
+      // Explicit child starts on its explicit start date
+      expect(explicit.start).toBe('2026-04-10');
+      expect(explicit.end).toBe('2026-04-15');
+
+      // Summary task spans from earliest child to latest child
+      expect(p2.start).toBe('2026-04-05');
+      expect(p2.end).toBe('2026-04-15');
+
+      expect(model.links).toContainEqual({ source: 'prep', target: 'phase2' });
+      expect(model.links).toContainEqual({ source: 'p2_unanchored1', target: 'p2_chained' });
+    });
+
+    it('supports a summary task depending on another summary task with lag', () => {
+      const yaml = `
+tasks:
+  - id: phaseA
+    name: Phase A
+    children:
+      - id: tA1
+        start: 2026-05-01
+        duration: 6d # Ends 2026-05-07
+  - id: phaseB
+    name: Phase B
+    dependsOn: phaseA + 2d
+    children:
+      - id: tB1
+        duration: 3d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+
+      const phaseA = model.tasks.find((t) => t.id === 'phaseA')!;
+      const phaseB = model.tasks.find((t) => t.id === 'phaseB')!;
+      const tB1 = model.tasks.find((t) => t.id === 'tB1')!;
+
+      expect(phaseA.end).toBe('2026-05-07');
+
+      // phaseB starts 2 days after phaseA ends => 2026-05-09
+      expect(phaseB.start).toBe('2026-05-09');
+      expect(phaseB.end).toBe('2026-05-12');
+      expect(tB1.start).toBe('2026-05-09');
+      expect(tB1.end).toBe('2026-05-12');
+
+      expect(model.links).toContainEqual({ source: 'phaseA', target: 'phaseB' });
+    });
+
+    it('cascades kickoff start through deeply nested summary levels', () => {
+      const yaml = `
+tasks:
+  - id: init
+    start: 2026-06-01
+    duration: 5d # Ends 2026-06-06
+  - id: epic
+    dependsOn: init
+    children:
+      - id: subphase
+        children:
+          - id: deep_task
+            duration: 4d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+
+      const epic = model.tasks.find((t) => t.id === 'epic')!;
+      const subphase = model.tasks.find((t) => t.id === 'subphase')!;
+      const deepTask = model.tasks.find((t) => t.id === 'deep_task')!;
+
+      expect(deepTask.start).toBe('2026-06-06');
+      expect(deepTask.end).toBe('2026-06-10');
+      expect(subphase.start).toBe('2026-06-06');
+      expect(subphase.end).toBe('2026-06-10');
+      expect(epic.start).toBe('2026-06-06');
+      expect(epic.end).toBe('2026-06-10');
+    });
+
+    it('detects circular dependencies involving summary tasks gracefully', () => {
+      const yaml = `
+tasks:
+  - id: phase1
+    name: Phase 1
+    children:
+      - id: c1
+        dependsOn: task2
+        duration: 3d
+  - id: task2
+    dependsOn: phase1
+    duration: 2d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors.some((e) => e.includes('Circular dependency'))).toBe(true);
+    });
+  });
 });
