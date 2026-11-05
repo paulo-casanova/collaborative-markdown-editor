@@ -219,13 +219,22 @@ Authorization: Bearer <token>
 
 ## 4. Action Item Tasks API
 
-### 4.1 List Tasks
+### 4.1 List Document Tasks
 ```http
 GET /api/v1/documents/:id/tasks
 Authorization: Bearer <token>
 ```
 
-### 4.2 Create Task
+### 4.2 List All Workspace Tasks (Dashboard)
+```http
+GET /api/v1/tasks?completed=false&assigned_to_me=true
+Authorization: Bearer <token>
+```
+* **Query Parameters**:
+  * `completed` (`true` | `false`): Filter by task completion state.
+  * `assigned_to_me` (`true` | `false`): Filter tasks assigned to authenticated user.
+
+### 4.3 Create Review Task
 ```http
 POST /api/v1/documents/:id/tasks
 Authorization: Bearer <token>
@@ -235,13 +244,13 @@ Content-Type: application/json
   "description": "Update deployment diagram with replica nodes",
   "comment_id": "b666d4a2-5b3a-499f-ac18-551142bb2d6c",
   "assignee_id": "3424950f-f047-4a4a-963d-854d1eb33547",
-  "due_date": "2026-10-20T18:00:00Z"
+  "due_date": "2026-10-20"
 }
 ```
 
 **Response (`201 Created`)**: Returns created task entity.
 
-### 4.3 Toggle Task Completion
+### 4.4 Toggle Task Completion
 ```http
 PATCH /api/v1/tasks/:id
 Authorization: Bearer <token>
@@ -253,14 +262,40 @@ Content-Type: application/json
 ```
 
 **Response (`200 OK`)**: Returns updated task entity with `completed_at` timestamp.
+> **Note on Markdown Tasks**: When `source == "markdown"`, toggling completion mutates the underlying Markdown text (`- [ ]` $\leftrightarrow$ `- [x]`) in the active collaborative CRDT room (broadcasting opcode `0x03` sync updates to all connected editors) or directly updates document storage on disk.
 
-### 4.4 Delete Task
+### 4.5 Delete Task
 ```http
 DELETE /api/v1/tasks/:id
 Authorization: Bearer <token>
 ```
 
 **Response (`200 OK`)**: `{"status": "deleted"}`
+
+### 4.6 Task Entity Schema
+
+```json
+{
+  "id": "3b29c9fe-cf87-4389-9e80-77a8296a090b",
+  "document_id": "9d1b0981-d135-430b-93ff-15967b55f10b",
+  "document_title": "Architecture Overview",
+  "document_path": "specs/arch.md",
+  "comment_id": null,
+  "description": "Deploy backend service",
+  "assignee": {
+    "id": "1c7d...",
+    "username": "pasc",
+    "display_name": "Paulo Casanova",
+    "avatar_color": "#3b82f6"
+  },
+  "is_completed": false,
+  "due_date": "2026-11-20",
+  "created_at": "2026-11-06T02:00:00Z",
+  "completed_at": null,
+  "source": "markdown",
+  "line_number": 42
+}
+```
 
 ---
 

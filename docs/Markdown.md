@@ -231,16 +231,21 @@ CME provides a native syntax for inserting clean, colorful status pills and prio
 3. Third step
 ```
 
-### Interactive Task Checklists (GFM)
+### Interactive Task Checklists (GFM + CME)
 ```markdown
 - [x] Complete database schema migration
-- [x] Implement WebSocket reconnect logic
-- [ ] Write integration test suite
+- [x] Implement WebSocket reconnect logic @alice due:2026-11-15
+- [ ] Write integration test suite @bob due:2026-11-20
 - [ ] Deploy to staging cluster
 ```
 
-* **Live Toggling**: In both the CodeMirror Live Preview and Reader mode, task checkboxes can be clicked directly to toggle their checked state (`[ ]` $\leftrightarrow$ `[x]`).
-* In collaborative sessions, checking a task broadcasts the state change to all active room peers in real time.
+* **Live Toggling**: In both CodeMirror Live Preview and Reader mode, task checkboxes can be clicked directly to toggle their checked state (`[ ]` $\leftrightarrow$ `[x]`). In collaborative sessions, checking a task broadcasts the state change to all active room peers in real time.
+* **Assignee Metadata (`@user`)**: Add `@username` to assign a task directly to a teammate.
+* **Deadline Metadata (`due:YYYY-MM-DD`)**: Add `due:YYYY-MM-DD` to attach a completion deadline with day precision.
+* **Two-Way Dashboard Sync**:
+  * CME automatically parses checklist items written inside any Markdown document across your workspaces.
+  * Extracted tasks appear in the centralized **Dashboard** (`/tasks`) alongside review action items, categorized by document, due date, and assignee.
+  * Toggling a markdown task complete in the Dashboard automatically updates the underlying Markdown file (and active collaborative room) with `- [x]`, maintaining 100% two-way synchronization.
 
 ---
 
@@ -594,7 +599,7 @@ flowchart LR
 | **Image Dimensions** | `![alt\|300x200](img.png)` | Obsidian | Full (Native aspect ratio preservation) |
 | **GFM Alerts / Callouts** | `> [!NOTE] Custom Title` | GFM + Obsidian | Full (All 5 types, aliases, custom titles, fold markers) |
 | **Status & Priority Pills** | `[status:done]`, `[priority:p0]` | CME Extension | Full (Pills in text and tables) |
-| **Interactive Checklists** | `- [ ] Pending`, `- [x] Done` | GFM | Full (Interactive clicks in Editor & Reader) |
+| **Interactive Checklists** | `- [ ] Task @user due:YYYY-MM-DD` | GFM + CME | Full (Interactive clicks in Editor & Reader, two-way sync with Dashboard) |
 | **Interactive Tables** | `\| Header \|` | GFM | Full (Live column/row reorder & edit widget) |
 | **Fenced Code Highlighting** | ```` ```typescript ```` | CommonMark / GFM | Full (50+ languages via Highlight.js) |
 | **Code Transclusion** | ```` ```snippet="path" ```` | CME Extension | Full (Dynamic repo sync) |

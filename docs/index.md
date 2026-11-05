@@ -182,6 +182,7 @@ For engineering teams, system administrators, and contributors who want to dive 
 * **[Review Engine API](api/review_engine.md):** Endpoints and live events for threaded comments, inline suggestions, and tasks.
 * **[Health & Observability API](api/health.md):** Health monitoring endpoints (`GET /api/v1/health`), operational metrics, and monitoring probes.
 * **[Relational Database Schema](database/schema.md):** PostgreSQL tables, constraints, foreign keys, and indexes.
+* **[Third-Party Dependencies & Licenses](Dependencies.md):** Comprehensive inventory of all backend and frontend libraries, versions, licenses, and usage purposes.
 * **[Implementation Progress Log](implementation_log.md):** Historical implementation record, test verification, and development phases.
 
 ---
