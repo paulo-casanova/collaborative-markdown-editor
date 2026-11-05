@@ -106,7 +106,7 @@ export const ReaderPage: React.FC = () => {
   const rawTarget = pathParam || wildcard || (idParam !== 'by-path' ? idParam : '') || '';
 
   const { setBreadcrumbs, setViewMode, dialogSidecarOpen, toggleDialogSidecar } = useUIStore();
-  const { openTab } = useWorkspaceStore();
+  const { closeAllTabs } = useWorkspaceStore();
   const [showReviews, setShowReviews] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
   const [widthMode, setWidthMode] = useState<WidthMode>('standard');
@@ -873,16 +873,14 @@ export const ReaderPage: React.FC = () => {
     }
   };
 
-  // Keep breadcrumbs and workspace tabs in sync
+  // Close all editing tabs when entering reader mode so only the current page is viewed
+  useEffect(() => {
+    closeAllTabs();
+  }, [closeAllTabs]);
+
+  // Keep breadcrumbs in sync
   useEffect(() => {
     if (document) {
-      openTab({
-        id: document.id,
-        path: document.path,
-        title: document.title || document.path.split('/').pop() || 'Document',
-        is_bundle: document.is_bundle,
-      });
-
       const parts = document.path.split('/');
       const breadcrumbs = [
         { label: 'Workspaces', path: '/' },
@@ -894,7 +892,7 @@ export const ReaderPage: React.FC = () => {
       ];
       setBreadcrumbs(breadcrumbs);
     }
-  }, [document, openTab, setBreadcrumbs]);
+  }, [document, setBreadcrumbs]);
 
   const scrollTarget = useCallback((target: string) => {
     if (!target) return;

@@ -13,6 +13,8 @@ describe('WorkspaceStore & UIStore behavior', () => {
       secondaryTabId: null,
       splitRatio: 0.5,
       outlineWidth: 256,
+      maxOpenTabs: 2,
+      userTabLimits: {},
     });
     useUIStore.setState({
       viewMode: 'edit',
@@ -329,5 +331,117 @@ describe('WorkspaceStore & UIStore behavior', () => {
 
     handleOpenDocument(itemWithoutId);
     expect(navigatedUrl).toBe('/documents/by-path?path=docs%2Fcrdt%2FUnindexed.md');
+  });
+
+  describe('Tab limit enforcement & reader mode transitions', () => {
+    it('defaults maxOpenTabs to 2', () => {
+      expect(useWorkspaceStore.getState().maxOpenTabs).toBe(2);
+    });
+
+    it('enforces default limit of 2 tabs when opening new documents (LRU eviction)', () => {
+      const ws = useWorkspaceStore.getState();
+
+      // Open tab 1
+      ws.openTab({ id: 'doc-1', path: 'doc-1.md', title: 'Doc 1' });
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(1);
+      expect(useWorkspaceStore.getState().tabs.map((t) => t.id)).toEqual(['doc-1']);
+      expect(useWorkspaceStore.getState().activeTabId).toBe('doc-1');
+
+      // Open tab 2
+      ws.openTab({ id: 'doc-2', path: 'doc-2.md', title: 'Doc 2' });
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(2);
+      expect(useWorkspaceStore.getState().tabs.map((t) => t.id)).toEqual(['doc-2', 'doc-1']);
+      expect(useWorkspaceStore.getState().activeTabId).toBe('doc-2');
+
+      // Open tab 3 -> should evict the oldest unpinned tab (doc-1)
+      ws.openTab({ id: 'doc-3', path: 'doc-3.md', title: 'Doc 3' });
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(2);
+      expect(useWorkspaceStore.getState().tabs.map((t) => t.id)).toEqual(['doc-3', 'doc-2']);
+      expect(useWorkspaceStore.getState().activeTabId).toBe('doc-3');
+
+      // Re-opening an already open tab does not evict anything
+      ws.openTab({ id: 'doc-2', path: 'doc-2.md', title: 'Doc 2' });
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(2);
+      expect(useWorkspaceStore.getState().activeTabId).toBe('doc-2');
+    });
+
+    it('preserves pinned tabs over unpinned tabs when evicting at the limit', () => {
+      const ws = useWorkspaceStore.getState();
+
+      ws.openTab({ id: 'doc-1', path: 'doc-1.md', title: 'Doc 1' });
+      ws.openTab({ id: 'doc-2', path: 'doc-2.md', title: 'Doc 2' });
+
+      // Pin doc-1
+      ws.togglePinTab('doc-1');
+      expect(useWorkspaceStore.getState().tabs.find((t) => t.id === 'doc-1')?.isPinned).toBe(true);
+
+      // Open doc-3: unpinned doc-2 should be evicted, pinned doc-1 is preserved
+      ws.openTab({ id: 'doc-3', path: 'doc-3.md', title: 'Doc 3' });
+      const currentTabs = useWorkspaceStore.getState().tabs;
+      expect(currentTabs).toHaveLength(2);
+      expect(currentTabs.map((t) => t.id)).toEqual(['doc-1', 'doc-3']);
+      expect(currentTabs.find((t) => t.id === 'doc-1')?.isPinned).toBe(true);
+    });
+
+    it('supports user settings preference per user and prunes excess tabs when limit is decreased', () => {
+      const ws = useWorkspaceStore.getState();
+
+      // Alice sets her limit to 3
+      ws.setMaxOpenTabs(3, 'alice');
+      expect(useWorkspaceStore.getState().maxOpenTabs).toBe(3);
+
+      ws.openTab({ id: 'doc-1', path: 'doc-1.md', title: 'Doc 1' });
+      ws.openTab({ id: 'doc-2', path: 'doc-2.md', title: 'Doc 2' });
+      ws.openTab({ id: 'doc-3', path: 'doc-3.md', title: 'Doc 3' });
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(3);
+
+      // Bob logs in (has no stored preference yet) -> defaults to 2 and prunes excess
+      ws.loadUserTabLimit('bob');
+      expect(useWorkspaceStore.getState().maxOpenTabs).toBe(2);
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(2);
+
+      // Bob sets his limit to 1 -> prunes down to 1 tab (active tab)
+      ws.setMaxOpenTabs(1, 'bob');
+      expect(useWorkspaceStore.getState().maxOpenTabs).toBe(1);
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(1);
+      expect(useWorkspaceStore.getState().activeTabId).toBe(useWorkspaceStore.getState().tabs[0].id);
+
+      // Switching back to Alice restores her preference of 3
+      ws.loadUserTabLimit('alice');
+      expect(useWorkspaceStore.getState().maxOpenTabs).toBe(3);
+    });
+
+    it('clamps invalid or extreme tab limit values', () => {
+      const ws = useWorkspaceStore.getState();
+
+      ws.setMaxOpenTabs(0);
+      expect(useWorkspaceStore.getState().maxOpenTabs).toBe(1);
+
+      ws.setMaxOpenTabs(-10);
+      expect(useWorkspaceStore.getState().maxOpenTabs).toBe(1);
+
+      ws.setMaxOpenTabs(150);
+      expect(useWorkspaceStore.getState().maxOpenTabs).toBe(100);
+    });
+
+    it('closes all editing tabs when closeAllTabs is called (reader mode switch)', () => {
+      const ws = useWorkspaceStore.getState();
+
+      ws.openTab({ id: 'doc-1', path: 'doc-1.md', title: 'Doc 1' });
+      ws.openTab({ id: 'doc-2', path: 'doc-2.md', title: 'Doc 2' });
+      ws.setSplitMode('vertical', 'doc-2');
+
+      expect(useWorkspaceStore.getState().tabs).toHaveLength(2);
+      expect(useWorkspaceStore.getState().splitMode).toBe('vertical');
+
+      // Switch to reader mode triggers closeAllTabs
+      ws.closeAllTabs();
+
+      const state = useWorkspaceStore.getState();
+      expect(state.tabs).toHaveLength(0);
+      expect(state.activeTabId).toBeNull();
+      expect(state.secondaryTabId).toBeNull();
+      expect(state.splitMode).toBe('none');
+    });
   });
 });

@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Sun, Moon, BookOpen, Monitor, Key, User, Lock, CheckCircle2, AlertCircle, ShieldAlert } from 'lucide-react';
+import { Sun, Moon, BookOpen, Monitor, Key, User, Lock, CheckCircle2, AlertCircle, ShieldAlert, Layers } from 'lucide-react';
 import { useThemeStore, ThemeMode } from '../stores/themeStore';
 import { useUIStore } from '../stores/uiStore';
+import { useWorkspaceStore } from '../stores/workspaceStore';
 import { fetchCurrentUser, updateCurrentUserProfile } from '../api/auth';
 import { Badge } from '../components/common/Badge';
 
 export const SettingsPage: React.FC = () => {
   const { mode, setMode } = useThemeStore();
   const { setBreadcrumbs, setTokensModalOpen } = useUIStore();
+  const { maxOpenTabs, setMaxOpenTabs, loadUserTabLimit } = useWorkspaceStore();
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -35,6 +37,31 @@ export const SettingsPage: React.FC = () => {
   const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
   const [passwordSuccessMsg, setPasswordSuccessMsg] = useState<string | null>(null);
   const [passwordErrorMsg, setPasswordErrorMsg] = useState<string | null>(null);
+
+  const [tabLimitInput, setTabLimitInput] = useState<number>(maxOpenTabs || 2);
+  const [tabLimitFeedback, setTabLimitFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (user) {
+      const userKey = user.id || user.user_id || user.username || '';
+      loadUserTabLimit(userKey);
+    }
+  }, [user, loadUserTabLimit]);
+
+  useEffect(() => {
+    setTabLimitInput(maxOpenTabs || 2);
+  }, [maxOpenTabs]);
+
+  const handleSaveTabLimit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const userKey = user?.id || user?.user_id || user?.username || '';
+    const num = parseInt(String(tabLimitInput), 10);
+    const clamped = Math.max(1, Math.min(50, isNaN(num) ? 2 : num));
+    setTabLimitInput(clamped);
+    setMaxOpenTabs(clamped, userKey);
+    setTabLimitFeedback(`Tab limit preference updated to ${clamped}.`);
+    setTimeout(() => setTabLimitFeedback(null), 3000);
+  };
 
   useEffect(() => {
     if (user) {
@@ -167,6 +194,56 @@ export const SettingsPage: React.FC = () => {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      {/* Editor Preferences */}
+      <section className="space-y-4 pt-4 border-t border-cme-border-base">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-cme-text-subtle">
+          Editor Preferences
+        </h2>
+
+        <div className="p-5 rounded-xl border border-cme-border-base bg-cme-bg-surface space-y-4 text-xs">
+          <form onSubmit={handleSaveTabLimit} className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1 max-w-md">
+              <div className="flex items-center gap-2">
+                <Layers className="w-4 h-4 text-cme-primary" />
+                <span className="font-semibold text-xs text-cme-text-base">Max Open Tabs</span>
+              </div>
+              <p className="text-[11px] text-cme-text-muted leading-relaxed">
+                Limit the maximum number of editor tabs open simultaneously per user (default is 2). When opening a new document beyond this limit, the oldest unpinned tab is automatically closed.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={tabLimitInput}
+                onChange={(e) => setTabLimitInput(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                data-testid="max-tabs-input"
+                className="w-20 px-3 py-1.5 bg-cme-bg-subtle border border-cme-border-base rounded-lg text-xs font-mono text-center text-cme-text-base focus:outline-none focus:ring-1 focus:ring-cme-primary"
+              />
+              <button
+                type="submit"
+                data-testid="save-tab-limit-btn"
+                className="px-3 py-1.5 rounded-lg bg-cme-primary text-white text-xs font-medium hover:bg-cme-primary-hover transition-colors shrink-0"
+              >
+                Save Limit
+              </button>
+            </div>
+          </form>
+
+          {tabLimitFeedback && (
+            <div
+              className="flex items-center gap-2 p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs"
+              data-testid="tab-limit-feedback"
+            >
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+              <span>{tabLimitFeedback}</span>
+            </div>
+          )}
         </div>
       </section>
 

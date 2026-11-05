@@ -21,6 +21,8 @@ interface WorkspaceState {
   secondaryTabId: string | null;
   splitRatio: number; // 0.2 to 0.8, default 0.5
   outlineWidth: number; // in px, default 256
+  maxOpenTabs: number; // default: 2
+  userTabLimits: Record<string, number>;
 
   // Tab Actions
   openTab: (tab: Omit<WorkspaceTab, 'isPinned' | 'isDirty'>, activate?: boolean) => void;
@@ -29,10 +31,13 @@ interface WorkspaceState {
   closeTab: (tabId: string) => void;
   closeOtherTabs: (tabId: string) => void;
   closeTabsToRight: (tabId: string) => void;
+  closeAllTabs: () => void;
   setActiveTabId: (tabId: string) => void;
   reorderTabs: (sourceIndex: number, targetIndex: number) => void;
   togglePinTab: (tabId: string) => void;
   setTabDirty: (tabId: string, dirty: boolean) => void;
+  setMaxOpenTabs: (limit: number, userKey?: string) => void;
+  loadUserTabLimit: (userKey?: string | null) => void;
 
   // Split-View & Layout Actions
   setSplitMode: (mode: SplitMode, secondaryId?: string | null) => void;
@@ -51,10 +56,12 @@ const workspaceStore = createStore<WorkspaceState>()(
       secondaryTabId: null,
       splitRatio: 0.5,
       outlineWidth: 256,
+      maxOpenTabs: 2,
+      userTabLimits: {},
 
       openTab: (newTab, activate = true) => {
         if (!newTab.id || newTab.id === 'by-path') return;
-        const { tabs, activeTabId, splitMode, secondaryTabId } = get();
+        const { tabs, activeTabId, splitMode, secondaryTabId, maxOpenTabs = 2 } = get();
         const existingIndex = tabs.findIndex((t) => t.id === newTab.id);
 
         if (existingIndex >= 0) {
@@ -92,16 +99,81 @@ const workspaceStore = createStore<WorkspaceState>()(
             isDirty: false,
           });
 
+          // Enforce maxOpenTabs limit
+          const limit = Math.max(1, maxOpenTabs || 2);
+          while (updatedTabs.length > limit) {
+            // Priority 1: unpinned tab that is neither newTab nor activeTabId
+            let candidateIdx = -1;
+            for (let i = updatedTabs.length - 1; i >= 0; i--) {
+              if (
+                updatedTabs[i].id !== newTab.id &&
+                !updatedTabs[i].isPinned &&
+                updatedTabs[i].id !== activeTabId
+              ) {
+                candidateIdx = i;
+                break;
+              }
+            }
+            // Priority 2: any unpinned tab that is not newTab
+            if (candidateIdx === -1) {
+              for (let i = updatedTabs.length - 1; i >= 0; i--) {
+                if (updatedTabs[i].id !== newTab.id && !updatedTabs[i].isPinned) {
+                  candidateIdx = i;
+                  break;
+                }
+              }
+            }
+            // Priority 3: any pinned tab that is neither newTab nor activeTabId
+            if (candidateIdx === -1) {
+              for (let i = updatedTabs.length - 1; i >= 0; i--) {
+                if (updatedTabs[i].id !== newTab.id && updatedTabs[i].id !== activeTabId) {
+                  candidateIdx = i;
+                  break;
+                }
+              }
+            }
+            // Priority 4: any tab that is not newTab
+            if (candidateIdx === -1) {
+              for (let i = updatedTabs.length - 1; i >= 0; i--) {
+                if (updatedTabs[i].id !== newTab.id) {
+                  candidateIdx = i;
+                  break;
+                }
+              }
+            }
+            if (candidateIdx !== -1) {
+              updatedTabs.splice(candidateIdx, 1);
+            } else {
+              break;
+            }
+          }
+
+          const nextActiveId = activate
+            ? newTab.id
+            : activeTabId && updatedTabs.some((t) => t.id === activeTabId)
+            ? activeTabId
+            : updatedTabs[0]?.id || null;
+
           // If in split mode and secondaryTabId is null, set as secondary
           let nextSecondary = secondaryTabId;
-          if (splitMode !== 'none' && !secondaryTabId && activeTabId && activeTabId !== newTab.id) {
+          let nextSplitMode = splitMode;
+          if (nextSecondary && !updatedTabs.some((t) => t.id === nextSecondary)) {
+            const candidate = updatedTabs.find((t) => t.id !== nextActiveId);
+            if (candidate) {
+              nextSecondary = candidate.id;
+            } else {
+              nextSecondary = null;
+              nextSplitMode = 'none';
+            }
+          } else if (splitMode !== 'none' && !secondaryTabId && nextActiveId && nextActiveId !== newTab.id) {
             nextSecondary = newTab.id;
           }
 
           set({
             tabs: updatedTabs,
-            ...(activate ? { activeTabId: newTab.id } : {}),
+            activeTabId: nextActiveId,
             secondaryTabId: nextSecondary,
+            splitMode: nextSplitMode,
           });
         }
       },
@@ -210,6 +282,131 @@ const workspaceStore = createStore<WorkspaceState>()(
         });
       },
 
+      closeAllTabs: () => {
+        set({
+          tabs: [],
+          activeTabId: null,
+          secondaryTabId: null,
+          splitMode: 'none',
+        });
+      },
+
+      setMaxOpenTabs: (limit, userKey) => {
+        const num = typeof limit === 'number' && !isNaN(limit) ? Math.floor(limit) : 2;
+        const clampedLimit = Math.max(1, Math.min(100, num));
+        const cleanKey = (userKey || '').trim();
+        const { tabs, activeTabId, secondaryTabId, splitMode, userTabLimits = {} } = get();
+
+        const updatedLimits = { ...userTabLimits };
+        if (cleanKey) {
+          updatedLimits[cleanKey] = clampedLimit;
+          try {
+            if (typeof window !== 'undefined' && window.localStorage) {
+              localStorage.setItem(`cme_tab_limit_${cleanKey}`, String(clampedLimit));
+            }
+          } catch {}
+        }
+        try {
+          if (typeof window !== 'undefined' && window.localStorage) {
+            localStorage.setItem('cme_default_tab_limit', String(clampedLimit));
+          }
+        } catch {}
+
+        // Prune excess tabs if needed
+        const prunedTabs = [...tabs];
+        while (prunedTabs.length > clampedLimit) {
+          // Priority 1: unpinned tab that is not activeTabId
+          let candidateIdx = -1;
+          for (let i = prunedTabs.length - 1; i >= 0; i--) {
+            if (!prunedTabs[i].isPinned && prunedTabs[i].id !== activeTabId) {
+              candidateIdx = i;
+              break;
+            }
+          }
+          // Priority 2: any unpinned tab
+          if (candidateIdx === -1) {
+            for (let i = prunedTabs.length - 1; i >= 0; i--) {
+              if (!prunedTabs[i].isPinned) {
+                candidateIdx = i;
+                break;
+              }
+            }
+          }
+          // Priority 3: any pinned tab that is not activeTabId
+          if (candidateIdx === -1) {
+            for (let i = prunedTabs.length - 1; i >= 0; i--) {
+              if (prunedTabs[i].id !== activeTabId) {
+                candidateIdx = i;
+                break;
+              }
+            }
+          }
+          // Priority 4: any tab from the end
+          if (candidateIdx === -1) {
+            candidateIdx = prunedTabs.length - 1;
+          }
+          prunedTabs.splice(candidateIdx, 1);
+        }
+
+        let nextActive = activeTabId;
+        if (nextActive && !prunedTabs.some((t) => t.id === nextActive)) {
+          nextActive = prunedTabs.length > 0 ? prunedTabs[0].id : null;
+        }
+
+        let nextSecondary = secondaryTabId;
+        let nextSplitMode = splitMode;
+        if (nextSecondary && !prunedTabs.some((t) => t.id === nextSecondary)) {
+          const candidate = prunedTabs.find((t) => t.id !== nextActive);
+          if (candidate) {
+            nextSecondary = candidate.id;
+          } else {
+            nextSecondary = null;
+            nextSplitMode = 'none';
+          }
+        }
+
+        set({
+          maxOpenTabs: clampedLimit,
+          userTabLimits: updatedLimits,
+          tabs: prunedTabs,
+          activeTabId: nextActive,
+          secondaryTabId: nextSecondary,
+          splitMode: nextSplitMode,
+        });
+      },
+
+      loadUserTabLimit: (userKey) => {
+        const cleanKey = (userKey || '').trim();
+        let limit = 2;
+        if (cleanKey) {
+          const { userTabLimits = {} } = get();
+          if (typeof userTabLimits[cleanKey] === 'number' && userTabLimits[cleanKey] >= 1) {
+            limit = userTabLimits[cleanKey];
+          } else if (typeof window !== 'undefined' && window.localStorage) {
+            try {
+              const stored = localStorage.getItem(`cme_tab_limit_${cleanKey}`);
+              if (stored) {
+                const parsed = parseInt(stored, 10);
+                if (!isNaN(parsed) && parsed >= 1) {
+                  limit = parsed;
+                }
+              }
+            } catch {}
+          }
+        } else if (typeof window !== 'undefined' && window.localStorage) {
+          try {
+            const stored = localStorage.getItem('cme_default_tab_limit');
+            if (stored) {
+              const parsed = parseInt(stored, 10);
+              if (!isNaN(parsed) && parsed >= 1) {
+                limit = parsed;
+              }
+            }
+          } catch {}
+        }
+        get().setMaxOpenTabs(limit, cleanKey);
+      },
+
       setActiveTabId: (tabId) => {
         if (!tabId || tabId === 'by-path') return;
         set({ activeTabId: tabId });
@@ -300,6 +497,8 @@ const workspaceStore = createStore<WorkspaceState>()(
         secondaryTabId: state.secondaryTabId === 'by-path' ? null : state.secondaryTabId,
         splitRatio: state.splitRatio,
         outlineWidth: state.outlineWidth,
+        maxOpenTabs: state.maxOpenTabs || 2,
+        userTabLimits: state.userTabLimits || {},
       }),
       onRehydrateStorage: () => (state) => {
         if (state) {
@@ -315,6 +514,10 @@ const workspaceStore = createStore<WorkspaceState>()(
           if (state.secondaryTabId === 'by-path') {
             state.secondaryTabId = null;
           }
+          if (typeof state.maxOpenTabs !== 'number' || state.maxOpenTabs < 1) {
+            state.maxOpenTabs = 2;
+          }
+          state.userTabLimits = state.userTabLimits || {};
         }
       },
     }

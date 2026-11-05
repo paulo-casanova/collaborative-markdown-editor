@@ -61,7 +61,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     dialogSidecarOpen,
     toggleDialogSidecar,
   } = useUIStore();
-  const { updateTabMetadata, closeTab, outlineWidth, setOutlineWidth } = useWorkspaceStore();
+  const { updateTabMetadata, closeTab, closeAllTabs, outlineWidth, setOutlineWidth } = useWorkspaceStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [showOutline, setShowOutline] = useState<boolean>(false);
@@ -954,6 +954,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               onClick={() => {
                 syncDocReaderCache();
                 setViewMode('read');
+                closeAllTabs();
               }}
               className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-base transition-colors"
               title="Switch to Reader View"

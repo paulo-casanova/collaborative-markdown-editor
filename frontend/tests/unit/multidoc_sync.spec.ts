@@ -23,6 +23,7 @@ describe('Issue #5: Multi-document background synchronization', () => {
 
   it('keeps multiple open tabs in workspace state for concurrent rendering', () => {
     const ws = useWorkspaceStore.getState();
+    ws.setMaxOpenTabs(5);
     ws.openTab({ id: 'doc-1', path: '/doc1.md', title: 'Doc 1' });
     ws.openTab({ id: 'doc-2', path: '/doc2.md', title: 'Doc 2' });
     ws.openTab({ id: 'doc-3', path: '/doc3.md', title: 'Doc 3' });

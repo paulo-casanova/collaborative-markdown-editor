@@ -61,10 +61,22 @@ export const AppShell: React.FC = () => {
     return cleanup;
   }, [initThemeListener]);
 
+  // Load user tab limit preference
+  useEffect(() => {
+    if (user) {
+      const userKey = user.id || user.user_id || user.username || '';
+      useWorkspaceStore.getState().loadUserTabLimit(userKey);
+    } else {
+      useWorkspaceStore.getState().loadUserTabLimit(null);
+    }
+  }, [user]);
+
   // Keep global viewMode ('edit' vs 'read') synchronized with route changes
+  // and ensure all editing tabs are closed when entering reader mode
   useEffect(() => {
     if (location.pathname.startsWith('/docs/') || location.pathname.startsWith('/docs')) {
       setViewMode('read');
+      useWorkspaceStore.getState().closeAllTabs();
     } else if (
       location.pathname.startsWith('/documents/') ||
       location.pathname.startsWith('/doc/') ||
