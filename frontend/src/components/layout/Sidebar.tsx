@@ -8,10 +8,12 @@ import {
   CheckSquare,
   AtSign,
   Hash,
+  Lock,
 } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 import { fetchCurrentUser } from '../../api/auth';
 import { fetchUnreadMentionsCount } from '../../api/mentions';
+import { fetchMyCheckouts } from '../../api/checkouts';
 import { FileTree } from '../navigation/FileTree';
 import { RecentDocuments } from '../navigation/RecentDocuments';
 
@@ -58,6 +60,14 @@ export const Sidebar: React.FC = () => {
     refetchInterval: 15000,
   });
   const unreadMentionsCount = unreadMentionsData?.unread_count || 0;
+
+  const { data: myCheckouts = [] } = useQuery({
+    queryKey: ['my-checkouts'],
+    queryFn: fetchMyCheckouts,
+    staleTime: 5000,
+    refetchInterval: 15000,
+  });
+  const myCheckoutsCount = myCheckouts.length;
 
   if (!sidebarOpen) return null;
 
@@ -127,6 +137,29 @@ export const Sidebar: React.FC = () => {
         >
           <Hash className="w-4 h-4 text-amber-500" />
           <span>Tags</span>
+        </Link>
+
+        <Link
+          to="/checked-out"
+          className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+            isActive('/checked-out')
+              ? 'bg-cme-primary/10 text-cme-primary font-medium'
+              : 'text-cme-text-base hover:bg-cme-bg-hover'
+          }`}
+          data-testid="sidebar-checkouts-link"
+        >
+          <div className="flex items-center gap-2">
+            <Lock className="w-4 h-4 text-amber-500" />
+            <span>Checked Out</span>
+          </div>
+          {myCheckoutsCount > 0 && (
+            <span
+              className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-white"
+              data-testid="sidebar-checkouts-badge"
+            >
+              {myCheckoutsCount}
+            </span>
+          )}
         </Link>
 
         <Link

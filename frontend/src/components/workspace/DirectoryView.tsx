@@ -21,6 +21,11 @@ import {
   Home,
   X,
   Edit2,
+  Lock,
+  Unlock,
+  Upload,
+  Download,
+  History,
 } from 'lucide-react';
 import {
   fetchDirectoryDashboard,
@@ -29,7 +34,14 @@ import {
   renameDirectory,
   deleteDirectory,
   deleteDocument,
+  downloadWorkspaceFile,
+  getWorkspaceFileUrl,
 } from '../../api/documents';
+import { checkoutDocument, cancelCheckout } from '../../api/checkouts';
+import { saveCheckedOutFile } from '../../utils/localCheckoutStorage';
+import { apiFetch } from '../../api/client';
+import { CheckinModal } from '../checkouts/CheckinModal';
+import { BinaryHistoryModal } from '../checkouts/BinaryHistoryModal';
 import { DirectoryDashboard, DirectoryDashboardItem } from '../../types/document';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
 import { AccessControlModal } from './AccessControlModal';
@@ -65,6 +77,45 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
     directoryPath?: string;
     title: string;
   } | null>(null);
+
+  const [checkinTarget, setCheckinTarget] = useState<DirectoryDashboardItem | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<DirectoryDashboardItem | null>(null);
+
+  const handleCheckoutItem = async (item: DirectoryDashboardItem) => {
+    try {
+      await checkoutDocument(item.path);
+      const res = await apiFetch(getWorkspaceFileUrl(item.path));
+      const blob = await res.blob();
+      const saveRes = await saveCheckedOutFile(item.name, blob);
+      await queryClient.invalidateQueries({ queryKey: ['directory-details', cleanPath] });
+      await queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      await queryClient.invalidateQueries({ queryKey: ['my-checkouts'] });
+      if (saveRes.method === 'directory') {
+        alert(
+          `Checked out "${item.name}" successfully! Saved to your local folder "${saveRes.folderName}". Edit it with your local application, then Check In when finished.`
+        );
+      } else {
+        alert(
+          `Checked out "${item.name}" successfully! The file has been downloaded. Edit it with your local application, then Check In when finished.`
+        );
+      }
+    } catch (err: any) {
+      alert(`Failed to check out: ${err?.message || 'Unknown error'}`);
+    }
+  };
+
+  const handleCancelCheckoutItem = async (item: DirectoryDashboardItem) => {
+    if (confirm(`Cancel checkout for "${item.name}"? The lock will be released.`)) {
+      try {
+        await cancelCheckout(item.path);
+        await queryClient.invalidateQueries({ queryKey: ['directory-details', cleanPath] });
+        await queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+        await queryClient.invalidateQueries({ queryKey: ['my-checkouts'] });
+      } catch (err: any) {
+        alert(`Failed to cancel checkout: ${err?.message || 'Unknown error'}`);
+      }
+    }
+  };
 
   // Fetch directory dashboard
   const {
@@ -203,6 +254,26 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
   };
 
   const openDocumentTab = (item: DirectoryDashboardItem) => {
+    if (item.type === 'file') {
+      const lower = item.name.toLowerCase();
+      const isImg =
+        lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.svg') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.bmp') ||
+        lower.endsWith('.ico');
+      const isPdf = lower.endsWith('.pdf');
+      if (isImg || isPdf) {
+        window.open(getWorkspaceFileUrl(item.path), '_blank');
+      } else {
+        void downloadWorkspaceFile(item.path, item.name);
+      }
+      return;
+    }
+
     if (!item.id) {
       // Auto-reconcile unindexed on-disk files via by-path resolution
       navigate(`/documents/by-path?path=${encodeURIComponent(item.path)}`);
@@ -630,6 +701,22 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
                         <span className="font-medium text-cme-text-base hover:text-cme-primary hover:underline truncate">
                           {item.title || item.name}
                         </span>
+                        {item.checkout?.is_checked_out && (
+                          <span
+                            title={
+                              item.checkout.is_checked_out_by_me
+                                ? 'Checked out by you'
+                                : `Checked out by ${item.checkout.display_name || item.checkout.username}`
+                            }
+                            className="flex-shrink-0"
+                          >
+                            <Lock
+                              className={`w-3.5 h-3.5 ${
+                                item.checkout.is_checked_out_by_me ? 'text-blue-500' : 'text-amber-500'
+                              }`}
+                            />
+                          </span>
+                        )}
                       </div>
                     </td>
 
@@ -760,20 +847,72 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </>
-                        ) : item.id ? (
-                          <button
-                            onClick={() => {
-                              if (confirm(`Move "${item.name}" to trash?`)) {
-                                deleteMutation.mutate(item.id!);
-                              }
-                            }}
-                            className="p-1 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors"
-                            title="Delete document"
-                            data-testid={`dir-row-delete-${item.name}`}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        ) : null}
+                        ) : (
+                          <>
+                            {!item.checkout?.is_checked_out ? (
+                              <button
+                                onClick={() => void handleCheckoutItem(item)}
+                                className="p-1 rounded hover:bg-cme-bg-surface text-cme-text-muted hover:text-amber-500 transition-colors"
+                                title="Check out for editing"
+                                data-testid={`dir-row-checkout-${item.name}`}
+                              >
+                                <Lock className="w-3.5 h-3.5" />
+                              </button>
+                            ) : item.checkout?.is_checked_out_by_me ? (
+                              <>
+                                <button
+                                  onClick={() => setCheckinTarget(item)}
+                                  className="p-1 rounded hover:bg-cme-bg-surface text-cme-primary hover:text-cme-primary-hover transition-colors"
+                                  title="Check in..."
+                                  data-testid={`dir-row-checkin-${item.name}`}
+                                >
+                                  <Upload className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => void handleCancelCheckoutItem(item)}
+                                  className="p-1 rounded hover:bg-rose-500/10 text-rose-500 transition-colors"
+                                  title="Cancel check-out"
+                                  data-testid={`dir-row-cancel-checkout-${item.name}`}
+                                >
+                                  <Unlock className="w-3.5 h-3.5" />
+                                </button>
+                              </>
+                            ) : null}
+
+                            <button
+                              onClick={() => setHistoryTarget(item)}
+                              className="p-1 rounded hover:bg-cme-bg-surface text-cme-text-muted hover:text-indigo-500 transition-colors"
+                              title="Revision history"
+                              data-testid={`dir-row-history-${item.name}`}
+                            >
+                              <History className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={() => void downloadWorkspaceFile(item.path, item.name)}
+                              className="p-1 rounded hover:bg-cme-bg-surface text-cme-text-muted hover:text-blue-500 transition-colors"
+                              title="Download file"
+                              data-testid={`dir-row-download-${item.name}`}
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+
+                            {item.id ? (
+                              <button
+                                onClick={() => {
+                                  if (confirm(`Move "${item.name}" to trash?`)) {
+                                    deleteMutation.mutate(item.id!);
+                                  }
+                                }}
+                                className="p-1 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors"
+                                title="Delete document"
+                                data-testid={`dir-row-delete-${item.name}`}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            ) : null}
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -793,6 +932,29 @@ export const DirectoryView: React.FC<DirectoryViewProps> = ({ path }) => {
           targetId={aclTarget.targetId}
           directoryPath={aclTarget.directoryPath}
           title={aclTarget.title}
+        />
+      )}
+
+      {/* Checkin Modal */}
+      {checkinTarget && (
+        <CheckinModal
+          isOpen={Boolean(checkinTarget)}
+          onClose={() => setCheckinTarget(null)}
+          path={checkinTarget.path}
+          filename={checkinTarget.name}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['directory-details', cleanPath] });
+          }}
+        />
+      )}
+
+      {/* History Modal */}
+      {historyTarget && (
+        <BinaryHistoryModal
+          isOpen={Boolean(historyTarget)}
+          onClose={() => setHistoryTarget(null)}
+          path={historyTarget.path}
+          filename={historyTarget.name}
         />
       )}
     </div>

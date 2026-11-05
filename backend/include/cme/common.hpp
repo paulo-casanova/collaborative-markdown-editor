@@ -23,7 +23,8 @@ enum class ErrorCode : uint32_t {
     InvalidArgument,    ///< Provided argument or parameter is invalid.
     IoError,            ///< Filesystem or OS I/O failure.
     DatabaseError,      ///< PostgreSQL query, connection, or transaction failure.
-    InternalError       ///< Unhandled internal application error.
+    InternalError,      ///< Unhandled internal application error.
+    Conflict            ///< Operation conflicts with current state (e.g. resource is locked/checked out).
 };
 
 /**
@@ -41,6 +42,7 @@ enum class ErrorCode : uint32_t {
         case ErrorCode::IoError: return "I/O Error";
         case ErrorCode::DatabaseError: return "Database Error";
         case ErrorCode::InternalError: return "Internal Error";
+        case ErrorCode::Conflict: return "Conflict";
     }
     return "Unknown Error";
 }

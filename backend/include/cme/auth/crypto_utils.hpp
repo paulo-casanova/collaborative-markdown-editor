@@ -68,4 +68,18 @@ namespace cme::auth {
  */
 [[nodiscard]] bool constant_time_equals(std::string_view a, std::string_view b) noexcept;
 
+/**
+ * @brief Encodes binary data or string to standard Base64 representation.
+ * @param input Data buffer to encode.
+ * @return Base64-encoded string.
+ */
+[[nodiscard]] std::string base64_encode(std::string_view input);
+
+/**
+ * @brief Decodes Base64 string to raw binary string.
+ * @param input Base64-encoded string.
+ * @return Decoded binary data or std::nullopt on invalid formatting.
+ */
+[[nodiscard]] std::optional<std::string> base64_decode(std::string_view input);
+
 } // namespace cme::auth

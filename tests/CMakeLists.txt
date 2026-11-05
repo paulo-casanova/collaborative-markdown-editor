@@ -349,6 +349,18 @@ set_tests_properties(tags_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Document Checkouts & Binary Revisions Test
+add_executable(checkouts_test
+    backend/checkouts_test.cpp
+)
+target_link_libraries(checkouts_test PRIVATE cme_core)
+target_compile_features(checkouts_test PRIVATE cxx_std_23)
+add_test(NAME checkouts_test COMMAND checkouts_test)
+set_tests_properties(checkouts_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
+
 
 
 

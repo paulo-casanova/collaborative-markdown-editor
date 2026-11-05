@@ -20,6 +20,9 @@ import {
   Shield,
   Download,
   Link2,
+  Lock,
+  Unlock,
+  History,
 } from 'lucide-react';
 import {
   fetchWorkspaceTree,
@@ -36,6 +39,11 @@ import {
   downloadWorkspaceFile,
   downloadBundleZip,
 } from '../../api/documents';
+import { checkoutDocument, cancelCheckout } from '../../api/checkouts';
+import { saveCheckedOutFile } from '../../utils/localCheckoutStorage';
+import { apiFetch } from '../../api/client';
+import { CheckinModal } from '../checkouts/CheckinModal';
+import { BinaryHistoryModal } from '../checkouts/BinaryHistoryModal';
 import { fetchCurrentUser } from '../../api/auth';
 import { WorkspaceNode } from '../../types/document';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
@@ -55,6 +63,10 @@ function isImagePath(path: string): boolean {
     lower.endsWith('.bmp') ||
     lower.endsWith('.ico')
   );
+}
+
+function isPdfPath(path: string): boolean {
+  return (path || '').toLowerCase().endsWith('.pdf');
 }
 
 export interface TreeNode extends WorkspaceNode {
@@ -169,6 +181,43 @@ export const FileTree: React.FC = () => {
     directoryPath?: string;
     title: string;
   } | null>(null);
+
+  const [checkinTarget, setCheckinTarget] = useState<WorkspaceNode | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<WorkspaceNode | null>(null);
+
+  const handleCheckoutNode = async (node: WorkspaceNode) => {
+    try {
+      await checkoutDocument(node.path);
+      const res = await apiFetch(getWorkspaceFileUrl(node.path));
+      const blob = await res.blob();
+      const saveRes = await saveCheckedOutFile(node.name, blob);
+      await queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      await queryClient.invalidateQueries({ queryKey: ['my-checkouts'] });
+      if (saveRes.method === 'directory') {
+        alert(
+          `Checked out "${node.name}" successfully! Saved to your local folder "${saveRes.folderName}". Edit it with your local application, then Check In when finished.`
+        );
+      } else {
+        alert(
+          `Checked out "${node.name}" successfully! The file has been downloaded. Edit it with your local application, then Check In when finished.`
+        );
+      }
+    } catch (err: any) {
+      alert(`Failed to check out: ${err?.message || 'Unknown error'}`);
+    }
+  };
+
+  const handleCancelCheckoutNode = async (node: WorkspaceNode) => {
+    if (confirm(`Cancel checkout for "${node.name}"? The lock will be released.`)) {
+      try {
+        await cancelCheckout(node.path);
+        await queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+        await queryClient.invalidateQueries({ queryKey: ['my-checkouts'] });
+      } catch (err: any) {
+        alert(`Failed to cancel checkout: ${err?.message || 'Unknown error'}`);
+      }
+    }
+  };
 
   const openDirectoryTab = (dirPath: string) => {
     const norm = (dirPath || '').replace(/^\/+/, '').replace(/\/+$/, '');
@@ -701,6 +750,11 @@ export const FileTree: React.FC = () => {
 
       if (!isMarkdown) {
         const fileUrl = getWorkspaceFileUrl(node.path);
+        const isPdf = isPdfPath(node.path);
+        const opensInline = isImage || isPdf;
+        const isLocked = Boolean(node.checkout?.is_checked_out);
+        const isLockedByMe = Boolean(node.checkout?.is_checked_out_by_me);
+
         return (
           <div
             key={node.path}
@@ -711,20 +765,65 @@ export const FileTree: React.FC = () => {
             data-testid={`filetree-item-${node.name}`}
             className="group flex items-center justify-between py-1.5 pr-2 text-xs rounded-lg transition-colors cursor-pointer select-none text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover"
           >
-            <a
-              href={fileUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 min-w-0 flex-1 truncate"
-              title={`${node.name} (Opens in new tab)`}
-            >
-              {isImage ? (
-                <ImageIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-              ) : (
+            {opensInline ? (
+              <a
+                href={fileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 min-w-0 flex-1 truncate"
+                title={`${node.name} (Opens in new tab)`}
+              >
+                {isImage ? (
+                  <ImageIcon className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                ) : (
+                  <FileIcon className="w-3.5 h-3.5 text-rose-500 flex-shrink-0" />
+                )}
+                <span className="truncate">{node.name}</span>
+                {isLocked && (
+                  <span
+                    title={
+                      isLockedByMe
+                        ? 'Checked out by you'
+                        : `Checked out by ${node.checkout?.display_name || node.checkout?.username}`
+                    }
+                    className="flex-shrink-0"
+                  >
+                    <Lock
+                      className={`w-3 h-3 ${isLockedByMe ? 'text-blue-500' : 'text-amber-500'}`}
+                    />
+                  </span>
+                )}
+              </a>
+            ) : (
+              <div
+                onClick={() => {
+                  void handleDownloadNode(node);
+                }}
+                className="flex items-center gap-2 min-w-0 flex-1 truncate"
+                title={
+                  isLocked
+                    ? `${node.name} (Checked out by ${node.checkout?.display_name || node.checkout?.username}. Click to download read-only copy)`
+                    : `${node.name} (Click to download read-only copy)`
+                }
+              >
                 <FileIcon className="w-3.5 h-3.5 text-sky-500 flex-shrink-0" />
-              )}
-              <span className="truncate">{node.name}</span>
-            </a>
+                <span className="truncate">{node.name}</span>
+                {isLocked && (
+                  <span
+                    title={
+                      isLockedByMe
+                        ? 'Checked out by you'
+                        : `Checked out by ${node.checkout?.display_name || node.checkout?.username}`
+                    }
+                    className="flex-shrink-0"
+                  >
+                    <Lock
+                      className={`w-3 h-3 ${isLockedByMe ? 'text-blue-500' : 'text-amber-500'}`}
+                    />
+                  </span>
+                )}
+              </div>
+            )}
 
             <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
@@ -795,6 +894,22 @@ export const FileTree: React.FC = () => {
               <FileText className="w-3.5 h-3.5 text-cme-text-subtle flex-shrink-0" />
             )}
             <span className="truncate">{displayName}</span>
+            {node.checkout?.is_checked_out && (
+              <span
+                title={
+                  node.checkout.is_checked_out_by_me
+                    ? 'Checked out by you'
+                    : `Checked out by ${node.checkout.display_name || node.checkout.username}`
+                }
+                className="flex-shrink-0"
+              >
+                <Lock
+                  className={`w-3 h-3 ${
+                    node.checkout.is_checked_out_by_me ? 'text-blue-500' : 'text-amber-500'
+                  }`}
+                />
+              </span>
+            )}
           </Link>
 
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1190,6 +1305,74 @@ export const FileTree: React.FC = () => {
             <Shield className="w-3.5 h-3.5 text-blue-500" />
             <span>Permissions</span>
           </button>
+
+          {/* Checkout & History for File items */}
+          {!contextMenu.node.is_directory && (
+            <>
+              <div className="my-1 border-t border-cme-border-base" />
+              {!contextMenu.node.checkout?.is_checked_out ? (
+                <button
+                  data-testid="filetree-checkout-btn"
+                  onClick={() => {
+                    const node = contextMenu.node;
+                    setContextMenu(null);
+                    void handleCheckoutNode(node);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"
+                >
+                  <Lock className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Check Out for Editing</span>
+                </button>
+              ) : contextMenu.node.checkout?.is_checked_out_by_me ? (
+                <>
+                  <button
+                    data-testid="filetree-checkin-btn"
+                    onClick={() => {
+                      const node = contextMenu.node;
+                      setContextMenu(null);
+                      setCheckinTarget(node);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-primary text-left font-medium"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Check In...</span>
+                  </button>
+                  <button
+                    data-testid="filetree-cancel-checkout-btn"
+                    onClick={() => {
+                      const node = contextMenu.node;
+                      setContextMenu(null);
+                      void handleCancelCheckoutNode(node);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-rose-500/10 text-rose-500 text-left"
+                  >
+                    <Unlock className="w-3.5 h-3.5" />
+                    <span>Cancel Check Out</span>
+                  </button>
+                </>
+              ) : (
+                <div className="px-3 py-1.5 text-[11px] text-amber-600 dark:text-amber-400 bg-amber-500/10 flex items-center gap-1.5">
+                  <Lock className="w-3 h-3 flex-shrink-0" />
+                  <span className="truncate">
+                    Locked by {contextMenu.node.checkout?.display_name || contextMenu.node.checkout?.username}
+                  </span>
+                </div>
+              )}
+
+              <button
+                data-testid="filetree-history-btn"
+                onClick={() => {
+                  const node = contextMenu.node;
+                  setContextMenu(null);
+                  setHistoryTarget(node);
+                }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"
+              >
+                <History className="w-3.5 h-3.5 text-indigo-500" />
+                <span>Revision History</span>
+              </button>
+            </>
+          )}
         </div>
       )}
 
@@ -1279,6 +1462,26 @@ export const FileTree: React.FC = () => {
           targetId={aclTarget.targetId}
           directoryPath={aclTarget.directoryPath}
           title={aclTarget.title}
+        />
+      )}
+
+      {/* Checkin Modal */}
+      {checkinTarget && (
+        <CheckinModal
+          isOpen={Boolean(checkinTarget)}
+          onClose={() => setCheckinTarget(null)}
+          path={checkinTarget.path}
+          filename={checkinTarget.name}
+        />
+      )}
+
+      {/* Revision History Modal */}
+      {historyTarget && (
+        <BinaryHistoryModal
+          isOpen={Boolean(historyTarget)}
+          onClose={() => setHistoryTarget(null)}
+          path={historyTarget.path}
+          filename={historyTarget.name}
         />
       )}
     </div>

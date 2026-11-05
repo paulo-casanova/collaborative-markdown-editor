@@ -9,6 +9,7 @@ import { SettingsPage } from './pages/SettingsPage';
 import { AdminPage } from './pages/AdminPage';
 import { TaskDashboardPage } from './pages/TaskDashboardPage';
 import { TagsPage } from './pages/TagsPage';
+import { CheckedOutPage } from './pages/CheckedOutPage';
 import { TestEditorPage } from './pages/TestEditorPage';
 import { TestCollabPage } from './pages/TestCollabPage';
 
@@ -40,6 +41,7 @@ export const App: React.FC = () => {
             <Route path="mentions" element={<TaskDashboardPage initialTab="mentions" />} />
             <Route path="tags" element={<TagsPage />} />
             <Route path="tags/:tag" element={<TagsPage />} />
+            <Route path="checked-out" element={<CheckedOutPage />} />
             <Route path="trash" element={<TrashPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="admin" element={<AdminPage />} />

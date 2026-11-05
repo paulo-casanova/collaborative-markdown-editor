@@ -23,6 +23,14 @@ export interface WorkspaceNode {
   owner_user_id?: string;
   updated_at?: string;
   children?: WorkspaceNode[];
+  checkout?: {
+    is_checked_out: boolean;
+    user_id?: string;
+    username?: string;
+    display_name?: string;
+    checked_out_at?: string;
+    is_checked_out_by_me?: boolean;
+  };
 }
 
 export interface TrashNode {
@@ -74,6 +82,14 @@ export interface DirectoryDashboardItem {
   comments_count: number;
   suggestions_count: number;
   open_tasks_count: number;
+  checkout?: {
+    is_checked_out: boolean;
+    user_id?: string;
+    username?: string;
+    display_name?: string;
+    checked_out_at?: string;
+    is_checked_out_by_me?: boolean;
+  };
 }
 
 export interface DirectoryDashboard {

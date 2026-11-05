@@ -1953,6 +1953,19 @@ Result<std::string> DocumentService::delete_document(
             return std::unexpected(ErrorCode::PermissionDenied);
         }
 
+        // Check if document is currently checked out
+        auto chk_rows = tx.exec_params(
+            "SELECT user_id::text FROM document_checkouts WHERE fs_path = $1 OR document_id = $2::uuid;",
+            fs_path, doc_id
+        );
+        if (!chk_rows.empty()) {
+            std::string lock_user = chk_rows[0][0].as<std::string>();
+            if (lock_user != user.user_id && !user.is_system_admin) {
+                return std::unexpected(ErrorCode::Conflict);
+            }
+            tx.exec_params("DELETE FROM document_checkouts WHERE fs_path = $1 OR document_id = $2::uuid;", fs_path, doc_id);
+        }
+
         // Soft-delete to trash in storage
         auto trash_res = storage_->delete_to_trash(fs_path);
         if (!trash_res.has_value()) {
@@ -2110,6 +2123,15 @@ Result<DocumentRecord> DocumentService::upload_workspace_file(
         return std::unexpected(ErrorCode::PermissionDenied);
     }
 
+    // Check if file is currently checked out by another user
+    auto chk_res = get_document_checkout(clean_path);
+    if (chk_res.has_value() && chk_res.value().has_value()) {
+        const auto& co = chk_res.value().value();
+        if (co.user_id != user.user_id && !user.is_system_admin) {
+            return std::unexpected(ErrorCode::Conflict);
+        }
+    }
+
     auto write_res = storage_->write_file(clean_path, data, true);
     if (!write_res.has_value()) {
         return std::unexpected(write_res.error());
@@ -2251,6 +2273,14 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
 
     std::map<std::string, DocMeta> indexed_docs;
 
+    struct ActiveCheckout {
+        std::string user_id;
+        std::string username;
+        std::string display_name;
+        std::string checked_out_at;
+    };
+    std::unordered_map<std::string, ActiveCheckout> active_checkouts;
+
     // List storage nodes recursively
     auto list_res = storage_->list_directory("", true);
     if (!list_res.has_value()) {
@@ -2293,6 +2323,26 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
                 .updated_at = r[4].as<std::string>(),
                 .owner_team_id = r[5].as<std::string>()
             };
+        }
+
+        // Fetch active checkouts
+        try {
+            auto checkout_rows = tx.exec(
+                "SELECT c.fs_path, c.user_id::text, u.username, u.display_name, "
+                "       TO_CHAR(c.checked_out_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM document_checkouts c "
+                "JOIN users u ON c.user_id = u.id;"
+            );
+            for (const auto& r : checkout_rows) {
+                active_checkouts[r[0].as<std::string>()] = ActiveCheckout{
+                    .user_id = r[1].as<std::string>(),
+                    .username = r[2].as<std::string>(),
+                    .display_name = r[3].as<std::string>(),
+                    .checked_out_at = r[4].as<std::string>()
+                };
+            }
+        } catch (...) {
+            // Table may not exist yet or empty
         }
 
         if (!user.is_system_admin) {
@@ -2473,6 +2523,22 @@ Result<nlohmann::json> DocumentService::get_workspace_tree(const auth::UserIdent
             std::string lower_path = to_lower_string(node.relative_path);
             bool is_md = is_bundle_node || lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
             item["title"] = is_md ? derive_title("", node.relative_path) : node.name;
+        }
+
+        if (active_checkouts.contains(node.relative_path)) {
+            const auto& co = active_checkouts[node.relative_path];
+            item["checkout"] = nlohmann::json{
+                {"is_checked_out", true},
+                {"user_id", co.user_id},
+                {"username", co.username},
+                {"display_name", co.display_name},
+                {"checked_out_at", co.checked_out_at},
+                {"is_checked_out_by_me", (co.user_id == user.user_id)}
+            };
+        } else {
+            item["checkout"] = nlohmann::json{
+                {"is_checked_out", false}
+            };
         }
 
         items.push_back(std::move(item));
@@ -3316,6 +3382,13 @@ Result<nlohmann::json> DocumentService::get_directory_dashboard(
     };
     std::map<std::string, ChildDocMeta> doc_metas;
     std::map<std::string, std::pair<std::string, std::string>> dir_owners;
+    struct ActiveCheckout {
+        std::string user_id;
+        std::string username;
+        std::string display_name;
+        std::string checked_out_at;
+    };
+    std::unordered_map<std::string, ActiveCheckout> active_checkouts;
 
     try {
         pqxx::read_transaction tx(conn_res->get());
@@ -3362,6 +3435,24 @@ Result<nlohmann::json> DocumentService::get_directory_dashboard(
 
         for (const auto& r : dir_rows) {
             dir_owners[r[0].as<std::string>()] = {r[1].as<std::string>(), r[2].as<std::string>()};
+        }
+        try {
+            auto checkout_rows = tx.exec(
+                "SELECT c.fs_path, c.user_id::text, u.username, u.display_name, "
+                "       TO_CHAR(c.checked_out_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') "
+                "FROM document_checkouts c "
+                "JOIN users u ON c.user_id = u.id;"
+            );
+            for (const auto& r : checkout_rows) {
+                active_checkouts[r[0].as<std::string>()] = ActiveCheckout{
+                    .user_id = r[1].as<std::string>(),
+                    .username = r[2].as<std::string>(),
+                    .display_name = r[3].as<std::string>(),
+                    .checked_out_at = r[4].as<std::string>()
+                };
+            }
+        } catch (...) {
+            // Table may not exist yet or empty
         }
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] get_directory_dashboard DB query failed: " << e.what() << "\n";
@@ -3415,6 +3506,22 @@ Result<nlohmann::json> DocumentService::get_directory_dashboard(
             std::stringstream ss;
             ss << std::put_time(std::gmtime(&tt), "%Y-%m-%dT%H:%M:%SZ");
             item["updated_at"] = ss.str();
+        }
+
+        if (active_checkouts.contains(node.relative_path)) {
+            const auto& co = active_checkouts[node.relative_path];
+            item["checkout"] = nlohmann::json{
+                {"is_checked_out", true},
+                {"user_id", co.user_id},
+                {"username", co.username},
+                {"display_name", co.display_name},
+                {"checked_out_at", co.checked_out_at},
+                {"is_checked_out_by_me", (co.user_id == user.user_id)}
+            };
+        } else {
+            item["checkout"] = nlohmann::json{
+                {"is_checked_out", false}
+            };
         }
 
         items.push_back(std::move(item));
@@ -4540,6 +4647,473 @@ Result<TagDocumentsResult> DocumentService::get_tag_documents(
         return result;
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] [TAGS] get_tag_documents failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<DocumentCheckout> DocumentService::checkout_document(
+    const std::string& path,
+    const auth::UserIdentity& user,
+    const nlohmann::json& metadata
+) {
+    if (!storage_ || !db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+
+    std::string clean_path = normalize_rel_path(path);
+    if (clean_path.empty() || has_path_traversal(clean_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    if (!storage_->exists(clean_path).value_or(false)) {
+        return std::unexpected(ErrorCode::NotFound);
+    }
+
+    auto access_res = check_access(user, "", clean_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Edit) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        std::filesystem::path fp(clean_path);
+        std::string filename = fp.filename().string();
+
+        auto doc_rows = tx.exec_params(
+            "SELECT id::text FROM documents WHERE fs_path = $1;",
+            clean_path
+        );
+        std::string doc_id;
+        if (doc_rows.empty()) {
+            auto ins_doc = tx.exec_params(
+                "INSERT INTO documents (fs_path, title, owner_user_id) "
+                "VALUES ($1, $2, NULLIF($3, '')::uuid) "
+                "ON CONFLICT (fs_path) DO UPDATE SET updated_at = NOW() "
+                "RETURNING id::text;",
+                clean_path, filename, user.user_id
+            );
+            doc_id = ins_doc[0][0].as<std::string>();
+        } else {
+            doc_id = doc_rows[0][0].as<std::string>();
+        }
+
+        // Check existing checkout status
+        auto chk_rows = tx.exec_params(
+            "SELECT c.id::text, c.user_id::text, u.username, COALESCE(u.display_name, u.username), "
+            "       TO_CHAR(c.checked_out_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), c.metadata "
+            "FROM document_checkouts c "
+            "JOIN users u ON c.user_id = u.id "
+            "WHERE c.fs_path = $1;",
+            clean_path
+        );
+
+        if (!chk_rows.empty()) {
+            std::string lock_user_id = chk_rows[0][1].as<std::string>();
+            if (lock_user_id != user.user_id) {
+                return std::unexpected(ErrorCode::Conflict);
+            }
+            DocumentCheckout co;
+            co.id = chk_rows[0][0].as<std::string>();
+            co.document_id = doc_id;
+            co.fs_path = clean_path;
+            co.user_id = lock_user_id;
+            co.username = chk_rows[0][2].as<std::string>();
+            co.display_name = chk_rows[0][3].as<std::string>();
+            co.checked_out_at = chk_rows[0][4].as<std::string>();
+            try {
+                co.metadata = nlohmann::json::parse(chk_rows[0][5].as<std::string>());
+            } catch (...) {
+                co.metadata = nlohmann::json::object();
+            }
+            return co;
+        }
+
+        std::string meta_str = metadata.is_null() ? "{}" : metadata.dump();
+        auto ins_chk = tx.exec_params(
+            "INSERT INTO document_checkouts (document_id, fs_path, user_id, metadata) "
+            "VALUES ($1::uuid, $2, $3::uuid, $4::jsonb) "
+            "RETURNING id::text, TO_CHAR(checked_out_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+            doc_id, clean_path, user.user_id, meta_str
+        );
+        tx.commit();
+
+        DocumentCheckout co;
+        co.id = ins_chk[0][0].as<std::string>();
+        co.document_id = doc_id;
+        co.fs_path = clean_path;
+        co.user_id = user.user_id;
+        co.username = user.username;
+        co.display_name = user.display_name.empty() ? user.username : user.display_name;
+        co.checked_out_at = ins_chk[0][1].as<std::string>();
+        co.metadata = metadata;
+        return co;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [CHECKOUT] checkout_document failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<void> DocumentService::cancel_checkout(
+    const std::string& path,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+
+    std::string clean_path = normalize_rel_path(path);
+    if (clean_path.empty() || has_path_traversal(clean_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        auto rows = tx.exec_params(
+            "SELECT user_id::text FROM document_checkouts WHERE fs_path = $1;",
+            clean_path
+        );
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        std::string lock_user_id = rows[0][0].as<std::string>();
+        if (!user.is_system_admin && lock_user_id != user.user_id) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+
+        tx.exec_params(
+            "DELETE FROM document_checkouts WHERE fs_path = $1;",
+            clean_path
+        );
+        tx.commit();
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [CHECKOUT] cancel_checkout failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<DocumentRecord> DocumentService::checkin_document(
+    const std::string& path,
+    std::string_view new_data,
+    const std::string& change_summary,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+
+    std::string clean_path = normalize_rel_path(path);
+    if (clean_path.empty() || has_path_traversal(clean_path)) {
+        return std::unexpected(ErrorCode::InvalidArgument);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+
+        auto chk_rows = tx.exec_params(
+            "SELECT c.id::text, c.user_id::text, COALESCE(c.document_id::text, '') "
+            "FROM document_checkouts c "
+            "WHERE c.fs_path = $1;",
+            clean_path
+        );
+        if (chk_rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        std::string lock_user_id = chk_rows[0][1].as<std::string>();
+        if (!user.is_system_admin && lock_user_id != user.user_id) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+
+        std::string doc_id = chk_rows[0][2].as<std::string>();
+        if (doc_id.empty()) {
+            auto d_rows = tx.exec_params(
+                "SELECT id::text FROM documents WHERE fs_path = $1;",
+                clean_path
+            );
+            if (!d_rows.empty()) {
+                doc_id = d_rows[0][0].as<std::string>();
+            }
+        }
+
+        std::filesystem::path fp(clean_path);
+        std::string filename = fp.filename().string();
+
+        // 1. Read existing file from storage to archive in history
+        auto old_content_res = storage_->read_file(clean_path);
+        std::string old_content = old_content_res.value_or("");
+        size_t old_size = old_content.size();
+
+        // Determine revision number
+        auto rev_num_rows = tx.exec_params(
+            "SELECT COALESCE(MAX(revision_number), 0) + 1 FROM binary_revisions WHERE fs_path = $1;",
+            clean_path
+        );
+        int next_rev = rev_num_rows[0][0].as<int>();
+
+        // 2. Save old version to .cme/history/<doc_id>/rev_<N>_<filename>
+        std::string history_rel_dir = ".cme/history/" + (!doc_id.empty() ? doc_id : "unindexed");
+        std::string history_file = history_rel_dir + "/rev_" + std::to_string(next_rev) + "_" + filename;
+
+        storage_->create_directory(history_rel_dir);
+        if (!old_content.empty()) {
+            storage_->write_file(history_file, old_content, true);
+        }
+
+        // 3. Record in binary_revisions table
+        std::string author_name = user.display_name.empty() ? user.username : user.display_name;
+        if (!doc_id.empty()) {
+            tx.exec_params(
+                "INSERT INTO binary_revisions (document_id, fs_path, revision_number, author_id, author_name, storage_path, byte_size, change_summary) "
+                "VALUES ($1::uuid, $2, $3, NULLIF($4, '')::uuid, $5, $6, $7, $8);",
+                doc_id, clean_path, next_rev, user.user_id, author_name, history_file, static_cast<int64_t>(old_size), change_summary
+            );
+        } else {
+            tx.exec_params(
+                "INSERT INTO binary_revisions (fs_path, revision_number, author_id, author_name, storage_path, byte_size, change_summary) "
+                "VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, $7);",
+                clean_path, next_rev, user.user_id, author_name, history_file, static_cast<int64_t>(old_size), change_summary
+            );
+        }
+
+        // 4. Overwrite active file in storage with new_data
+        auto write_res = storage_->write_file(clean_path, new_data, true);
+        if (!write_res.has_value()) {
+            return std::unexpected(write_res.error());
+        }
+
+        // 5. Update documents table
+        auto upd_rows = tx.exec_params(
+            "UPDATE documents SET updated_at = NOW() WHERE fs_path = $1 "
+            "RETURNING id::text, title, COALESCE(owner_user_id::text, ''), "
+            "          TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), "
+            "          TO_CHAR(updated_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"');",
+            clean_path
+        );
+
+        // 6. Delete checkout lock
+        tx.exec_params(
+            "DELETE FROM document_checkouts WHERE fs_path = $1;",
+            clean_path
+        );
+
+        tx.commit();
+
+        DocumentRecord rec;
+        rec.path = clean_path;
+        if (!upd_rows.empty()) {
+            rec.id = upd_rows[0][0].as<std::string>();
+            rec.title = upd_rows[0][1].as<std::string>();
+            rec.owner_user_id = upd_rows[0][2].as<std::string>();
+            rec.created_at = upd_rows[0][3].as<std::string>();
+            rec.updated_at = upd_rows[0][4].as<std::string>();
+        } else {
+            rec.id = doc_id;
+            rec.title = filename;
+            rec.owner_user_id = user.user_id;
+        }
+        rec.is_bundle = false;
+        rec.content = "";
+        return rec;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [CHECKIN] checkin_document failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<std::vector<DocumentCheckout>> DocumentService::list_user_checkouts(
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+
+        pqxx::result rows;
+        if (user.is_system_admin) {
+            rows = tx.exec(
+                "SELECT c.id::text, COALESCE(c.document_id::text, ''), c.fs_path, "
+                "       c.user_id::text, u.username, COALESCE(u.display_name, u.username), "
+                "       TO_CHAR(c.checked_out_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), c.metadata "
+                "FROM document_checkouts c "
+                "JOIN users u ON c.user_id = u.id "
+                "ORDER BY c.checked_out_at DESC;"
+            );
+        } else {
+            rows = tx.exec_params(
+                "SELECT c.id::text, COALESCE(c.document_id::text, ''), c.fs_path, "
+                "       c.user_id::text, u.username, COALESCE(u.display_name, u.username), "
+                "       TO_CHAR(c.checked_out_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), c.metadata "
+                "FROM document_checkouts c "
+                "JOIN users u ON c.user_id = u.id "
+                "WHERE c.user_id = $1::uuid "
+                "ORDER BY c.checked_out_at DESC;",
+                user.user_id
+            );
+        }
+
+        std::vector<DocumentCheckout> result;
+        result.reserve(rows.size());
+        for (const auto& r : rows) {
+            DocumentCheckout co;
+            co.id = r[0].as<std::string>();
+            co.document_id = r[1].as<std::string>();
+            co.fs_path = r[2].as<std::string>();
+            co.user_id = r[3].as<std::string>();
+            co.username = r[4].as<std::string>();
+            co.display_name = r[5].as<std::string>();
+            co.checked_out_at = r[6].as<std::string>();
+            try {
+                co.metadata = nlohmann::json::parse(r[7].as<std::string>());
+            } catch (...) {
+                co.metadata = nlohmann::json::object();
+            }
+            result.push_back(std::move(co));
+        }
+        return result;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [CHECKOUT] list_user_checkouts failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<std::optional<DocumentCheckout>> DocumentService::get_document_checkout(
+    const std::string& path
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+
+    std::string clean_path = normalize_rel_path(path);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT c.id::text, COALESCE(c.document_id::text, ''), c.fs_path, "
+            "       c.user_id::text, u.username, COALESCE(u.display_name, u.username), "
+            "       TO_CHAR(c.checked_out_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), c.metadata "
+            "FROM document_checkouts c "
+            "JOIN users u ON c.user_id = u.id "
+            "WHERE c.fs_path = $1;",
+            clean_path
+        );
+
+        if (rows.empty()) {
+            return std::nullopt;
+        }
+
+        DocumentCheckout co;
+        co.id = rows[0][0].as<std::string>();
+        co.document_id = rows[0][1].as<std::string>();
+        co.fs_path = rows[0][2].as<std::string>();
+        co.user_id = rows[0][3].as<std::string>();
+        co.username = rows[0][4].as<std::string>();
+        co.display_name = rows[0][5].as<std::string>();
+        co.checked_out_at = rows[0][6].as<std::string>();
+        try {
+            co.metadata = nlohmann::json::parse(rows[0][7].as<std::string>());
+        } catch (...) {
+            co.metadata = nlohmann::json::object();
+        }
+        return co;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [CHECKOUT] get_document_checkout failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<std::vector<BinaryRevision>> DocumentService::list_binary_revisions(
+    const std::string& path,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+
+    std::string clean_path = normalize_rel_path(path);
+    auto access_res = check_access(user, "", clean_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT id::text, COALESCE(document_id::text, ''), fs_path, revision_number, "
+            "       COALESCE(author_id::text, ''), author_name, storage_path, byte_size, "
+            "       TO_CHAR(created_at, 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), COALESCE(change_summary, ''), metadata "
+            "FROM binary_revisions "
+            "WHERE fs_path = $1 "
+            "ORDER BY revision_number DESC;",
+            clean_path
+        );
+
+        std::vector<BinaryRevision> result;
+        result.reserve(rows.size());
+        for (const auto& r : rows) {
+            BinaryRevision br;
+            br.id = r[0].as<std::string>();
+            br.document_id = r[1].as<std::string>();
+            br.fs_path = r[2].as<std::string>();
+            br.revision_number = r[3].as<int>();
+            br.author_id = r[4].as<std::string>();
+            br.author_name = r[5].as<std::string>();
+            br.storage_path = r[6].as<std::string>();
+            br.byte_size = r[7].as<int64_t>();
+            br.created_at = r[8].as<std::string>();
+            br.change_summary = r[9].as<std::string>();
+            try {
+                br.metadata = nlohmann::json::parse(r[10].as<std::string>());
+            } catch (...) {
+                br.metadata = nlohmann::json::object();
+            }
+            result.push_back(std::move(br));
+        }
+        return result;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [REVISION] list_binary_revisions failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<std::string> DocumentService::read_binary_revision_content(
+    const std::string& path,
+    int revision_number,
+    const auth::UserIdentity& user
+) {
+    if (!storage_ || !db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+
+    std::string clean_path = normalize_rel_path(path);
+    auto access_res = check_access(user, "", clean_path);
+    if (!access_res.has_value() || access_res.value() < db::AccessLevel::Read) {
+        return std::unexpected(ErrorCode::PermissionDenied);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rows = tx.exec_params(
+            "SELECT storage_path FROM binary_revisions WHERE fs_path = $1 AND revision_number = $2;",
+            clean_path, revision_number
+        );
+        if (rows.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+        std::string storage_path = rows[0][0].as<std::string>();
+        return storage_->read_file(storage_path);
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [REVISION] read_binary_revision_content failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
 }

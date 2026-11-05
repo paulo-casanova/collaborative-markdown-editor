@@ -1244,6 +1244,369 @@ Result<void> Server::start() {
         res->end(file_res.value());
     });
 
+    // POST /api/v1/workspaces/checkouts
+    app.post("/api/v1/workspaces/checkouts", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
+        std::string path_query = url_decode(req->getQuery("path"));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, path_query, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string target_path = path_query;
+            nlohmann::json metadata = nlohmann::json::object();
+            if (!body->empty()) {
+                try {
+                    auto j = nlohmann::json::parse(*body);
+                    if (target_path.empty() && j.contains("path") && j["path"].is_string()) {
+                        target_path = j["path"].get<std::string>();
+                    }
+                    if (j.contains("metadata") && j["metadata"].is_object()) {
+                        metadata = j["metadata"];
+                    }
+                } catch (...) {}
+            }
+
+            if (target_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Field 'path' is required"}});
+                return;
+            }
+
+            auto chk_res = document_service_->checkout_document(target_path, *auth_res.value(), metadata);
+            if (!chk_res.has_value()) {
+                if (chk_res.error() == ErrorCode::Conflict) {
+                    send_json(res, "409 Conflict", {{"error", "Document is currently checked out by another user"}});
+                } else if (chk_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document not found"}});
+                } else if (chk_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to check out document"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", chk_res.value().to_json(true));
+        });
+    });
+
+    // DELETE /api/v1/workspaces/checkouts
+    app.del("/api/v1/workspaces/checkouts", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
+        std::string path_query = url_decode(req->getQuery("path"));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, path_query, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string target_path = path_query;
+            if (target_path.empty() && !body->empty()) {
+                try {
+                    auto j = nlohmann::json::parse(*body);
+                    if (j.contains("path") && j["path"].is_string()) {
+                        target_path = j["path"].get<std::string>();
+                    }
+                } catch (...) {}
+            }
+
+            if (target_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Field 'path' is required"}});
+                return;
+            }
+
+            auto cancel_res = document_service_->cancel_checkout(target_path, *auth_res.value());
+            if (!cancel_res.has_value()) {
+                if (cancel_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "No active checkout found for this path"}});
+                } else if (cancel_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Cannot cancel checkout owned by another user"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to cancel checkout"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", {{"success", true}, {"path", target_path}});
+        });
+    });
+
+    // POST /api/v1/workspaces/checkins
+    app.post("/api/v1/workspaces/checkins", [this, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+        auto header_lookup = make_header_lookup(req);
+
+        std::string path_query = url_decode(req->getQuery("path"));
+        std::string path_hdr = std::string(req->getHeader("x-file-path"));
+        std::string summary_query = url_decode(req->getQuery("summary"));
+        std::string summary_hdr = std::string(req->getHeader("x-change-summary"));
+        std::string content_type = std::string(req->getHeader("content-type"));
+
+        auto body = std::make_shared<std::string>();
+        auto aborted = std::make_shared<bool>(false);
+        res->onAborted([aborted]() { *aborted = true; });
+
+        res->onData([this, res, body, aborted, path_query, path_hdr, summary_query, summary_hdr, content_type, auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup](std::string_view chunk, bool is_last) {
+            body->append(chunk.data(), chunk.length());
+            if (!is_last || *aborted) return;
+
+            auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, header_lookup);
+            if (!auth_res.has_value() || !auth_res.value().has_value()) {
+                send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+                return;
+            }
+
+            std::string target_path = !path_query.empty() ? path_query : path_hdr;
+            std::string summary = !summary_query.empty() ? summary_query : summary_hdr;
+            std::string file_data = *body;
+
+            if (content_type.find("application/json") != std::string::npos && !body->empty()) {
+                try {
+                    auto j = nlohmann::json::parse(*body);
+                    if (target_path.empty() && j.contains("path") && j["path"].is_string()) {
+                        target_path = j["path"].get<std::string>();
+                    }
+                    if (summary.empty() && j.contains("summary") && j["summary"].is_string()) {
+                        summary = j["summary"].get<std::string>();
+                    }
+                    if (j.contains("content_base64") && j["content_base64"].is_string()) {
+                        auto b64_res = auth::base64_decode(j["content_base64"].get<std::string>());
+                        if (b64_res.has_value()) {
+                            file_data = b64_res.value();
+                        }
+                    }
+                } catch (...) {}
+            }
+
+            if (target_path.empty()) {
+                send_json(res, "400 Bad Request", {{"error", "Field 'path' is required"}});
+                return;
+            }
+
+            auto in_res = document_service_->checkin_document(target_path, file_data, summary, *auth_res.value());
+            if (!in_res.has_value()) {
+                if (in_res.error() == ErrorCode::NotFound) {
+                    send_json(res, "404 Not Found", {{"error", "Document checkout not found"}});
+                } else if (in_res.error() == ErrorCode::PermissionDenied) {
+                    send_json(res, "403 Forbidden", {{"error", "Cannot check in document checked out by another user"}});
+                } else {
+                    send_json(res, "500 Internal Server Error", {{"error", "Failed to check in document"}});
+                }
+                return;
+            }
+
+            send_json(res, "200 OK", in_res.value().to_json(false));
+        });
+    });
+
+    // GET /api/v1/workspaces/checkouts
+    app.get("/api/v1/workspaces/checkouts", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        auto list_res = document_service_->list_user_checkouts(*auth_res.value());
+        if (!list_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list checkouts"}});
+            return;
+        }
+
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& co : list_res.value()) {
+            arr.push_back(co.to_json(co.user_id == auth_res.value()->user_id));
+        }
+
+        send_json(res, "200 OK", {{"checkouts", std::move(arr)}});
+    });
+
+    // GET /api/v1/workspaces/checkouts/status?path=<path>
+    app.get("/api/v1/workspaces/checkouts/status", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string path_param = url_decode(req->getQuery("path"));
+        if (path_param.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Query parameter 'path' is required"}});
+            return;
+        }
+
+        auto st_res = document_service_->get_document_checkout(path_param);
+        if (!st_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to fetch checkout status"}});
+            return;
+        }
+
+        if (!st_res.value().has_value()) {
+            send_json(res, "200 OK", {{"is_checked_out", false}, {"path", path_param}});
+            return;
+        }
+
+        const auto& co = st_res.value().value();
+        send_json(res, "200 OK", co.to_json(co.user_id == auth_res.value()->user_id));
+    });
+
+    // GET /api/v1/workspaces/checkouts/history?path=<path>
+    app.get("/api/v1/workspaces/checkouts/history", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string path_param = url_decode(req->getQuery("path"));
+        if (path_param.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Query parameter 'path' is required"}});
+            return;
+        }
+
+        auto hist_res = document_service_->list_binary_revisions(path_param, *auth_res.value());
+        if (!hist_res.has_value()) {
+            if (hist_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to list revisions"}});
+            }
+            return;
+        }
+
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& br : hist_res.value()) {
+            arr.push_back(br.to_json());
+        }
+
+        send_json(res, "200 OK", {{"revisions", std::move(arr)}, {"path", path_param}});
+    });
+
+    // GET /api/v1/workspaces/checkouts/history/download?path=<path>&rev=<N>
+    app.get("/api/v1/workspaces/checkouts/history/download", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string token_query = url_decode(req->getQuery("token"));
+        if (auth_hdr.empty() && !token_query.empty()) {
+            auth_hdr = "Bearer " + token_query;
+        }
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string path_param = url_decode(req->getQuery("path"));
+        std::string rev_param = url_decode(req->getQuery("rev"));
+        int rev = 0;
+        try {
+            rev = std::stoi(rev_param);
+        } catch (...) {
+            send_json(res, "400 Bad Request", {{"error", "Valid 'rev' parameter is required"}});
+            return;
+        }
+
+        auto content_res = document_service_->read_binary_revision_content(path_param, rev, *auth_res.value());
+        if (!content_res.has_value()) {
+            if (content_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Revision content not found"}});
+            } else if (content_res.error() == ErrorCode::PermissionDenied) {
+                send_json(res, "403 Forbidden", {{"error", "Permission denied"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to read revision"}});
+            }
+            return;
+        }
+
+        std::filesystem::path fp(path_param);
+        std::string filename = "rev_" + std::to_string(rev) + "_" + fp.filename().string();
+
+        res->writeStatus("200 OK");
+        write_cors_headers(res, req->getHeader("origin"));
+        res->writeHeader("Content-Type", "application/octet-stream");
+        res->writeHeader("Content-Disposition", "attachment; filename=\"" + filename + "\"");
+        res->end(content_res.value());
+    });
+
     // GET /api/v1/workspaces/bundles/zip?path=<relative_path>
     app.get("/api/v1/workspaces/bundles/zip", [this](auto *res, auto *req) {
         std::string auth_hdr = std::string(req->getHeader("authorization"));

@@ -233,6 +233,70 @@ struct TagDocumentsResult {
 };
 
 /**
+ * @struct DocumentCheckout
+ * @brief Representation of an exclusive checkout lock on a non-markdown/binary file.
+ */
+struct DocumentCheckout {
+    std::string id;
+    std::string document_id;
+    std::string fs_path;
+    std::string user_id;
+    std::string username;
+    std::string display_name;
+    std::string checked_out_at;
+    nlohmann::json metadata{nlohmann::json::object()};
+
+    [[nodiscard]] nlohmann::json to_json(bool is_me = false) const {
+        return {
+            {"id", id},
+            {"document_id", document_id},
+            {"fs_path", fs_path},
+            {"user_id", user_id},
+            {"username", username},
+            {"display_name", display_name},
+            {"checked_out_at", checked_out_at},
+            {"is_checked_out", true},
+            {"is_checked_out_by_me", is_me},
+            {"metadata", metadata}
+        };
+    }
+};
+
+/**
+ * @struct BinaryRevision
+ * @brief Historical revision snapshot of an external/binary document.
+ */
+struct BinaryRevision {
+    std::string id;
+    std::string document_id;
+    std::string fs_path;
+    int revision_number{1};
+    std::string author_id;
+    std::string author_name;
+    std::string storage_path;
+    int64_t byte_size{0};
+    std::string created_at;
+    std::string change_summary;
+    nlohmann::json metadata{nlohmann::json::object()};
+
+    [[nodiscard]] nlohmann::json to_json() const {
+        return {
+            {"id", id},
+            {"document_id", document_id},
+            {"fs_path", fs_path},
+            {"revision_number", revision_number},
+            {"author_id", author_id.empty() ? nlohmann::json(nullptr) : nlohmann::json(author_id)},
+            {"author_name", author_name},
+            {"storage_path", storage_path},
+            {"byte_size", byte_size},
+            {"created_at", created_at},
+            {"change_summary", change_summary},
+            {"metadata", metadata}
+        };
+    }
+};
+
+/**
  * @struct CreateDocumentRequest
  * @brief Request parameters for document instantiation.
  */
@@ -677,6 +741,64 @@ public:
     Result<TagDocumentsResult> get_tag_documents(
         const auth::UserIdentity& user,
         const std::string& tag
+    );
+
+    /**
+     * @brief Checks out a document, acquiring an exclusive lock for editing.
+     */
+    Result<DocumentCheckout> checkout_document(
+        const std::string& path,
+        const auth::UserIdentity& user,
+        const nlohmann::json& metadata = nlohmann::json::object()
+    );
+
+    /**
+     * @brief Cancels a checkout, releasing the exclusive lock without modifications.
+     */
+    Result<void> cancel_checkout(
+        const std::string& path,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Checks in a document with an updated file, creating a historical binary revision.
+     */
+    Result<DocumentRecord> checkin_document(
+        const std::string& path,
+        std::string_view new_data,
+        const std::string& change_summary,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Lists all documents currently checked out by the specified user (or all if admin).
+     */
+    Result<std::vector<DocumentCheckout>> list_user_checkouts(
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Retrieves checkout status for a specific document path.
+     */
+    Result<std::optional<DocumentCheckout>> get_document_checkout(
+        const std::string& path
+    );
+
+    /**
+     * @brief Lists historical binary revisions for a document.
+     */
+    Result<std::vector<BinaryRevision>> list_binary_revisions(
+        const std::string& path,
+        const auth::UserIdentity& user
+    );
+
+    /**
+     * @brief Reads historical content of a specific binary revision.
+     */
+    Result<std::string> read_binary_revision_content(
+        const std::string& path,
+        int revision_number,
+        const auth::UserIdentity& user
     );
 
 private:
