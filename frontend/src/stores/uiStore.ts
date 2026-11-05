@@ -10,6 +10,7 @@ interface UIState {
   sidebarWidth: number;
   reviewSidebarOpen: boolean;
   dialogSidecarOpen: boolean;
+  dialogSidecarWidth: number;
   viewMode: ViewMode;
   breadcrumbs: BreadcrumbItem[];
   syncStatus: SyncStatus;
@@ -27,6 +28,7 @@ interface UIState {
   setReviewSidebarOpen: (open: boolean) => void;
   toggleDialogSidecar: () => void;
   setDialogSidecarOpen: (open: boolean) => void;
+  setDialogSidecarWidth: (width: number) => void;
   setViewMode: (mode: ViewMode) => void;
   setBreadcrumbs: (breadcrumbs: BreadcrumbItem[]) => void;
   setSyncStatus: (status: SyncStatus) => void;
@@ -59,6 +61,20 @@ const getInitialSidebarWidth = (): number => {
   return 256;
 };
 
+const getInitialDialogSidecarWidth = (): number => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saved = Number(window.localStorage.getItem('cme_dialog_sidecar_width'));
+      if (!Number.isNaN(saved) && saved >= 280 && saved <= 900) {
+        return saved;
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return 384;
+};
+
 const getInitialNumberHeaders = (): boolean => {
   return false;
 };
@@ -82,6 +98,7 @@ const uiStore = createStore<UIState>((set) => ({
   sidebarWidth: getInitialSidebarWidth(),
   reviewSidebarOpen: false,
   dialogSidecarOpen: false,
+  dialogSidecarWidth: getInitialDialogSidecarWidth(),
   viewMode:
     typeof window !== 'undefined' &&
     (window.location.pathname.startsWith('/documents/') ||
@@ -121,6 +138,17 @@ const uiStore = createStore<UIState>((set) => ({
   setReviewSidebarOpen: (open) => set({ reviewSidebarOpen: open }),
   toggleDialogSidecar: () => set((state) => ({ dialogSidecarOpen: !state.dialogSidecarOpen })),
   setDialogSidecarOpen: (open) => set({ dialogSidecarOpen: open }),
+  setDialogSidecarWidth: (width) => {
+    const clamped = Math.min(900, Math.max(280, Math.round(width)));
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('cme_dialog_sidecar_width', String(clamped));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    set({ dialogSidecarWidth: clamped });
+  },
   setViewMode: (viewMode) => set({ viewMode }),
   setBreadcrumbs: (breadcrumbs) => set({ breadcrumbs }),
   setSyncStatus: (syncStatus) => set({ syncStatus }),

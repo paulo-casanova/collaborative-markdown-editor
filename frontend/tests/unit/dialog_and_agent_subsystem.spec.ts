@@ -1089,4 +1089,14 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(html).toContain('Disconnected');
     expect(html).toContain('stream disconnected, polling...');
   });
+
+  it('renders resizable DialogSidecar with custom width and resizer handle', () => {
+    useUIStore.getState().setDialogSidecarWidth(500);
+
+    const html = renderToStaticMarkup(React.createElement(DialogSidecar, {}));
+    expect(html).toContain('data-testid="dialog-sidecar"');
+    expect(html).toContain('data-testid="dialog-sidecar-resizer"');
+    expect(html).toContain('width:500px');
+    expect(html).toContain('cursor-col-resize');
+  });
 });

@@ -90,6 +90,19 @@ describe('WorkspaceStore & UIStore behavior', () => {
     expect(useUIStore.getState().sidebarWidth).toBe(600);
   });
 
+  it('updates and clamps dialogSidecarWidth in UIStore between 280 and 900', () => {
+    expect(useUIStore.getState().dialogSidecarWidth).toBe(384);
+
+    useUIStore.getState().setDialogSidecarWidth(520);
+    expect(useUIStore.getState().dialogSidecarWidth).toBe(520);
+
+    useUIStore.getState().setDialogSidecarWidth(150);
+    expect(useUIStore.getState().dialogSidecarWidth).toBe(280);
+
+    useUIStore.getState().setDialogSidecarWidth(1200);
+    expect(useUIStore.getState().dialogSidecarWidth).toBe(900);
+  });
+
   it('supports opening and persisting directory tabs with is_directory flag', () => {
     useWorkspaceStore.getState().openTab({
       id: 'dir:engineering/specs',

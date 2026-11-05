@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   MessageSquare,
   Plus,
@@ -52,7 +52,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   onReviewAction,
   onJumpToEdit,
 }) => {
-  const { setDialogSidecarOpen } = useUIStore();
+  const { setDialogSidecarOpen, dialogSidecarWidth, setDialogSidecarWidth } = useUIStore();
   const storeState = useDialogStore();
   // Fall back to getState() in SSR / unit test static render when initial snapshot is empty
   const isServer = typeof window === 'undefined';
@@ -102,6 +102,32 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [isResizing, setIsResizing] = useState(false);
+
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = dialogSidecarWidth || 384;
+      setIsResizing(true);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const deltaX = startX - moveEvent.clientX;
+        setDialogSidecarWidth(startWidth + deltaX);
+      };
+
+      const handleMouseUp = () => {
+        setIsResizing(false);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    },
+    [dialogSidecarWidth, setDialogSidecarWidth]
+  );
 
   // Live elapsed response timer when agent is generating/responding
   useEffect(() => {
@@ -470,9 +496,24 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
   return (
     <aside
-      className="w-96 flex-shrink-0 border-l border-cme-border-base bg-cme-bg-surface flex flex-col h-full shadow-lg z-20 select-text"
+      className="relative flex-shrink-0 border-l border-cme-border-base bg-cme-bg-surface flex flex-col h-full shadow-lg z-20 select-text max-w-full"
+      style={{ width: `${dialogSidecarWidth || 384}px` }}
       data-testid="dialog-sidecar"
     >
+      {/* Left-edge Resize Handle */}
+      <div
+        onMouseDown={handleResizeStart}
+        onDoubleClick={() => setDialogSidecarWidth(384)}
+        className={`absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-30 transition-colors ${
+          isResizing ? 'bg-cme-primary' : 'hover:bg-cme-primary/50'
+        }`}
+        title="Drag to resize AI chat (double-click to reset)"
+        data-testid="dialog-sidecar-resizer"
+      />
+      {isResizing && (
+        <div className="fixed inset-0 z-50 cursor-col-resize select-none pointer-events-auto" />
+      )}
+
       {/* Sidecar Top Bar */}
       <div className="p-3 border-b border-cme-border-base bg-cme-bg-subtle flex items-center justify-between gap-2 shrink-0">
         {/* Dialog Selector or Active Rename Field */}
