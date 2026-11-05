@@ -159,6 +159,27 @@ Result<bool> SessionManager::revoke_session(const std::string& raw_token) {
     }
 }
 
+Result<size_t> SessionManager::revoke_all_user_sessions(const std::string& user_id) {
+    if (user_id.empty() || !pool_) {
+        return 0;
+    }
+
+    auto conn_res = pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto res = tx.exec_params("DELETE FROM sessions WHERE user_id = $1::uuid;", user_id);
+        tx.commit();
+        return static_cast<size_t>(res.affected_rows());
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] SessionManager::revoke_all_user_sessions failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 Result<std::vector<SessionInfo>> SessionManager::list_user_sessions(const std::string& user_id) {
     if (!pool_) {
         return std::unexpected(ErrorCode::DatabaseError);

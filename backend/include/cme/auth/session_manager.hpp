@@ -91,6 +91,13 @@ public:
     Result<bool> revoke_session(const std::string& raw_token);
 
     /**
+     * @brief Revokes all active sessions for a user from the database.
+     * @param user_id UUID string of the user.
+     * @return Result<size_t> Number of revoked sessions or error.
+     */
+    Result<size_t> revoke_all_user_sessions(const std::string& user_id);
+
+    /**
      * @brief Lists all unexpired sessions for a user.
      * @param user_id UUID string of the user.
      * @return Result<std::vector<SessionInfo>> Active sessions list.

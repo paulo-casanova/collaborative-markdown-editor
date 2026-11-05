@@ -244,6 +244,16 @@ int main() {
         // Validate revoked token returns nullopt
         auto val_rev = session_mgr.validate_token(session.raw_token);
         assert(val_rev.has_value() && !val_rev.value().has_value());
+
+        // Revoke all user sessions
+        auto sess2 = session_mgr.create_session(bob_user_id, 24, "127.0.0.1", "CME-TestSuite-2");
+        auto sess3 = session_mgr.create_session(bob_user_id, 24, "127.0.0.1", "CME-TestSuite-3");
+        assert(sess2.has_value() && sess3.has_value());
+        auto rev_all_res = session_mgr.revoke_all_user_sessions(bob_user_id);
+        assert(rev_all_res.has_value() && rev_all_res.value() >= 2);
+        assert(session_mgr.validate_token(sess2->raw_token).value() == std::nullopt);
+        assert(session_mgr.validate_token(sess3->raw_token).value() == std::nullopt);
+
         std::cout << "  - SessionManager (lifecycle, tokens, and revocation) validated.\n";
     }
 
@@ -335,6 +345,7 @@ int main() {
     srv_cfg.server.port = 18082;
     srv_cfg.storage.root_path = server_storage.string();
     srv_cfg.database.url = db_url;
+    srv_cfg.database.lease_enabled = false;
     srv_cfg.authz.admin_provider = "file";
     srv_cfg.authz.admin_file_path = admin_cfg.string();
 
@@ -502,6 +513,7 @@ int main() {
         proxy_srv_cfg.server.port = 18083;
         proxy_srv_cfg.storage.root_path = proxy_server_storage.string();
         proxy_srv_cfg.database.url = db_url;
+        proxy_srv_cfg.database.lease_enabled = false;
         proxy_srv_cfg.authn.proxy_secret_header = "X-Proxy-Secret";
         proxy_srv_cfg.authn.proxy_secret_value = "cluster_internal_secret_42";
 
@@ -566,6 +578,7 @@ int main() {
         cfg_a.server.port = 18084;
         cfg_a.storage.root_path = cors_storage_a.string();
         cfg_a.database.url = db_url;
+        cfg_a.database.lease_enabled = false;
         // cors_allowed_origins is empty by default
 
         auto srv_a = std::make_shared<cme::server::Server>(cfg_a);
@@ -594,6 +607,7 @@ int main() {
         cfg_b.server.port = 18084;
         cfg_b.storage.root_path = cors_storage_b.string();
         cfg_b.database.url = db_url;
+        cfg_b.database.lease_enabled = false;
         cfg_b.server.cors_allowed_origins = {"https://editor.example.com"};
 
         auto srv_b = std::make_shared<cme::server::Server>(cfg_b);
@@ -624,6 +638,7 @@ int main() {
         cfg_c.server.port = 18084;
         cfg_c.storage.root_path = cors_storage_c.string();
         cfg_c.database.url = db_url;
+        cfg_c.database.lease_enabled = false;
         cfg_c.server.cors_allowed_origins = {"*"};
 
         auto srv_c = std::make_shared<cme::server::Server>(cfg_c);
@@ -653,6 +668,7 @@ int main() {
         ch_cfg.server.port = 18085;
         ch_cfg.storage.root_path = challenge_storage.string();
         ch_cfg.database.url = db_url;
+        ch_cfg.database.lease_enabled = false;
         ch_cfg.authn.provider = "challenge";
 
         auto ch_server = std::make_shared<cme::server::Server>(ch_cfg);

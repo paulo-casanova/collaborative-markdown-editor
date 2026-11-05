@@ -167,6 +167,7 @@ public:
     Result<void> delete_user(const std::string& user_id_or_username);
     Result<void> set_admin(const std::string& user_id_or_username, bool is_admin);
     Result<void> reset_password(const std::string& user_id_or_username, const std::string& new_password);
+    Result<size_t> kill_sessions(const std::string& user_id_or_username);
 
 private:
     std::shared_ptr<db::ConnectionPool> db_pool_;

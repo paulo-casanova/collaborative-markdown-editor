@@ -278,7 +278,28 @@ int main() {
     assert(mem_list.find("lead") != std::string::npos);
     std::cout << "  [PASS] cme-admin team create & add-member validated.\n";
 
-    // 3.3 CLI cleanup
+    // 3.3 CLI kill-sessions
+    {
+        pqxx::work tx(conn_res->get());
+        tx.exec("INSERT INTO sessions (token_hash, user_id, expires_at) "
+                "SELECT 'hash_cli_1', id, NOW() + interval '1 day' FROM users WHERE username = 'test_cli_charlie';");
+        tx.exec("INSERT INTO sessions (token_hash, user_id, expires_at) "
+                "SELECT 'hash_cli_2', id, NOW() + interval '1 day' FROM users WHERE username = 'test_cli_charlie';");
+        tx.commit();
+    }
+    int rc_kill = std::system((cli_path + " user kill-sessions --username test_cli_charlie > /tmp/cme_cli_kill.txt").c_str());
+    assert(rc_kill == 0);
+    std::ifstream kill_txt("/tmp/cme_cli_kill.txt");
+    std::string kill_out((std::istreambuf_iterator<char>(kill_txt)), std::istreambuf_iterator<char>());
+    assert(kill_out.find("Killed 2 active session(s)") != std::string::npos);
+    {
+        pqxx::read_transaction tx(conn_res->get());
+        auto rem = tx.exec("SELECT COUNT(*) FROM sessions WHERE user_id = (SELECT id FROM users WHERE username = 'test_cli_charlie');");
+        assert(rem[0][0].as<int>() == 0);
+    }
+    std::cout << "  [PASS] cme-admin user kill-sessions validated.\n";
+
+    // 3.4 CLI cleanup
     assert(std::system((cli_path + " user delete --username test_cli_charlie").c_str()) == 0);
     assert(std::system((cli_path + " team delete --team test_cli_team").c_str()) == 0);
     std::cout << "  [PASS] cme-admin delete user & team validated.\n";
@@ -295,6 +316,7 @@ int main() {
     srv_cfg.server.port = 18092;
     srv_cfg.storage.root_path = srv_storage.string();
     srv_cfg.database.url = db_url;
+    srv_cfg.database.lease_enabled = false;
 
     auto server = std::make_shared<server::Server>(srv_cfg);
     std::thread server_thread([server]() {
@@ -440,6 +462,54 @@ int main() {
         auto err_json = nlohmann::json::parse(r_cycle.body);
         assert(err_json["error"].get<std::string>().find("Circular DAG inheritance") != std::string::npos);
         std::cout << "  [PASS] REST circular DAG inheritance rejected with 400 Bad Request.\n";
+    }
+
+    // 4.7.5 Admin REST Kill Sessions
+    {
+        // Insert sessions for api_user_dave
+        {
+            pqxx::work tx(conn_res->get());
+            tx.exec("INSERT INTO sessions (token_hash, user_id, expires_at) "
+                    "SELECT 'hash_api_1', id, NOW() + interval '1 day' FROM users WHERE id = '" + api_user_id + "'::uuid;");
+            tx.exec("INSERT INTO sessions (token_hash, user_id, expires_at) "
+                    "SELECT 'hash_api_2', id, NOW() + interval '1 day' FROM users WHERE id = '" + api_user_id + "'::uuid;");
+            tx.commit();
+        }
+
+        // Non-admin user attempting to kill sessions -> 403 Forbidden
+        auto r_unauth = http_curl("POST", base_url + "/api/v1/admin/users/" + api_user_id + "/kill-sessions",
+                                  {"Authorization: Bearer " + non_admin_token});
+        assert(r_unauth.status_code == 403);
+
+        // Admin kills sessions via POST /api/v1/admin/users/:id/kill-sessions
+        auto r_kill = http_curl("POST", base_url + "/api/v1/admin/users/" + api_user_id + "/kill-sessions",
+                                {"Authorization: Bearer " + admin_token});
+        assert(r_kill.status_code == 200);
+        auto kill_json = nlohmann::json::parse(r_kill.body);
+        assert(kill_json["status"] == "revoked");
+        assert(kill_json["revoked_sessions_count"] == 2);
+        assert(kill_json["user_id"] == api_user_id);
+
+        // Verify sessions were revoked from database
+        {
+            pqxx::read_transaction tx(conn_res->get());
+            auto rem = tx.exec("SELECT COUNT(*) FROM sessions WHERE user_id = '" + api_user_id + "'::uuid;");
+            assert(rem[0][0].as<int>() == 0);
+        }
+
+        // Test DELETE /api/v1/admin/users/:id/sessions with 0 remaining sessions
+        auto r_del_sess = http_curl("DELETE", base_url + "/api/v1/admin/users/" + api_user_id + "/sessions",
+                                    {"Authorization: Bearer " + admin_token});
+        assert(r_del_sess.status_code == 200);
+        auto del_json = nlohmann::json::parse(r_del_sess.body);
+        assert(del_json["revoked_sessions_count"] == 0);
+
+        // Unknown user -> 404 Not Found
+        auto r_notfound = http_curl("POST", base_url + "/api/v1/admin/users/00000000-0000-0000-0000-000000000000/kill-sessions",
+                                    {"Authorization: Bearer " + admin_token});
+        assert(r_notfound.status_code == 404);
+
+        std::cout << "  [PASS] Admin REST kill-sessions endpoint verified (POST & DELETE, 403, 404, DB deletion).\n";
     }
 
     // 4.8 REST Deletions

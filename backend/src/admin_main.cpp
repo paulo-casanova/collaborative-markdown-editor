@@ -27,6 +27,8 @@ void print_help() {
               << "                          --username <name> [--revoke]\n"
               << "  user reset-password     Update user password\n"
               << "                          --username <name> --password <pass>\n"
+              << "  user kill-sessions      Revoke all active sessions and API tokens for a user\n"
+              << "                          --username <name_or_id>\n"
               << "  user delete             Delete a user account\n"
               << "                          --username <name>\n\n"
               << "  team list               List all teams\n"
@@ -214,6 +216,23 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
             std::cout << "[SUCCESS] Password reset for user '" << username << "'.\n";
+            return 0;
+        }
+
+        if (action == "kill-sessions") {
+            std::string username = get_opt(args, "--username");
+            if (username.empty()) username = get_opt(args, "--user");
+            if (username.empty() && args.size() > 2) username = args[2];
+            if (username.empty()) {
+                std::cerr << "[ERROR] --username is required.\n";
+                return 1;
+            }
+            auto res = user_service.kill_sessions(username);
+            if (!res) {
+                std::cerr << "[ERROR] Failed to kill sessions: " << to_string(res.error()) << "\n";
+                return 1;
+            }
+            std::cout << "[SUCCESS] Killed " << *res << " active session(s) for user '" << username << "'.\n";
             return 0;
         }
 

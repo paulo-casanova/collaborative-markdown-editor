@@ -118,6 +118,11 @@ public:
     void close_directory_sockets(const std::string& directory_path);
 
     /**
+     * @brief Closes all active WebSocket connections for a given user.
+     */
+    void close_user_sockets(const std::string& user_id);
+
+    /**
      * @brief Records an audit log event to the database and structured stdout.
      */
     void audit_change(

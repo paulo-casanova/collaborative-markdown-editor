@@ -3739,6 +3739,66 @@ Result<void> Server::start() {
         send_json(res, "200 OK", {{"status", "deleted"}});
     });
 
+    // POST /api/v1/admin/users/:id/kill-sessions & DELETE /api/v1/admin/users/:id/sessions
+    auto handle_kill_sessions = [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
+        auto ctx = get_auth_context(req);
+        auto admin_user_opt = verify_admin_access(ctx, res);
+        if (!admin_user_opt) return;
+
+        std::string target_user_param = std::string(req->getParameter(0));
+        auto target_user_res = user_service_->get_user_by_id(target_user_param);
+        if (!target_user_res.has_value()) {
+            send_json(res, "404 Not Found", {
+                {"error", "NotFound"},
+                {"message", "User not found"}
+            });
+            return;
+        }
+
+        std::string target_user_id = target_user_res->id;
+        std::string target_username = target_user_res->username;
+
+        size_t revoked_count = 0;
+        if (session_manager_) {
+            auto rev_res = session_manager_->revoke_all_user_sessions(target_user_id);
+            if (rev_res.has_value()) {
+                revoked_count = *rev_res;
+            }
+        } else {
+            auto rev_res = user_service_->kill_sessions(target_user_id);
+            if (rev_res.has_value()) {
+                revoked_count = *rev_res;
+            }
+        }
+
+        // Close all active WebSockets for this user across all document rooms
+        close_user_sockets(target_user_id);
+
+        audit_change(
+            req->getHeader("user-agent"),
+            "KILL_USER_SESSIONS",
+            "/api/v1/admin/users/" + target_user_id + "/kill-sessions",
+            "SUCCESS",
+            *admin_user_opt,
+            std::nullopt,
+            {
+                {"target_user_id", target_user_id},
+                {"target_username", target_username},
+                {"revoked_sessions_count", revoked_count}
+            }
+        );
+
+        send_json(res, "200 OK", {
+            {"status", "revoked"},
+            {"user_id", target_user_id},
+            {"username", target_username},
+            {"revoked_sessions_count", revoked_count}
+        });
+    };
+
+    app.post("/api/v1/admin/users/:id/kill-sessions", handle_kill_sessions);
+    app.del("/api/v1/admin/users/:id/sessions", handle_kill_sessions);
+
     // GET /api/v1/admin/teams/:id/members
     app.get("/api/v1/admin/teams/:id/members", [this, get_auth_context, verify_admin_access](auto *res, auto *req) {
         auto ctx = get_auth_context(req);
@@ -6601,6 +6661,40 @@ void Server::close_directory_sockets(const std::string& directory_path) {
                     it = active_sockets_.erase(it);
                 } else {
                     ++it;
+                }
+            }
+        }
+        for (void* ptr : sockets_to_close) {
+            auto* ws = static_cast<uWS::WebSocket<false, true, collab::CollabSocketData>*>(ptr);
+            ws->close();
+        }
+    };
+
+    if (loop_thread_id_ != std::thread::id{} && std::this_thread::get_id() == loop_thread_id_) {
+        do_close();
+    } else {
+        loop->defer(std::move(do_close));
+    }
+}
+
+void Server::close_user_sockets(const std::string& user_id) {
+    if (!uws_loop_) return;
+    auto* loop = static_cast<uWS::Loop*>(uws_loop_);
+
+    auto do_close = [this, user_id]() {
+        std::vector<void*> sockets_to_close;
+        {
+            std::lock_guard lock(sockets_mutex_);
+            for (auto& [doc_id, sockets] : active_sockets_) {
+                for (auto it = sockets.begin(); it != sockets.end(); ) {
+                    auto* ws = static_cast<uWS::WebSocket<false, true, collab::CollabSocketData>*>(*it);
+                    auto* data = ws->getUserData();
+                    if (data && (data->user_id == user_id || data->username == user_id)) {
+                        sockets_to_close.push_back(*it);
+                        it = sockets.erase(it);
+                    } else {
+                        ++it;
+                    }
                 }
             }
         }

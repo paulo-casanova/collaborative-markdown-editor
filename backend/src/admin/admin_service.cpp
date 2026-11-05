@@ -253,6 +253,27 @@ Result<void> UserService::reset_password(const std::string& user_id_or_username,
     return update_user(user_id_or_username, UpdateUserRequest{.password = new_password}).transform([](const UserRecord&) {});
 }
 
+Result<size_t> UserService::kill_sessions(const std::string& user_id_or_username) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto resolved_id = resolve_user_id(tx, user_id_or_username);
+        if (!resolved_id) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        auto res = tx.exec_params("DELETE FROM sessions WHERE user_id = $1::uuid;", *resolved_id);
+        tx.commit();
+        return static_cast<size_t>(res.affected_rows());
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] UserService::kill_sessions failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 // ==============================================================================
 // TeamService Implementation
 // ==============================================================================
