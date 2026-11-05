@@ -8,6 +8,7 @@ export interface RawGanttTask {
   duration?: string | number;
   dependsOn?: string | string[];
   assignee?: string | string[];
+  allocation?: number | string;
   progress?: number | string;
   milestone?: boolean;
   children?: RawGanttTask[];
@@ -38,6 +39,7 @@ export interface ResolvedGanttTask {
   durationDays: number;
   progress: number; // 0.0 to 1.0
   assignees: string[];
+  assigneeAllocations?: Record<string, number>;
   displayAssignee: string;
   milestone: boolean;
   phaseId: string;
@@ -189,6 +191,7 @@ interface IntermediateTask {
   durationDays: number;
   progress: number;
   assignees: string[];
+  assigneeAllocations?: Record<string, number>;
   displayAssignee: string;
   milestone: boolean;
   phaseId: string;
@@ -200,8 +203,8 @@ interface IntermediateTask {
  * Preprocesses raw Gantt YAML to allow natural user syntax like unquoted `@mentions`.
  */
 function preprocessGanttYaml(source: string): string {
-  // Auto-quote unquoted @mentions (YAML 1.2 treats @ as reserved character)
-  return source.replace(/(^|[\s,\[])@([a-zA-Z0-9_\-\.]+)/g, '$1"@$2"');
+  // Auto-quote unquoted @mentions (including optional allocation % like "@pasc (50%)")
+  return source.replace(/(^|[\s,\[])@([a-zA-Z0-9_\-\.]+(?:\s*\([^)]*\)|\s*[0-9]+%?)?)/g, '$1"@$2"');
 }
 
 /**
@@ -340,7 +343,19 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       const hasChildren = Array.isArray(t.children) && t.children.length > 0;
       const isMilestone = Boolean(t.milestone) || t.duration === '0' || t.duration === '0d' || t.duration === 0;
 
-      // Extract assignees (handles strings, arrays, @username)
+      // Extract assignees and allocations
+      let defaultAlloc = 1.0;
+      if (t.allocation !== undefined && t.allocation !== null) {
+        if (typeof t.allocation === 'string' && t.allocation.endsWith('%')) {
+          defaultAlloc = parseFloat(t.allocation) / 100;
+        } else if (typeof t.allocation === 'number') {
+          defaultAlloc = t.allocation > 1 ? t.allocation / 100 : t.allocation;
+        } else {
+          const num = parseFloat(String(t.allocation));
+          if (!isNaN(num)) defaultAlloc = num > 1 ? num / 100 : num;
+        }
+      }
+
       const rawAssignees: string[] = [];
       if (typeof t.assignee === 'string') {
         rawAssignees.push(t.assignee);
@@ -350,10 +365,26 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
         });
       }
 
-      const assignees = rawAssignees.map((a) => {
-        const clean = a.trim();
-        return clean.startsWith('@') ? clean.slice(1) : clean;
-      });
+      const assignees: string[] = [];
+      const assigneeAllocations: Record<string, number> = {};
+
+      for (const a of rawAssignees) {
+        const cleanA = a.trim();
+        const match = cleanA.match(/^@?([a-zA-Z0-9_.-]+)(?:[\s:(]+([0-9]+(?:\.[0-9]+)?)\s*%\)?)?$/);
+        if (match) {
+          const username = match[1];
+          let alloc = defaultAlloc;
+          if (match[2]) {
+            alloc = parseFloat(match[2]) / 100;
+          }
+          assignees.push(username);
+          assigneeAllocations[username] = alloc;
+        } else {
+          const username = cleanA.startsWith('@') ? cleanA.slice(1) : cleanA;
+          assignees.push(username);
+          assigneeAllocations[username] = defaultAlloc;
+        }
+      }
 
       const displayAssignee = rawAssignees.join(', ');
 
@@ -399,6 +430,7 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
         durationDays: isMilestone ? 0 : parseDuration(t.duration),
         progress: parseProgress(t.progress),
         assignees,
+        assigneeAllocations,
         displayAssignee,
         milestone: isMilestone,
         phaseId,
@@ -606,6 +638,7 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       durationDays: t.durationDays,
       progress: Math.round(t.progress * 100) / 100,
       assignees: t.assignees,
+      assigneeAllocations: t.assigneeAllocations,
       displayAssignee: t.displayAssignee,
       milestone: t.milestone,
       phaseId: t.phaseId,

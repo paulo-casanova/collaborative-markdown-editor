@@ -281,6 +281,27 @@ tasks:
       expect(model.axisInterval).toBe('auto');
     });
 
+    it('parses resource allocation percentages from assignee string or allocation field', () => {
+      const yaml = `
+tasks:
+  - id: t1
+    name: Task 1
+    start: 2026-12-01
+    duration: 3d
+    assignee: [@pasc (50%), @alice (75%)]
+  - id: t2
+    name: Task 2
+    start: 2026-12-04
+    duration: 2d
+    assignee: @bob
+    allocation: 25%
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      expect(model.tasks[0].assigneeAllocations).toEqual({ pasc: 0.5, alice: 0.75 });
+      expect(model.tasks[1].assigneeAllocations).toEqual({ bob: 0.25 });
+    });
+
     it('returns friendly syntax error for invalid YAML syntax without throwing', () => {
       const yaml = `
 tasks:

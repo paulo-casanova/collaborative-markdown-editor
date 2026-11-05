@@ -423,7 +423,8 @@ tasks:
 | `end` | `date string` | Explicit completion date (`YYYY-MM-DD`). Optional if `duration` is provided. |
 | `duration` | `string \| number` | Span in days (`5d`), weeks (`2w`), months (`1m`), or zero (`0d`). |
 | `dependsOn` | `string \| string[]` | Predecessor ID(s). Supports lag offsets like `task1 + 2d`. |
-| `assignee` | `string \| string[]` | Contributor username(s), team names, or `@mentions`. |
+| `assignee` | `string \| string[]` | Contributor username(s), team names, or `@mentions`. Supports allocation percentages (e.g. `@alice (50%)`). |
+| `allocation` | `number \| string` | Default allocation percentage for the task (e.g. `50%` or `0.5`, defaults to `100%`). |
 | `progress` | `number \| string` | Completion percentage (e.g. `75%`, `0.75`, or `75`). |
 | `milestone` | `boolean` | Flags a zero-duration deliverable marker (diamond symbol). |
 | `children` | `Task[]` | Nested subtasks. Parent `start`, `end`, and `progress` auto-roll up. |
@@ -442,7 +443,7 @@ tasks:
   * Example: `columns: [start, end, duration, progress]`
 * **`resource-allocation`**:
   * `'no'` / `false` (default): Standard hierarchical Gantt chart view.
-  * `'yes'` / `true`: Draws a dedicated **Resource Allocation** timeline below the Gantt chart with one row per team member, visualizing their assigned tasks over time and highlighting concurrent workload overlaps.
+  * `'yes'` / `true`: Draws a dedicated **Resource Allocation** timeline below the Gantt chart with one row per team member, visualizing their assigned tasks over time and displaying each block's allocation percentage (e.g. `100%`, `50%`) with full task details on hover.
 * **`axis`**:
   * Granularity of dates and grid lines shown on the top timeline axis.
   * `'all'` / `'daily'`: Displays every day tick.

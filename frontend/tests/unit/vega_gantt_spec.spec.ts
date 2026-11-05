@@ -137,7 +137,7 @@ tasks:
     name: Web Frontend
     dependsOn: t1
     duration: 4d
-    assignee: @alice
+    assignee: @alice (50%)
     progress: 30%
 `;
     const model = parseGanttMarkdown(yaml);
@@ -156,12 +156,16 @@ tasks:
     const resourceTasks = view.data('resourceTasks');
     expect(resourceTasks).toHaveLength(2);
     expect(resourceTasks[0].resource).toBe('pasc');
+    expect(resourceTasks[0].allocationText).toBe('100%');
     expect(resourceTasks[1].resource).toBe('alice');
+    expect(resourceTasks[1].allocationText).toBe('50%');
 
     const svg = await view.toSVG();
     expect(svg).toContain('RESOURCE ALLOCATION');
     expect(svg).toContain('@pasc');
     expect(svg).toContain('@alice');
+    expect(svg).toContain('100%');
+    expect(svg).toContain('50%');
     expect(svg).toContain('Start');
     expect(svg).toContain('End');
     expect(svg).toContain('Dur');

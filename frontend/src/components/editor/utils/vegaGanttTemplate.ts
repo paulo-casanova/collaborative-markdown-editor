@@ -247,6 +247,10 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
       });
 
       for (const t of assignedTasks) {
+        const alloc = t.assigneeAllocations?.[resource] ?? 1.0;
+        const allocationPct = Math.round(alloc * 100);
+        const allocationText = `${allocationPct}%`;
+
         resourceTasksData.push({
           resource,
           displayResource: resource.startsWith('@') ? resource : `@${resource}`,
@@ -256,6 +260,9 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           end: t.end,
           progress: t.progress,
           durationDays: t.durationDays,
+          allocation: alloc,
+          allocationPct,
+          allocationText,
           yTop,
           yCenter,
           barHeight,
@@ -582,7 +589,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
       },
     });
 
-    // Resource allocation task background bars
+    // Resource allocation task allocation blocks
     resourceMarks.push({
       type: 'rect',
       from: { data: 'resourceTasks' },
@@ -596,52 +603,40 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           y: { field: 'yTop' },
           height: { field: 'barHeight' },
           fill: { scale: 'colorScale', field: 'colorKey' },
-          opacity: { value: 0.45 },
+          opacity: { value: 0.75 },
           stroke: { scale: 'colorScale', field: 'colorKey' },
           strokeWidth: { value: 1 },
           tooltip: {
             signal:
-              "{'Resource': datum.displayResource, 'Task': datum.taskName, 'Dates': datum.start + ' → ' + datum.end, 'Duration': datum.durationDays + 'd', 'Progress': round(datum.progress * 100) + '%'}",
+              "{'Resource': datum.displayResource, 'Task': datum.taskName, 'Allocation': datum.allocationText, 'Dates': datum.start + ' → ' + datum.end, 'Duration': datum.durationDays + 'd'}",
           },
         },
       },
     });
 
-    // Resource allocation progress fill bars
-    resourceMarks.push({
-      type: 'rect',
-      from: { data: 'resourceTasks' },
-      encode: {
-        enter: {
-          cornerRadius: { value: 4 },
-        },
-        update: {
-          x: { scale: 'timeScale', field: 'startTime' },
-          x2: { scale: 'timeScale', field: 'progressTime' },
-          y: { field: 'yTop' },
-          height: { field: 'barHeight' },
-          fill: { scale: 'colorScale', field: 'colorKey' },
-          opacity: { signal: 'datum.progress === 0 ? 0 : 0.9' },
-        },
-      },
-    });
-
-    // Resource task label text inside the bar
+    // Resource allocation percentage text centered inside each block
     resourceMarks.push({
       type: 'text',
       from: { data: 'resourceTasks' },
       encode: {
         enter: {
+          align: { value: 'center' },
           baseline: { value: 'middle' },
           fontSize: { value: 10 },
           fontWeight: { value: 'bold' },
           fill: { value: '#ffffff' },
         },
         update: {
-          x: { scale: 'timeScale', field: 'startTime', offset: 6 },
+          x: {
+            signal:
+              "(scale('timeScale', datum.startTime) + scale('timeScale', datum.endTime)) / 2",
+          },
           y: { field: 'yCenter' },
-          text: { field: 'taskName' },
-          limit: { signal: "max(10, scale('timeScale', datum.endTime) - scale('timeScale', datum.startTime) - 12)" },
+          text: { field: 'allocationText' },
+          limit: {
+            signal:
+              "max(6, scale('timeScale', datum.endTime) - scale('timeScale', datum.startTime) - 4)",
+          },
         },
       },
     });
