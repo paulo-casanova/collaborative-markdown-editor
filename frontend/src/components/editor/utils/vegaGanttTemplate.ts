@@ -178,12 +178,6 @@ export function computeResourceIntervals(
 
   if (activeTasks.length === 0) return [];
 
-  // Check if any task explicitly specified fractional allocation
-  const hasExplicitAlloc = activeTasks.some((t) => {
-    const alloc = t.assigneeAllocations?.[resource];
-    return alloc !== undefined && alloc !== 1.0;
-  });
-
   // Collect all unique boundary dates
   const dateSet = new Set<string>();
   for (const t of activeTasks) {
@@ -230,7 +224,7 @@ export function computeResourceIntervals(
 
   if (rawIntervals.length === 0) return [];
 
-  // Merge adjacent contiguous intervals where workload is identical
+  // Merge adjacent contiguous intervals where total allocation is identical
   const merged: RawInterval[] = [];
   let currentChunk: RawInterval = {
     start: rawIntervals[0].start,
@@ -243,9 +237,7 @@ export function computeResourceIntervals(
   for (let i = 1; i < rawIntervals.length; i++) {
     const next = rawIntervals[i];
     const isContiguous = currentChunk.end === next.start;
-    const sameLoad = hasExplicitAlloc
-      ? Math.abs(currentChunk.totalAlloc - next.totalAlloc) < 0.001
-      : currentChunk.taskCount === next.taskCount;
+    const sameLoad = Math.abs(currentChunk.totalAlloc - next.totalAlloc) < 0.001;
 
     if (isContiguous && sameLoad) {
       currentChunk.end = next.end;
@@ -269,9 +261,8 @@ export function computeResourceIntervals(
 
   // Format into view data
   return merged.map((chunk) => {
-    const allocationText = hasExplicitAlloc
-      ? `${Math.round(chunk.totalAlloc * 100)}%`
-      : `${chunk.taskCount}`;
+    const pctVal = Math.round(chunk.totalAlloc * 1000) / 10;
+    const allocationText = `${pctVal}%`;
 
     const workloadText = `${chunk.taskCount} task${chunk.taskCount === 1 ? '' : 's'}${
       chunk.taskCount > 1 ? ' (concurrent)' : ''
@@ -286,18 +277,17 @@ export function computeResourceIntervals(
       Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24))
     );
 
-    // Color coding by workload
-    // 1 task / <= 100% -> Blue (#3b82f6)
-    // 2 tasks / > 100% and <= 200% -> Amber (#f59e0b)
-    // 3+ tasks / > 200% -> Red (#ef4444)
+    // Color coding by workload percentage
+    // <= 100% -> Normal workload: Blue (#3b82f6)
+    // > 100% and <= 200% -> Overallocated: Amber (#f59e0b)
+    // > 200% -> Heavily overallocated: Red (#ef4444)
     let fillColor = '#3b82f6';
     let strokeColor = '#2563eb';
 
-    const loadMetric = hasExplicitAlloc ? chunk.totalAlloc : chunk.taskCount;
-    if (loadMetric > 1 && loadMetric <= 2) {
+    if (chunk.totalAlloc > 1.001 && chunk.totalAlloc <= 2.001) {
       fillColor = '#f59e0b';
       strokeColor = '#d97706';
-    } else if (loadMetric > 2) {
+    } else if (chunk.totalAlloc > 2.001) {
       fillColor = '#ef4444';
       strokeColor = '#dc2626';
     }
@@ -942,7 +932,7 @@ export function buildVegaGanttSpec(
             strokeWidth: { value: 1 },
             tooltip: {
               signal:
-                "{'Resource': datum.displayResource, 'Workload': datum.workloadText, 'Tasks': datum.taskNames, 'Dates': datum.start + ' → ' + datum.end, 'Duration': datum.durationDays + 'd'}",
+                "{'Resource': datum.displayResource, 'Allocation': datum.allocationText, 'Workload': datum.workloadText, 'Tasks': datum.taskNames, 'Dates': datum.start + ' → ' + datum.end, 'Duration': datum.durationDays + 'd'}",
             },
           },
         },

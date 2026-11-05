@@ -159,7 +159,7 @@ tasks:
     const resourceTasks = view.data('resourceTasks');
     expect(resourceTasks).toHaveLength(2);
     expect(resourceTasks[0].resource).toBe('pasc');
-    expect(resourceTasks[0].allocationText).toBe('1');
+    expect(resourceTasks[0].allocationText).toBe('100%');
     expect(resourceTasks[1].resource).toBe('alice');
     expect(resourceTasks[1].allocationText).toBe('50%');
 
@@ -197,27 +197,27 @@ tasks:
     await view.runAsync();
 
     const resourceTasks = view.data('resourceTasks');
-    // Expect 3 chunks: Dec 1-5 (1), Dec 5-10 (2), Dec 10-15 (1)
+    // Expect 3 chunks: Dec 1-5 (100%), Dec 5-10 (200%), Dec 10-15 (100%)
     expect(resourceTasks).toHaveLength(3);
 
     expect(resourceTasks[0].start).toBe('2026-12-01');
     expect(resourceTasks[0].end).toBe('2026-12-05');
     expect(resourceTasks[0].taskCount).toBe(1);
-    expect(resourceTasks[0].allocationText).toBe('1');
+    expect(resourceTasks[0].allocationText).toBe('100%');
 
     expect(resourceTasks[1].start).toBe('2026-12-05');
     expect(resourceTasks[1].end).toBe('2026-12-10');
     expect(resourceTasks[1].taskCount).toBe(2);
-    expect(resourceTasks[1].allocationText).toBe('2');
+    expect(resourceTasks[1].allocationText).toBe('200%');
 
     expect(resourceTasks[2].start).toBe('2026-12-10');
     expect(resourceTasks[2].end).toBe('2026-12-15');
     expect(resourceTasks[2].taskCount).toBe(1);
-    expect(resourceTasks[2].allocationText).toBe('1');
+    expect(resourceTasks[2].allocationText).toBe('100%');
 
     const svg = await view.toSVG();
-    expect(svg).toContain('1');
-    expect(svg).toContain('2');
+    expect(svg).toContain('100%');
+    expect(svg).toContain('200%');
   });
 
   it('handles computeResourceIntervals with merging and complex overlap pyramids', () => {
@@ -253,17 +253,17 @@ tasks:
 
     const intervals = computeResourceIntervals(tasks, 'pasc');
     // Boundaries: 12-01, 12-05, 12-08, 12-12, 12-15, 12-20
-    // [01, 05]: 1
-    // [05, 08]: 2
-    // [08, 12]: 3
-    // [12, 15]: 2
-    // [15, 20]: 1
+    // [01, 05]: 100%
+    // [05, 08]: 200%
+    // [08, 12]: 300%
+    // [12, 15]: 200%
+    // [15, 20]: 100%
     expect(intervals).toHaveLength(5);
     expect(intervals.map((i) => i.taskCount)).toEqual([1, 2, 3, 2, 1]);
-    expect(intervals.map((i) => i.allocationText)).toEqual(['1', '2', '3', '2', '1']);
+    expect(intervals.map((i) => i.allocationText)).toEqual(['100%', '200%', '300%', '200%', '100%']);
   });
 
-  it('merges contiguous non-overlapping tasks with identical task count', () => {
+  it('merges contiguous non-overlapping tasks with identical task count and allocation', () => {
     const tasks: any[] = [
       {
         id: 't1',
@@ -286,14 +286,52 @@ tasks:
     ];
 
     const intervals = computeResourceIntervals(tasks, 'pasc');
-    // [12-01, 12-05] and [12-05, 12-10] are contiguous and both have count 1 -> merge to [12-01, 12-10]
+    // [12-01, 12-05] and [12-05, 12-10] are contiguous and both have 100% allocation -> merge to [12-01, 12-10]
     expect(intervals).toHaveLength(1);
     expect(intervals[0].start).toBe('2026-12-01');
     expect(intervals[0].end).toBe('2026-12-10');
     expect(intervals[0].taskCount).toBe(1);
-    expect(intervals[0].allocationText).toBe('1');
+    expect(intervals[0].allocationText).toBe('100%');
     expect(intervals[0].taskNames).toContain('Task 1');
     expect(intervals[0].taskNames).toContain('Task 2');
+  });
+
+  it('computes and merges intervals with fractional allocations', () => {
+    const tasks: any[] = [
+      {
+        id: 't1',
+        name: 'Task 1',
+        start: '2026-12-01',
+        end: '2026-12-10',
+        assignees: ['alice'],
+        assigneeAllocations: { alice: 0.5 },
+        isParent: false,
+        milestone: false,
+      },
+      {
+        id: 't2',
+        name: 'Task 2',
+        start: '2026-12-05',
+        end: '2026-12-15',
+        assignees: ['alice'],
+        assigneeAllocations: { alice: 0.25 },
+        isParent: false,
+        milestone: false,
+      },
+    ];
+
+    const intervals = computeResourceIntervals(tasks, 'alice');
+    expect(intervals).toHaveLength(3);
+    // [12-01, 12-05]: 50%
+    expect(intervals[0].allocationText).toBe('50%');
+    expect(intervals[0].fillColor).toBe('#3b82f6'); // <= 100%
+
+    // [12-05, 12-10]: 50% + 25% = 75%
+    expect(intervals[1].allocationText).toBe('75%');
+    expect(intervals[1].fillColor).toBe('#3b82f6'); // <= 100%
+
+    // [12-10, 12-15]: 25%
+    expect(intervals[2].allocationText).toBe('25%');
   });
 
   it('calculates timeline width dynamically or from user configuration', () => {
