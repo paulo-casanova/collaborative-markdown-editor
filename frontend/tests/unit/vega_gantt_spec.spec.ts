@@ -158,10 +158,11 @@ tasks:
 
     const resourceTasks = view.data('resourceTasks');
     expect(resourceTasks).toHaveLength(2);
-    expect(resourceTasks[0].resource).toBe('pasc');
-    expect(resourceTasks[0].allocationText).toBe('100%');
-    expect(resourceTasks[1].resource).toBe('alice');
-    expect(resourceTasks[1].allocationText).toBe('50%');
+    // Resources are sorted alphabetically: 'alice' before 'pasc'
+    expect(resourceTasks[0].resource).toBe('alice');
+    expect(resourceTasks[0].allocationText).toBe('50%');
+    expect(resourceTasks[1].resource).toBe('pasc');
+    expect(resourceTasks[1].allocationText).toBe('100%');
 
     const svg = await view.toSVG();
     expect(svg).toContain('RESOURCE ALLOCATION');
@@ -566,5 +567,115 @@ tasks:
     // Dec 07 and Dec 14 are also rendered without overlap
     expect(svg).toContain('Dec 07');
     expect(svg).toContain('Dec 14');
+  });
+
+  it('compiles and renders tasks with multiple spans and connecting rules', async () => {
+    const yaml = `
+title: Multi-Span Project
+colorBy: phase
+tasks:
+  - id: t1
+    name: Phased Deployment
+    spans:
+      - start: 2026-12-01
+        end: 2026-12-05
+      - start: 2026-12-10
+        end: 2026-12-15
+    progress: 50%
+    assignee: @alice
+`;
+    const model = parseGanttMarkdown(yaml);
+    expect(model.errors).toHaveLength(0);
+
+    const spec = buildVegaGanttSpec(model, false);
+    expect(spec.data.some((d: any) => d.name === 'taskBars')).toBe(true);
+    expect(spec.data.some((d: any) => d.name === 'spanConnectors')).toBe(true);
+
+    const runtime = vega.parse(spec);
+    const view = new vega.View(runtime, { renderer: 'none' });
+    await view.runAsync();
+
+    const taskBars = view.data('taskBars');
+    expect(taskBars).toHaveLength(2);
+    expect(taskBars[0].start).toBe('2026-12-01');
+    expect(taskBars[0].end).toBe('2026-12-05');
+    expect(taskBars[1].start).toBe('2026-12-10');
+    expect(taskBars[1].end).toBe('2026-12-15');
+
+    const spanConnectors = view.data('spanConnectors');
+    expect(spanConnectors).toHaveLength(1);
+    expect(spanConnectors[0].start).toBe('2026-12-05');
+    expect(spanConnectors[0].end).toBe('2026-12-10');
+
+    const svg = await view.toSVG();
+    expect(svg).toBeDefined();
+    expect(svg).toContain('Phased Deplo');
+    expect(svg).toContain('[@alice]');
+  });
+
+  it('accurately computes resource intervals for tasks with spans, freeing the resource during gaps', () => {
+    const yaml = `
+resource-allocation: yes
+tasks:
+  - id: dev
+    name: Development
+    assignee: @alice (100%)
+    spans:
+      - start: 2026-12-01
+        end: 2026-12-05
+      - start: 2026-12-10
+        end: 2026-12-15
+`;
+    const model = parseGanttMarkdown(yaml);
+    expect(model.tasks[0].spans).toHaveLength(2);
+
+    const intervals = computeResourceIntervals(model.tasks, 'alice');
+    // Alice is active Dec 1 - Dec 5, free Dec 5 - Dec 10, active Dec 10 - Dec 15
+    expect(intervals).toHaveLength(2);
+    expect(intervals[0].start).toBe('2026-12-01');
+    expect(intervals[0].end).toBe('2026-12-05');
+    expect(intervals[0].allocationText).toBe('100%');
+
+    expect(intervals[1].start).toBe('2026-12-10');
+    expect(intervals[1].end).toBe('2026-12-15');
+    expect(intervals[1].allocationText).toBe('100%');
+  });
+
+  it('renders resource allocation rows in alphabetical order', async () => {
+    const yaml = `
+resource-allocation: yes
+tasks:
+  - id: t1
+    name: Task 1
+    start: 2026-12-01
+    duration: 3d
+    assignee: @pasc
+  - id: t2
+    name: Task 2
+    start: 2026-12-01
+    duration: 3d
+    assignee: @charlie
+  - id: t3
+    name: Task 3
+    start: 2026-12-01
+    duration: 3d
+    assignee: @bob
+  - id: t4
+    name: Task 4
+    start: 2026-12-01
+    duration: 3d
+    assignee: @alice
+`;
+    const model = parseGanttMarkdown(yaml);
+    expect(model.assignees).toEqual(['alice', 'bob', 'charlie', 'pasc']);
+
+    const spec = buildVegaGanttSpec(model, false);
+    const runtime = vega.parse(spec);
+    const view = new vega.View(runtime, { renderer: 'none' });
+    await view.runAsync();
+
+    const resourceRows = view.data('resourceRows');
+    expect(resourceRows).toHaveLength(4);
+    expect(resourceRows.map((r: any) => r.resource)).toEqual(['alice', 'bob', 'charlie', 'pasc']);
   });
 });

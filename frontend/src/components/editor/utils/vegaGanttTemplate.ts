@@ -178,11 +178,20 @@ export function computeResourceIntervals(
 
   if (activeTasks.length === 0) return [];
 
-  // Collect all unique boundary dates
+  // Collect all unique boundary dates from tasks and any sub-spans
   const dateSet = new Set<string>();
   for (const t of activeTasks) {
-    dateSet.add(t.start);
-    dateSet.add(t.end);
+    if (t.spans && t.spans.length > 0) {
+      for (const s of t.spans) {
+        if (s.start < s.end) {
+          dateSet.add(s.start);
+          dateSet.add(s.end);
+        }
+      }
+    } else {
+      dateSet.add(t.start);
+      dateSet.add(t.end);
+    }
   }
 
   const sortedDates = Array.from(dateSet).sort();
@@ -202,9 +211,12 @@ export function computeResourceIntervals(
     const dStart = sortedDates[i];
     const dEnd = sortedDates[i + 1];
 
-    const currentTasks = activeTasks.filter(
-      (t) => t.start <= dStart && t.end >= dEnd
-    );
+    const currentTasks = activeTasks.filter((t) => {
+      if (t.spans && t.spans.length > 0) {
+        return t.spans.some((s) => s.start <= dStart && s.end >= dEnd);
+      }
+      return t.start <= dStart && t.end >= dEnd;
+    });
 
     if (currentTasks.length > 0) {
       let totalAlloc = 0;
@@ -462,7 +474,11 @@ export function buildVegaGanttSpec(
   const resourceTasksData: any[] = [];
 
   if (showResourceAllocation) {
-    model.assignees.forEach((resource, rIndex) => {
+    const sortedResources = [...model.assignees].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
+    );
+
+    sortedResources.forEach((resource, rIndex) => {
       const assignedTasks = model.tasks.filter((t) => t.assignees.includes(resource));
       const leafTasks = assignedTasks.filter((t) => !t.isParent);
       const yTop = resourceSectionY + rIndex * resourceRowHeight + 5;
@@ -521,6 +537,79 @@ export function buildVegaGanttSpec(
       labelX: 8 + t.depth * 14,
       displayAssigneeText: t.displayAssignee ? `[${t.displayAssignee}]` : '',
     };
+  });
+
+  // 3b. Compute individual task bars (multi-span or single) and span connector lines
+  const taskBarsData: any[] = [];
+  const spanConnectorsData: any[] = [];
+
+  tasksData.forEach((t) => {
+    if (t.milestone) {
+      return;
+    }
+
+    if (t.spans && t.spans.length >= 2) {
+      const totalDur = Math.max(1, t.durationDays);
+      let remainingCompleted = t.progress * totalDur;
+
+      t.spans.forEach((span, sIdx) => {
+        const sDur = Math.max(1, span.durationDays);
+        const completedInSpan = Math.max(0, Math.min(sDur, remainingCompleted));
+        remainingCompleted -= completedInSpan;
+        const spanProgress = completedInSpan / sDur;
+
+        taskBarsData.push({
+          ...t,
+          barId: `${t.id}_span_${sIdx}`,
+          taskId: t.id,
+          taskIndex: t.index,
+          start: span.start,
+          end: span.end,
+          durationDays: span.durationDays,
+          progress: spanProgress,
+          spanIndex: sIdx,
+          totalSpans: t.spans!.length,
+          overallStart: t.start,
+          overallEnd: t.end,
+          totalDurationDays: t.durationDays,
+          isMultiSpan: true,
+          assigneeKey: t.assignees[0] || 'Unassigned',
+          phaseKey: t.phaseName || 'General',
+        });
+
+        if (sIdx < t.spans!.length - 1) {
+          const nextSpan = t.spans![sIdx + 1];
+          spanConnectorsData.push({
+            taskId: t.id,
+            taskIndex: t.index,
+            start: span.end,
+            end: nextSpan.start,
+            yCenter: t.yCenter,
+            assigneeKey: t.assignees[0] || 'Unassigned',
+            phaseKey: t.phaseName || 'General',
+          });
+        }
+      });
+    } else {
+      taskBarsData.push({
+        ...t,
+        barId: t.id,
+        taskId: t.id,
+        taskIndex: t.index,
+        start: t.start,
+        end: t.end,
+        durationDays: t.durationDays,
+        progress: t.progress,
+        spanIndex: 0,
+        totalSpans: 1,
+        overallStart: t.start,
+        overallEnd: t.end,
+        totalDurationDays: t.durationDays,
+        isMultiSpan: false,
+        assigneeKey: t.assignees[0] || 'Unassigned',
+        phaseKey: t.phaseName || 'General',
+      });
+    }
   });
 
   const taskIndexMap = new Map<string, typeof tasksData[0]>();
@@ -993,10 +1082,29 @@ export function buildVegaGanttSpec(
       },
     },
 
+    // Connector Lines between spans of split tasks
+    {
+      type: 'rule',
+      from: { data: 'spanConnectors' },
+      encode: {
+        enter: {
+          stroke: { scale: 'colorScale', field: colorField },
+          strokeWidth: { value: 1.5 },
+          strokeDash: { value: [3, 2] },
+          opacity: { value: 0.7 },
+        },
+        update: {
+          x: { scale: 'timeScale', field: 'startTime' },
+          x2: { scale: 'timeScale', field: 'endTime' },
+          y: { field: 'yCenter' },
+        },
+      },
+    },
+
     // Standard & Parent Task Bars (Background outline / bar)
     {
       type: 'rect',
-      from: { data: 'tasks' },
+      from: { data: 'taskBars' },
       encode: {
         enter: {
           cornerRadius: { value: 4 },
@@ -1013,6 +1121,8 @@ export function buildVegaGanttSpec(
           strokeDash: { signal: 'datum.isParent ? [4, 2] : null' },
           tooltip: {
             signal:
+              "datum.isMultiSpan ? " +
+              "{'Task': datum.name, 'Phase': datum.phaseName, 'Span': (datum.spanIndex + 1) + ' of ' + datum.totalSpans, 'Span Dates': datum.start + ' → ' + datum.end, 'Overall Dates': datum.overallStart + ' → ' + datum.overallEnd, 'Total Dur': datum.totalDurationDays + 'd', 'Progress': round(datum.progress * 100) + '%', 'Assignee': datum.displayAssignee || 'Unassigned'} : " +
               "{'Task': datum.name, 'Phase': datum.phaseName, 'Dates': datum.start + ' → ' + datum.end, 'Duration': datum.durationDays + 'd', 'Progress': round(datum.progress * 100) + '%', 'Assignee': datum.displayAssignee || 'Unassigned'}",
           },
         },
@@ -1022,7 +1132,7 @@ export function buildVegaGanttSpec(
     // Progress Fill Bars
     {
       type: 'rect',
-      from: { data: 'tasks' },
+      from: { data: 'taskBars' },
       encode: {
         enter: {
           cornerRadius: { value: 4 },
@@ -1395,6 +1505,43 @@ export function buildVegaGanttSpec(
         ],
       },
       {
+        name: 'taskBars',
+        values: taskBarsData,
+        transform: [
+          {
+            type: 'formula',
+            as: 'startTime',
+            expr: 'time(datetime(datum.start))',
+          },
+          {
+            type: 'formula',
+            as: 'endTime',
+            expr: 'time(datetime(datum.end))',
+          },
+          {
+            type: 'formula',
+            as: 'progressTime',
+            expr: 'datum.startTime + (datum.endTime - datum.startTime) * datum.progress',
+          },
+        ],
+      },
+      {
+        name: 'spanConnectors',
+        values: spanConnectorsData,
+        transform: [
+          {
+            type: 'formula',
+            as: 'startTime',
+            expr: 'time(datetime(datum.start))',
+          },
+          {
+            type: 'formula',
+            as: 'endTime',
+            expr: 'time(datetime(datum.end))',
+          },
+        ],
+      },
+      {
         name: 'links',
         values: linksData,
         transform: [
@@ -1460,6 +1607,8 @@ export function buildVegaGanttSpec(
           fields: [
             { data: 'tasks', field: 'startTime' },
             { data: 'tasks', field: 'endTime' },
+            { data: 'taskBars', field: 'startTime' },
+            { data: 'taskBars', field: 'endTime' },
             ...(showResourceAllocation
               ? [
                   { data: 'resourceTasks', field: 'startTime' },
@@ -1476,6 +1625,7 @@ export function buildVegaGanttSpec(
         domain: {
           fields: [
             { data: 'tasks', field: colorField },
+            { data: 'taskBars', field: colorField },
             ...(showResourceAllocation ? [{ data: 'resourceTasks', field: 'colorKey' }] : []),
           ],
         },

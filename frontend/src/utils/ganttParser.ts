@@ -1,11 +1,19 @@
 import { parse as parseYaml } from 'yaml';
 
+export interface GanttTaskSpan {
+  start: string; // YYYY-MM-DD
+  end: string;   // YYYY-MM-DD
+  durationDays: number;
+}
+
 export interface RawGanttTask {
   id?: string;
   name: string;
-  start?: string;
-  end?: string;
+  start?: string | string[];
+  end?: string | string[];
   duration?: string | number;
+  spans?: any[];
+  dates?: any[];
   'depends-on'?: string | string[];
   dependsOn?: string | string[];
   assignee?: string | string[];
@@ -46,6 +54,7 @@ export interface ResolvedGanttTask {
   phaseId: string;
   phaseName: string;
   dependencies: string[];
+  spans?: GanttTaskSpan[];
 }
 
 export interface GanttDependencyLink {
@@ -181,6 +190,144 @@ export function addDays(start: Date, days: number, workdaysOnly: boolean = false
   return result;
 }
 
+/**
+ * Parses multiple spans/intervals for a task from various YAML configurations:
+ * - spans: [{ start, end }, { start, duration }]
+ * - spans: [[start, end], [start, end]]
+ * - spans: ['start to end', 'start -> end']
+ * - start: [d1, d2], end: [d1, d2]
+ * - start: "d1, d2", end: "d1, d2"
+ * - dates: ...
+ */
+export function parseSpans(rawT: any, isWorkdays: boolean = false): GanttTaskSpan[] {
+  if (!rawT || typeof rawT !== 'object') return [];
+  const rawSpans = rawT.spans ?? rawT.dates;
+  const parsed: GanttTaskSpan[] = [];
+
+  if (Array.isArray(rawSpans) && rawSpans.length > 0) {
+    for (const item of rawSpans) {
+      if (!item) continue;
+      if (typeof item === 'object' && !Array.isArray(item)) {
+        const sStart = item.start ? String(item.start).trim() : '';
+        const sEnd = item.end ? String(item.end).trim() : '';
+        const sDur = item.duration !== undefined ? parseDuration(item.duration) : undefined;
+        if (sStart && sEnd) {
+          const d1 = parseDate(sStart);
+          const d2 = parseDate(sEnd);
+          const startD = d1.getTime() <= d2.getTime() ? d1 : d2;
+          const endD = d1.getTime() <= d2.getTime() ? d2 : d1;
+          const durationDays =
+            sDur !== undefined
+              ? sDur
+              : Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
+          parsed.push({
+            start: formatDate(startD),
+            end: formatDate(endD),
+            durationDays,
+          });
+        } else if (sStart && sDur !== undefined) {
+          const startD = parseDate(sStart);
+          const endD = addDays(startD, sDur, isWorkdays);
+          parsed.push({
+            start: formatDate(startD),
+            end: formatDate(endD),
+            durationDays: sDur,
+          });
+        }
+      } else if (Array.isArray(item) && item.length >= 2) {
+        const sStart = String(item[0]).trim();
+        const sEnd = String(item[1]).trim();
+        if (sStart && sEnd) {
+          const d1 = parseDate(sStart);
+          const d2 = parseDate(sEnd);
+          const startD = d1.getTime() <= d2.getTime() ? d1 : d2;
+          const endD = d1.getTime() <= d2.getTime() ? d2 : d1;
+          const sDur = item[2] !== undefined ? parseDuration(item[2]) : undefined;
+          const durationDays =
+            sDur !== undefined
+              ? sDur
+              : Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000));
+          parsed.push({
+            start: formatDate(startD),
+            end: formatDate(endD),
+            durationDays,
+          });
+        }
+      } else if (typeof item === 'string') {
+        const parts = item.split(/\s*(?:->|to|\/|,)\s*/);
+        if (parts.length >= 2) {
+          const d1 = parseDate(parts[0].trim());
+          const d2 = parseDate(parts[1].trim());
+          const startD = d1.getTime() <= d2.getTime() ? d1 : d2;
+          const endD = d1.getTime() <= d2.getTime() ? d2 : d1;
+          parsed.push({
+            start: formatDate(startD),
+            end: formatDate(endD),
+            durationDays: Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000)),
+          });
+        }
+      }
+    }
+  }
+
+  // Also support start / end as arrays or comma-delimited strings
+  if (parsed.length === 0) {
+    const rawStarts = Array.isArray(rawT.start)
+      ? rawT.start
+      : typeof rawT.start === 'string' && rawT.start.includes(',')
+      ? rawT.start.split(',')
+      : [];
+    const rawEnds = Array.isArray(rawT.end)
+      ? rawT.end
+      : typeof rawT.end === 'string' && rawT.end.includes(',')
+      ? rawT.end.split(',')
+      : [];
+
+    if (rawStarts.length > 1 || rawEnds.length > 1) {
+      const count = Math.max(rawStarts.length, rawEnds.length);
+      for (let i = 0; i < count; i++) {
+        const sStart = rawStarts[i] ? String(rawStarts[i]).trim() : '';
+        const sEnd = rawEnds[i] ? String(rawEnds[i]).trim() : '';
+        if (sStart && sEnd) {
+          const d1 = parseDate(sStart);
+          const d2 = parseDate(sEnd);
+          const startD = d1.getTime() <= d2.getTime() ? d1 : d2;
+          const endD = d1.getTime() <= d2.getTime() ? d2 : d1;
+          parsed.push({
+            start: formatDate(startD),
+            end: formatDate(endD),
+            durationDays: Math.max(1, Math.round((endD.getTime() - startD.getTime()) / 86400000)),
+          });
+        }
+      }
+    }
+  }
+
+  if (parsed.length === 0) return [];
+
+  // Sort chronologically by start date
+  parsed.sort((a, b) => a.start.localeCompare(b.start));
+
+  // Merge overlapping or adjacent spans
+  const merged: GanttTaskSpan[] = [parsed[0]];
+  for (let i = 1; i < parsed.length; i++) {
+    const prev = merged[merged.length - 1];
+    const cur = parsed[i];
+    if (cur.start <= prev.end) {
+      const newEnd = cur.end > prev.end ? cur.end : prev.end;
+      prev.end = newEnd;
+      prev.durationDays = Math.max(
+        1,
+        Math.round((parseDate(prev.end).getTime() - parseDate(prev.start).getTime()) / 86400000)
+      );
+    } else {
+      merged.push(cur);
+    }
+  }
+
+  return merged;
+}
+
 interface IntermediateTask {
   id: string;
   name: string;
@@ -199,6 +346,7 @@ interface IntermediateTask {
   phaseId: string;
   phaseName: string;
   dependencies: { id: string; lagDays: number }[];
+  spans?: GanttTaskSpan[];
 }
 
 /**
@@ -439,6 +587,28 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
 
       const displayAssignee = rawAssignees.join(', ');
 
+      // Sort task assignees alphabetically
+      assignees.sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
+      );
+
+      const spans = isMilestone ? [] : parseSpans(t, isWorkdays);
+      const hasSpans = spans.length >= 2;
+
+      let explicitStart = t.start
+        ? (Array.isArray(t.start) ? String(t.start[0]).trim() : String(t.start).trim())
+        : undefined;
+      let explicitEnd = t.end
+        ? (Array.isArray(t.end) ? String(t.end[t.end.length - 1]).trim() : String(t.end).trim())
+        : undefined;
+      let durationDays = isMilestone ? 0 : parseDuration(t.duration);
+
+      if (hasSpans) {
+        explicitStart = spans[0].start;
+        explicitEnd = spans[spans.length - 1].end;
+        durationDays = spans.reduce((sum, s) => sum + s.durationDays, 0);
+      }
+
       // Parse dependencies (supports 'depends-on' and legacy 'dependsOn')
       const depField = t['depends-on'] ?? t.dependsOn;
       const dependencies: { id: string; lagDays: number }[] = [];
@@ -477,9 +647,9 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
         wbs,
         depth,
         hasChildren,
-        explicitStart: t.start ? String(t.start).trim() : undefined,
-        explicitEnd: t.end ? String(t.end).trim() : undefined,
-        durationDays: isMilestone ? 0 : parseDuration(t.duration),
+        explicitStart,
+        explicitEnd,
+        durationDays,
         progress: parseProgress(t.progress),
         assignees,
         assigneeAllocations,
@@ -488,6 +658,7 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
         phaseId,
         phaseName,
         dependencies,
+        spans: hasSpans ? spans : undefined,
       });
 
       if (Array.isArray(t.children) && t.children.length > 0) {
@@ -687,6 +858,10 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
 
         result = { start, end };
       }
+    } else if (task.spans && task.spans.length >= 2) {
+      const startDate = parseDate(task.spans[0].start);
+      const endDate = parseDate(task.spans[task.spans.length - 1].end);
+      result = { start: startDate, end: endDate };
     } else {
       const startDate = getKickoff(realId);
       let endDate: Date;
@@ -770,6 +945,7 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       phaseId: t.phaseId,
       phaseName: t.phaseName,
       dependencies: t.dependencies.map((d) => d.id),
+      spans: t.spans && t.spans.length >= 2 ? t.spans : undefined,
     });
   }
 
@@ -785,7 +961,9 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       links,
       minDate: overallMin ? formatDate(overallMin) : formatDate(new Date()),
       maxDate: overallMax ? formatDate(overallMax) : formatDate(new Date()),
-      assignees: Array.from(assigneesSet),
+      assignees: Array.from(assigneesSet).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true })
+      ),
       phases: Array.from(phasesSet),
       errors,
     };

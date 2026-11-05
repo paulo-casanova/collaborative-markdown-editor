@@ -579,4 +579,147 @@ tasks:
       expect(model.errors.some((e) => e.includes('Circular dependency'))).toBe(true);
     });
   });
+
+  describe('Tasks Split into Multiple Spans & Sorted Resources', () => {
+    it('parses tasks with explicit spans key (objects with start and end)', () => {
+      const yaml = `
+tasks:
+  - id: dev
+    name: Core Development
+    spans:
+      - start: 2026-12-01
+        end: 2026-12-05
+      - start: 2026-12-10
+        end: 2026-12-15
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      expect(model.tasks).toHaveLength(1);
+      const dev = model.tasks[0];
+      expect(dev.start).toBe('2026-12-01');
+      expect(dev.end).toBe('2026-12-15');
+      // Duration is sum of span durations: (4d + 5d = 9d)
+      expect(dev.durationDays).toBe(9);
+      expect(dev.spans).toBeDefined();
+      expect(dev.spans).toHaveLength(2);
+      expect(dev.spans![0]).toEqual({ start: '2026-12-01', end: '2026-12-05', durationDays: 4 });
+      expect(dev.spans![1]).toEqual({ start: '2026-12-10', end: '2026-12-15', durationDays: 5 });
+    });
+
+    it('parses spans with start and duration', () => {
+      const yaml = `
+tasks:
+  - id: review
+    name: Architecture Review
+    spans:
+      - start: 2026-12-01
+        duration: 3d
+      - start: 2026-12-08
+        duration: 4d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      const review = model.tasks[0];
+      expect(review.start).toBe('2026-12-01');
+      expect(review.end).toBe('2026-12-12');
+      expect(review.durationDays).toBe(7);
+      expect(review.spans).toHaveLength(2);
+      expect(review.spans![0]).toEqual({ start: '2026-12-01', end: '2026-12-04', durationDays: 3 });
+      expect(review.spans![1]).toEqual({ start: '2026-12-08', end: '2026-12-12', durationDays: 4 });
+    });
+
+    it('parses spans defined as arrays of [start, end]', () => {
+      const yaml = `
+tasks:
+  - id: t1
+    name: Segmented Task
+    spans:
+      - [2026-12-01, 2026-12-06]
+      - [2026-12-11, 2026-12-16]
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      const t1 = model.tasks[0];
+      expect(t1.start).toBe('2026-12-01');
+      expect(t1.end).toBe('2026-12-16');
+      expect(t1.durationDays).toBe(10);
+      expect(t1.spans).toHaveLength(2);
+    });
+
+    it('parses multiple start and end dates defined as arrays or comma strings', () => {
+      const yaml = `
+tasks:
+  - id: array_task
+    name: Array Task
+    start: [2026-12-01, 2026-12-10]
+    end: [2026-12-05, 2026-12-15]
+  - id: comma_task
+    name: Comma Task
+    start: 2026-12-02, 2026-12-12
+    end: 2026-12-07, 2026-12-17
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      expect(model.tasks[0].spans).toHaveLength(2);
+      expect(model.tasks[0].start).toBe('2026-12-01');
+      expect(model.tasks[0].end).toBe('2026-12-15');
+      expect(model.tasks[1].spans).toHaveLength(2);
+      expect(model.tasks[1].start).toBe('2026-12-02');
+      expect(model.tasks[1].end).toBe('2026-12-17');
+    });
+
+    it('allows successor tasks to depend on a multi-span task', () => {
+      const yaml = `
+tasks:
+  - id: split_task
+    name: Split Task
+    spans:
+      - start: 2026-12-01
+        end: 2026-12-05
+      - start: 2026-12-10
+        end: 2026-12-15
+  - id: next_task
+    name: Next Task
+    depends-on: split_task
+    duration: 3d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      const splitTask = model.tasks.find((t) => t.id === 'split_task')!;
+      const nextTask = model.tasks.find((t) => t.id === 'next_task')!;
+      // next_task starts after the final end of split_task
+      expect(nextTask.start).toBe(splitTask.end);
+      expect(nextTask.start).toBe('2026-12-15');
+      expect(nextTask.end).toBe('2026-12-18');
+    });
+
+    it('sorts the resource list alphabetically in the parsed model', () => {
+      const yaml = `
+tasks:
+  - id: t1
+    name: Task 1
+    start: 2026-12-01
+    duration: 3d
+    assignee: @pasc
+  - id: t2
+    name: Task 2
+    start: 2026-12-01
+    duration: 3d
+    assignee: @charlie
+  - id: t3
+    name: Task 3
+    start: 2026-12-01
+    duration: 3d
+    assignee: @alice
+  - id: t4
+    name: Task 4
+    start: 2026-12-01
+    duration: 3d
+    assignee: @bob
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      expect(model.assignees).toEqual(['alice', 'bob', 'charlie', 'pasc']);
+    });
+  });
 });
