@@ -443,7 +443,7 @@ tasks:
   * Example: `columns: [start, end, duration, progress]`
 * **`resource-allocation`**:
   * `'no'` / `false` (default): Standard hierarchical Gantt chart view.
-  * `'yes'` / `true`: Draws a dedicated **Resource Allocation** timeline below the Gantt chart with one row per team member, visualizing their assigned tasks over time and displaying each block's allocation percentage (e.g. `100%`, `50%`) with full task details on hover.
+  * `'yes'` / `true`: Draws a dedicated **Resource Allocation** timeline below the Gantt chart with one row per team member. Automatically decomposes each resource's schedule into intervals where their concurrent workload changes, displaying the active task count (e.g. `1`, `2`, `3`) or allocation percentage in each interval block, color-coded by workload (Blue = 1 task, Amber = 2 concurrent tasks, Red = 3+ tasks) with active task details on hover.
 * **`axis`**:
   * Granularity of dates and grid lines shown on the top timeline axis.
   * `'all'` / `'daily'`: Displays every day tick.

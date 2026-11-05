@@ -1,4 +1,4 @@
-import type { GanttParsedModel } from '../../../utils/ganttParser';
+import { parseDate, type GanttParsedModel, type ResolvedGanttTask } from '../../../utils/ganttParser';
 
 export interface VegaGanttTheme {
   isDark: boolean;
@@ -150,6 +150,173 @@ export function getAxisTicks(
   return getAxisTicks(minDateStr, maxDateStr, 'start-of-month');
 }
 
+export interface ResourceIntervalChunk {
+  start: string;
+  end: string;
+  taskCount: number;
+  totalAlloc: number;
+  allocationText: string;
+  workloadText: string;
+  taskNames: string;
+  durationDays: number;
+  fillColor: string;
+  strokeColor: string;
+}
+
+/**
+ * Computes contiguous intervals of uniform workload/allocation for a resource.
+ * Splits into chunks wherever the number of active tasks or total allocation changes.
+ */
+export function computeResourceIntervals(
+  assignedTasks: ResolvedGanttTask[],
+  resource: string
+): ResourceIntervalChunk[] {
+  // Filter out parent rollups and zero-duration milestones
+  const activeTasks = assignedTasks.filter(
+    (t) => !t.isParent && !t.milestone && t.start < t.end
+  );
+
+  if (activeTasks.length === 0) return [];
+
+  // Check if any task explicitly specified fractional allocation
+  const hasExplicitAlloc = activeTasks.some((t) => {
+    const alloc = t.assigneeAllocations?.[resource];
+    return alloc !== undefined && alloc !== 1.0;
+  });
+
+  // Collect all unique boundary dates
+  const dateSet = new Set<string>();
+  for (const t of activeTasks) {
+    dateSet.add(t.start);
+    dateSet.add(t.end);
+  }
+
+  const sortedDates = Array.from(dateSet).sort();
+  if (sortedDates.length < 2) return [];
+
+  // Build atomic intervals between consecutive boundary dates
+  interface RawInterval {
+    start: string;
+    end: string;
+    taskCount: number;
+    totalAlloc: number;
+    tasks: ResolvedGanttTask[];
+  }
+
+  const rawIntervals: RawInterval[] = [];
+  for (let i = 0; i < sortedDates.length - 1; i++) {
+    const dStart = sortedDates[i];
+    const dEnd = sortedDates[i + 1];
+
+    const currentTasks = activeTasks.filter(
+      (t) => t.start <= dStart && t.end >= dEnd
+    );
+
+    if (currentTasks.length > 0) {
+      let totalAlloc = 0;
+      for (const t of currentTasks) {
+        totalAlloc += t.assigneeAllocations?.[resource] ?? 1.0;
+      }
+
+      rawIntervals.push({
+        start: dStart,
+        end: dEnd,
+        taskCount: currentTasks.length,
+        totalAlloc,
+        tasks: currentTasks,
+      });
+    }
+  }
+
+  if (rawIntervals.length === 0) return [];
+
+  // Merge adjacent contiguous intervals where workload is identical
+  const merged: RawInterval[] = [];
+  let currentChunk: RawInterval = {
+    start: rawIntervals[0].start,
+    end: rawIntervals[0].end,
+    taskCount: rawIntervals[0].taskCount,
+    totalAlloc: rawIntervals[0].totalAlloc,
+    tasks: [...rawIntervals[0].tasks],
+  };
+
+  for (let i = 1; i < rawIntervals.length; i++) {
+    const next = rawIntervals[i];
+    const isContiguous = currentChunk.end === next.start;
+    const sameLoad = hasExplicitAlloc
+      ? Math.abs(currentChunk.totalAlloc - next.totalAlloc) < 0.001
+      : currentChunk.taskCount === next.taskCount;
+
+    if (isContiguous && sameLoad) {
+      currentChunk.end = next.end;
+      for (const t of next.tasks) {
+        if (!currentChunk.tasks.some((existing) => existing.id === t.id)) {
+          currentChunk.tasks.push(t);
+        }
+      }
+    } else {
+      merged.push(currentChunk);
+      currentChunk = {
+        start: next.start,
+        end: next.end,
+        taskCount: next.taskCount,
+        totalAlloc: next.totalAlloc,
+        tasks: [...next.tasks],
+      };
+    }
+  }
+  merged.push(currentChunk);
+
+  // Format into view data
+  return merged.map((chunk) => {
+    const allocationText = hasExplicitAlloc
+      ? `${Math.round(chunk.totalAlloc * 100)}%`
+      : `${chunk.taskCount}`;
+
+    const workloadText = `${chunk.taskCount} task${chunk.taskCount === 1 ? '' : 's'}${
+      chunk.taskCount > 1 ? ' (concurrent)' : ''
+    }`;
+
+    const taskNames = chunk.tasks.map((t) => t.name).join(', ');
+
+    const sDate = parseDate(chunk.start);
+    const eDate = parseDate(chunk.end);
+    const durationDays = Math.max(
+      1,
+      Math.round((eDate.getTime() - sDate.getTime()) / (1000 * 60 * 60 * 24))
+    );
+
+    // Color coding by workload
+    // 1 task / <= 100% -> Blue (#3b82f6)
+    // 2 tasks / > 100% and <= 200% -> Amber (#f59e0b)
+    // 3+ tasks / > 200% -> Red (#ef4444)
+    let fillColor = '#3b82f6';
+    let strokeColor = '#2563eb';
+
+    const loadMetric = hasExplicitAlloc ? chunk.totalAlloc : chunk.taskCount;
+    if (loadMetric > 1 && loadMetric <= 2) {
+      fillColor = '#f59e0b';
+      strokeColor = '#d97706';
+    } else if (loadMetric > 2) {
+      fillColor = '#ef4444';
+      strokeColor = '#dc2626';
+    }
+
+    return {
+      start: chunk.start,
+      end: chunk.end,
+      taskCount: chunk.taskCount,
+      totalAlloc: chunk.totalAlloc,
+      allocationText,
+      workloadText,
+      taskNames,
+      durationDays,
+      fillColor,
+      strokeColor,
+    };
+  });
+}
+
 /**
  * Builds a complete, standalone Vega specification for the hierarchical Gantt chart.
  */
@@ -230,6 +397,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
   if (showResourceAllocation) {
     model.assignees.forEach((resource, rIndex) => {
       const assignedTasks = model.tasks.filter((t) => t.assignees.includes(resource));
+      const leafTasks = assignedTasks.filter((t) => !t.isParent);
       const yTop = resourceSectionY + rIndex * resourceRowHeight + 5;
       const yCenter = resourceSectionY + rIndex * resourceRowHeight + resourceRowHeight / 2;
       const barHeight = resourceRowHeight - 10;
@@ -237,8 +405,8 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
       resourceRowsData.push({
         resource,
         displayResource: resource.startsWith('@') ? resource : `@${resource}`,
-        taskCount: assignedTasks.length,
-        taskCountText: `${assignedTasks.length} task${assignedTasks.length === 1 ? '' : 's'}`,
+        taskCount: leafTasks.length,
+        taskCountText: `${leafTasks.length} task${leafTasks.length === 1 ? '' : 's'}`,
         index: rIndex,
         rowIndex: rowCount + rIndex,
         yTop: resourceSectionY + rIndex * resourceRowHeight,
@@ -246,27 +414,25 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         height: resourceRowHeight,
       });
 
-      for (const t of assignedTasks) {
-        const alloc = t.assigneeAllocations?.[resource] ?? 1.0;
-        const allocationPct = Math.round(alloc * 100);
-        const allocationText = `${allocationPct}%`;
-
+      const intervals = computeResourceIntervals(assignedTasks, resource);
+      for (const chunk of intervals) {
         resourceTasksData.push({
           resource,
           displayResource: resource.startsWith('@') ? resource : `@${resource}`,
-          taskId: t.id,
-          taskName: t.name,
-          start: t.start,
-          end: t.end,
-          progress: t.progress,
-          durationDays: t.durationDays,
-          allocation: alloc,
-          allocationPct,
-          allocationText,
+          start: chunk.start,
+          end: chunk.end,
+          taskCount: chunk.taskCount,
+          totalAlloc: chunk.totalAlloc,
+          allocationText: chunk.allocationText,
+          workloadText: chunk.workloadText,
+          taskNames: chunk.taskNames,
+          durationDays: chunk.durationDays,
+          fillColor: chunk.fillColor,
+          strokeColor: chunk.strokeColor,
+          colorKey: resource,
           yTop,
           yCenter,
           barHeight,
-          colorKey: model.colorBy === 'assignee' ? resource : t.phaseName || 'General',
         });
       }
     });
@@ -589,7 +755,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
       },
     });
 
-    // Resource allocation task allocation blocks
+    // Resource allocation interval workload blocks
     resourceMarks.push({
       type: 'rect',
       from: { data: 'resourceTasks' },
@@ -602,13 +768,13 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           x2: { scale: 'timeScale', field: 'endTime' },
           y: { field: 'yTop' },
           height: { field: 'barHeight' },
-          fill: { scale: 'colorScale', field: 'colorKey' },
-          opacity: { value: 0.75 },
-          stroke: { scale: 'colorScale', field: 'colorKey' },
+          fill: { field: 'fillColor' },
+          opacity: { value: 0.85 },
+          stroke: { field: 'strokeColor' },
           strokeWidth: { value: 1 },
           tooltip: {
             signal:
-              "{'Resource': datum.displayResource, 'Task': datum.taskName, 'Allocation': datum.allocationText, 'Dates': datum.start + ' → ' + datum.end, 'Duration': datum.durationDays + 'd'}",
+              "{'Resource': datum.displayResource, 'Workload': datum.workloadText, 'Tasks': datum.taskNames, 'Dates': datum.start + ' → ' + datum.end, 'Duration': datum.durationDays + 'd'}",
           },
         },
       },
@@ -622,7 +788,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         enter: {
           align: { value: 'center' },
           baseline: { value: 'middle' },
-          fontSize: { value: 10 },
+          fontSize: { value: 11 },
           fontWeight: { value: 'bold' },
           fill: { value: '#ffffff' },
         },
@@ -752,11 +918,6 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
                   type: 'formula',
                   as: 'endTime',
                   expr: 'time(datetime(datum.end))',
-                },
-                {
-                  type: 'formula',
-                  as: 'progressTime',
-                  expr: 'datum.startTime + (datum.endTime - datum.startTime) * datum.progress',
                 },
               ],
             },
