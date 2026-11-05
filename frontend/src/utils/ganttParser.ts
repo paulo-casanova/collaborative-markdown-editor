@@ -6,6 +6,7 @@ export interface RawGanttTask {
   start?: string;
   end?: string;
   duration?: string | number;
+  'depends-on'?: string | string[];
   dependsOn?: string | string[];
   assignee?: string | string[];
   allocation?: number | string;
@@ -409,12 +410,13 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
 
       const displayAssignee = rawAssignees.join(', ');
 
-      // Parse dependencies
+      // Parse dependencies (supports 'depends-on' and legacy 'dependsOn')
+      const depField = t['depends-on'] ?? t.dependsOn;
       const dependencies: { id: string; lagDays: number }[] = [];
-      const rawDeps = Array.isArray(t.dependsOn)
-        ? t.dependsOn
-        : typeof t.dependsOn === 'string'
-        ? [t.dependsOn]
+      const rawDeps = Array.isArray(depField)
+        ? depField
+        : typeof depField === 'string'
+        ? [depField]
         : [];
 
       for (const dep of rawDeps) {

@@ -227,6 +227,29 @@ tasks:
       expect(model.tasks[1].start).toBe('2026-12-06');
     });
 
+    it('supports depends-on key (kebab-case) as well as legacy dependsOn', () => {
+      const yaml = `
+tasks:
+  - id: t1
+    name: Task 1
+    start: 2026-03-01
+    duration: 3d
+  - id: t2
+    name: Task 2
+    depends-on: t1
+    duration: 2d
+  - id: t3
+    name: Task 3
+    depends-on: [t1, t2]
+    duration: 1d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      expect(model.tasks[1].start).toBe('2026-03-04');
+      expect(model.tasks[2].start).toBe('2026-03-06');
+      expect(model.links).toHaveLength(3);
+    });
+
     it('baselines unanchored tasks to earliest project start rather than today', () => {
       const yaml = `
 tasks:

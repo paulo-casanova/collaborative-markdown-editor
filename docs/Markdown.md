@@ -357,7 +357,7 @@ CME provides a native, interactive **Hierarchical Gantt Chart** engine built on 
 Unlike standard Mermaid Gantt diagrams, CME's hierarchical Gantt supports:
 * **Multi-Level Tree Breakdowns**: Deeply nested work breakdown structures (Epics $\rightarrow$ Phases $\rightarrow$ Subtasks) with WBS index numbering and automatic parent summary rollups.
 * **Dynamic Durations**: Define task spans using duration strings (`5d`, `2w`, `1m`) instead of hardcoding end dates.
-* **Waterfall Dependency Scheduling**: Tasks can specify `dependsOn: taskA`, automatically sequencing start dates to the predecessor's completion and drawing visual connector arrows. Supports dependencies on individual tasks, milestones, and **summary tasks** (waiting for all subtasks within the summary task to complete). Summary tasks can also depend on other tasks or summary tasks, automatically scheduling unanchored subtasks when the summary task begins.
+* **Waterfall Dependency Scheduling**: Tasks can specify `depends-on: taskA` (or `dependsOn: taskA`), automatically sequencing start dates to the predecessor's completion and drawing visual connector arrows. Supports dependencies on individual tasks, milestones, and **summary tasks** (waiting for all subtasks within the summary task to complete). Summary tasks can also depend on other tasks or summary tasks, automatically scheduling unanchored subtasks when the summary task begins.
 * **Resource Assignment & `@mentions`**: Assign team members directly with CME `@username` syntax (with editor autocompletion) and color-code tasks by resource.
 * **Interactive Live Preview & Reader Integration**: Rendered directly in CodeMirror Live Preview and Reader mode with click-to-edit support, hover tooltips, and theme synchronization.
 
@@ -384,7 +384,7 @@ tasks:
 
       - id: terraform
         name: Terraform Cloud Provisioning
-        dependsOn: audit
+        depends-on: audit
         duration: 10d
         assignee: [@pasc, @alice]
         progress: 60%
@@ -394,21 +394,21 @@ tasks:
     children:
       - id: db-sync
         name: Database Replication & Cutover
-        dependsOn: terraform
+        depends-on: terraform
         duration: 3w
         assignee: @bob
         progress: 30%
 
       - id: api-switch
         name: DNS & Gateway Traffic Switch
-        dependsOn: [audit, db-sync]
+        depends-on: [audit, db-sync]
         duration: 5d
         assignee: @alice
         progress: 0%
 
       - id: go-live
         name: Production Go-Live
-        dependsOn: api-switch
+        depends-on: api-switch
         milestone: true
 ```
 ````
@@ -419,10 +419,10 @@ tasks:
 | :--- | :--- | :--- |
 | `id` | `string` | Unique task ID used for dependencies (e.g. `audit`). Auto-generated if omitted. |
 | `name` | `string` | Title displayed in the left tree column and timeline tooltip. |
-| `start` | `date string` | Start date (`YYYY-MM-DD`). Optional if `dependsOn` is provided. |
+| `start` | `date string` | Start date (`YYYY-MM-DD`). Optional if `depends-on` is provided. |
 | `end` | `date string` | Explicit completion date (`YYYY-MM-DD`). Optional if `duration` is provided. |
 | `duration` | `string \| number` | Span in days (`5d`), weeks (`2w`), months (`1m`), or zero (`0d`). |
-| `dependsOn` | `string \| string[]` | Predecessor ID(s) or summary task ID(s). Supports lag offsets like `task1 + 2d` or `phase1 + 3d`. Depending on a summary task waits for all its subtasks to complete; a summary task depending on a predecessor starts any unanchored subtasks when the summary task begins. |
+| `depends-on` | `string \| string[]` | Predecessor ID(s) or summary task ID(s) (also accepts `dependsOn`). Supports lag offsets like `task1 + 2d` or `phase1 + 3d`. Depending on a summary task waits for all its subtasks to complete; a summary task depending on a predecessor starts any unanchored subtasks when the summary task begins. |
 | `assignee` | `string \| string[]` | Contributor username(s), team names, or `@mentions`. Supports allocation percentages (e.g. `@alice (50%)`). |
 | `allocation` | `number \| string` | Default allocation percentage for the task (e.g. `50%` or `0.5`, defaults to `100%`). |
 | `progress` | `number \| string` | Completion percentage (e.g. `75%`, `0.75`, or `75`). |
