@@ -16,11 +16,15 @@ export const BinaryHistoryModal: React.FC<BinaryHistoryModalProps> = ({
   path,
   filename,
 }) => {
-  const { data: revisions = [], isLoading, error } = useQuery<BinaryRevision[]>({
+  const { data: rawRevisions = [], isLoading, error } = useQuery<BinaryRevision[]>({
     queryKey: ['checkout-history', path],
     queryFn: () => fetchBinaryRevisions(path),
     enabled: isOpen && Boolean(path),
   });
+
+  const revisions: BinaryRevision[] = Array.isArray(rawRevisions)
+    ? rawRevisions
+    : (rawRevisions as any)?.revisions || [];
 
   if (!isOpen) return null;
 

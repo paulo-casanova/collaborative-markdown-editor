@@ -61,13 +61,15 @@ export const Sidebar: React.FC = () => {
   });
   const unreadMentionsCount = unreadMentionsData?.unread_count || 0;
 
-  const { data: myCheckouts = [] } = useQuery({
+  const { data: rawMyCheckouts = [] } = useQuery({
     queryKey: ['my-checkouts'],
     queryFn: fetchMyCheckouts,
     staleTime: 5000,
     refetchInterval: 15000,
   });
-  const myCheckoutsCount = myCheckouts.length;
+  const myCheckoutsCount = Array.isArray(rawMyCheckouts)
+    ? rawMyCheckouts.length
+    : (rawMyCheckouts as any)?.checkouts?.length || 0;
 
   if (!sidebarOpen) return null;
 

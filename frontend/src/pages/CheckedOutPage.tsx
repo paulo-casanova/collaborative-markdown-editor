@@ -69,7 +69,7 @@ export const CheckedOutPage: React.FC = () => {
   };
 
   const {
-    data: checkouts = [],
+    data: rawCheckouts = [],
     isLoading,
     refetch,
     isRefetching,
@@ -78,6 +78,10 @@ export const CheckedOutPage: React.FC = () => {
     queryFn: fetchMyCheckouts,
     refetchInterval: 15000,
   });
+
+  const checkouts: DocumentCheckout[] = Array.isArray(rawCheckouts)
+    ? rawCheckouts
+    : (rawCheckouts as any)?.checkouts || [];
 
   const cancelMutation = useMutation({
     mutationFn: (path: string) => cancelCheckout(path),

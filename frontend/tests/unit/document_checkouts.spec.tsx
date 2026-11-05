@@ -108,6 +108,36 @@ describe('Document Checkouts & Revision History', () => {
     expect(html).toContain('Cancel');
   });
 
+  it('handles nested { checkouts: [...] } response shape gracefully without blank screen', () => {
+    queryClient.setQueryData(['my-checkouts'], { checkouts: mockCheckouts } as any);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <CheckedOutPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(html).toContain('Checked Out Documents');
+    expect(html).toContain('Q3_Budget.xlsx');
+    expect(html).toContain('financials/Q3_Budget.xlsx');
+  });
+
+  it('handles nested { checkouts: [] } response shape in CheckedOutPage without error', () => {
+    queryClient.setQueryData(['my-checkouts'], { checkouts: [] } as any);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <CheckedOutPage />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(html).toContain('No Checked Out Documents');
+  });
+
   it('renders CheckedOutPage empty state when user has no active checkouts', () => {
     queryClient.setQueryData(['my-checkouts'], []);
 
@@ -181,6 +211,28 @@ describe('Document Checkouts & Revision History', () => {
     expect(html).toContain('Bob Director');
     expect(html).toContain('Download Revision #2');
     expect(html).toContain('Download Revision #1');
+  });
+
+  it('handles nested { revisions: [...] } response shape in BinaryHistoryModal gracefully', () => {
+    queryClient.setQueryData(
+      ['checkout-history', 'financials/Q3_Budget.xlsx'],
+      { revisions: mockRevisions } as any
+    );
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={queryClient}>
+        <BinaryHistoryModal
+          isOpen={true}
+          onClose={vi.fn()}
+          path="financials/Q3_Budget.xlsx"
+          filename="Q3_Budget.xlsx"
+        />
+      </QueryClientProvider>
+    );
+
+    expect(html).toContain('Revision History');
+    expect(html).toContain('#2');
+    expect(html).toContain('Alice Analyst');
   });
 
   it('renders BinaryHistoryModal empty state when no historical revisions exist', () => {

@@ -9,6 +9,7 @@ import { TokensModal } from '../auth/TokensModal';
 import { SearchModal } from '../search/SearchModal';
 import { GoToPermalinkModal } from '../navigation/GoToPermalinkModal';
 import { AgentPairingModal } from '../dialog/AgentPairingModal';
+import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useThemeStore } from '../../stores/themeStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
@@ -224,7 +225,9 @@ export const AppShell: React.FC = () => {
       <div className="flex-1 flex overflow-hidden min-h-0">
         <Sidebar />
         <main className="flex-1 overflow-y-auto bg-cme-bg-base min-h-0 relative">
-          <Outlet />
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
 

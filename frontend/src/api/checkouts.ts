@@ -115,7 +115,14 @@ export async function fetchMyCheckouts(): Promise<DocumentCheckout[]> {
   if (!res.ok) {
     throw new ApiError(res.status, res.statusText, 'Failed to list checkouts');
   }
-  return res.json();
+  const data = await res.json();
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && Array.isArray(data.checkouts)) {
+    return data.checkouts;
+  }
+  return [];
 }
 
 /**
@@ -139,7 +146,14 @@ export async function fetchBinaryRevisions(path: string): Promise<BinaryRevision
   if (!res.ok) {
     throw new ApiError(res.status, res.statusText, 'Failed to fetch revision history');
   }
-  return res.json();
+  const data = await res.json();
+  if (Array.isArray(data)) {
+    return data;
+  }
+  if (data && Array.isArray(data.revisions)) {
+    return data.revisions;
+  }
+  return [];
 }
 
 /**
