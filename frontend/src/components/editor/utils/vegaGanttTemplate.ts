@@ -161,7 +161,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
     width: minTimelineWidth,
     height: chartHeight,
     padding: { top: headerHeight, left: tableWidth + 10, right: 24, bottom: 20 },
-    autosize: { type: 'pad', contains: 'padding' },
+    autosize: 'none',
     background: 'transparent',
 
     signals: [

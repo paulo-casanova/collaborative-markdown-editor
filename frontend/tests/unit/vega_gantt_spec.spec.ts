@@ -46,6 +46,8 @@ tasks:
     const todayData = spec.data.find((d: any) => d.name === 'today');
     expect(todayData).toBeDefined();
 
+    expect(spec.autosize).toBe('none');
+
     // Compile spec using Vega runtime parser
     const runtime = vega.parse(spec);
     expect(runtime).toBeDefined();
@@ -54,6 +56,15 @@ tasks:
     const view = new vega.View(runtime, { renderer: 'none' });
     await view.runAsync();
     expect(view.scale('timeScale')).toBeDefined();
+
+    const svg = await view.toSVG();
+    const viewBox = svg.match(/viewBox="([^"]+)"/)?.[1];
+    expect(viewBox).toBeDefined();
+    const [minX, minY, vbWidth, vbHeight] = viewBox!.split(' ').map(Number);
+    expect(minX).toBe(0);
+    expect(minY).toBe(0);
+    // Width should be width(600) + padding.left(180) + padding.right(24) = 804 (not bloated by autosize: 'pad')
+    expect(vbWidth).toBe(600 + spec.padding.left + spec.padding.right);
   });
 
   it('compiles dark theme Vega specification properly with transparent background', () => {
