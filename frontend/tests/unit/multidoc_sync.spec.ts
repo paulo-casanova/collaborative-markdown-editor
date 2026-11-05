@@ -98,26 +98,20 @@ describe('Issue #5: Multi-document background synchronization', () => {
     provider.destroy();
   });
 
-  it('prevents blank document flash by seeding empty YDoc from REST initialContent and deduplicating on subsequent SyncStep2', () => {
+  it('does not duplicate document content when server SyncStep2 arrives without local REST insertion', () => {
     const doc = new Y.Doc();
-    const provider = new CmeCollabProvider('doc-seed-test', doc, null, 'ws://127.0.0.1:9999/ws');
+    const provider = new CmeCollabProvider('doc-sync-step2-test', doc, null, 'ws://127.0.0.1:9999/ws');
 
-    const restInitialContent = '# My Document Title\n\nInitial REST content loaded immediately.';
+    const serverContent = '# My Document Title\n\nAuthoritative server content.';
     const ytext = provider.ydoc.getText('content');
 
-    // Before seeding, ytext is empty
+    // Live copy ytext starts empty and is not seeded from REST before server sync arrives
     expect(ytext.toString()).toBe('');
+    expect(provider.isSynced).toBe(false);
 
-    // Simulate CollaborativeEditor logic: if ytext is empty but REST initialContent is present, seed ytext
-    if (!ytext.toString() && restInitialContent) {
-      ytext.insert(0, restInitialContent);
-    }
-
-    expect(ytext.toString()).toBe(restInitialContent);
-
-    // Now simulate WebSocket connecting and delivering SyncStep2 with the same content from server
+    // Simulate WebSocket connecting and delivering SyncStep2 with content from server
     const serverDoc = new Y.Doc();
-    serverDoc.getText('content').insert(0, restInitialContent);
+    serverDoc.getText('content').insert(0, serverContent);
     const update = Y.encodeStateAsUpdate(serverDoc);
 
     const frame = new Uint8Array(2 + update.length);
@@ -127,8 +121,9 @@ describe('Issue #5: Multi-document background synchronization', () => {
 
     (provider as any).handleWsMessage({ data: frame.buffer });
 
-    // Deduplication guard ensures content is NOT doubled to "contentcontent"
-    expect(provider.ydoc.getText('content').toString()).toBe(restInitialContent);
+    // Document contains server content exactly once, without duplication
+    expect(provider.ydoc.getText('content').toString()).toBe(serverContent);
+    expect(provider.isSynced).toBe(true);
 
     provider.destroy();
   });

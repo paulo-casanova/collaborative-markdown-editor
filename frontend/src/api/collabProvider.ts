@@ -210,22 +210,7 @@ export class CmeCollabProvider {
         } else if (subtype === 0x02 || subtype === 0x03) {
           // Server SyncStep2 or SyncUpdate: Apply update to local YDoc
           if (payload.length > 0) {
-            const ytext = this.ydoc.getText('content');
-            const beforeText = ytext.toString();
             Y.applyUpdate(this.ydoc, payload, this);
-            const afterText = ytext.toString();
-
-            // Guard against accidental duplication where client and server concurrent root inserts produce text + text
-            if (
-              beforeText.length > 0 &&
-              afterText.length === beforeText.length * 2 &&
-              afterText === beforeText + beforeText
-            ) {
-              console.warn('[CmeCollabProvider] Detected duplicated content merge; deduplicating');
-              this.ydoc.transact(() => {
-                ytext.delete(beforeText.length, beforeText.length);
-              }, this);
-            }
           }
           if (subtype === 0x02) {
             this.setSynced(true);
