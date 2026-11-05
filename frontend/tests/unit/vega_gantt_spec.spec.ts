@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import * as vega from 'vega';
 import { parseGanttMarkdown } from '../../src/utils/ganttParser';
-import { buildVegaGanttSpec, getWeekendsBetween, copyGanttAsPng } from '../../src/components/editor/utils/vegaGanttTemplate';
+import {
+  buildVegaGanttSpec,
+  getWeekendsBetween,
+  getAxisTicks,
+  copyGanttAsPng,
+} from '../../src/components/editor/utils/vegaGanttTemplate';
 
 describe('Vega Gantt Template Compiler', () => {
   it('compiles valid Vega specification from Gantt model', async () => {
@@ -92,5 +97,73 @@ tasks:
 
   it('exports copyGanttAsPng helper', () => {
     expect(typeof copyGanttAsPng).toBe('function');
+  });
+
+  it('generates axis ticks for all, mondays, and start-of-month', () => {
+    const mondays = getAxisTicks('2026-12-01', '2026-12-20', 'mondays');
+    expect(mondays.values).toBeDefined();
+    expect(mondays.format).toBe('%b %d (%a)');
+    expect(mondays.values!.length).toBe(2);
+
+    const monthStarts = getAxisTicks('2026-11-15', '2027-02-15', 'start-of-month');
+    expect(monthStarts.values).toBeDefined();
+    expect(monthStarts.format).toBe('%b %Y');
+    expect(monthStarts.values!.length).toBeGreaterThanOrEqual(3);
+
+    const allDays = getAxisTicks('2026-12-01', '2026-12-05', 'all');
+    expect(allDays.values).toBeDefined();
+    expect(allDays.values!.length).toBe(5);
+  });
+
+  it('compiles spec with multi-column table and resource allocation timeline', async () => {
+    const yaml = `
+title: Multi Track Project
+columns:
+  - start
+  - end
+  - duration
+  - progress
+  - assignee
+resource-allocation: yes
+axis: mondays
+tasks:
+  - id: t1
+    name: Backend API
+    start: 2026-12-01
+    duration: 5d
+    assignee: @pasc
+    progress: 70%
+  - id: t2
+    name: Web Frontend
+    dependsOn: t1
+    duration: 4d
+    assignee: @alice
+    progress: 30%
+`;
+    const model = parseGanttMarkdown(yaml);
+    expect(model.errors).toHaveLength(0);
+    expect(model.showResourceAllocation).toBe(true);
+
+    const spec = buildVegaGanttSpec(model, false);
+    expect(spec.data.some((d: any) => d.name === 'resourceRows')).toBe(true);
+    expect(spec.data.some((d: any) => d.name === 'resourceTasks')).toBe(true);
+
+    // Verify Vega parses and executes without error
+    const runtime = vega.parse(spec);
+    const view = new vega.View(runtime, { renderer: 'none' });
+    await view.runAsync();
+
+    const resourceTasks = view.data('resourceTasks');
+    expect(resourceTasks).toHaveLength(2);
+    expect(resourceTasks[0].resource).toBe('pasc');
+    expect(resourceTasks[1].resource).toBe('alice');
+
+    const svg = await view.toSVG();
+    expect(svg).toContain('RESOURCE ALLOCATION');
+    expect(svg).toContain('@pasc');
+    expect(svg).toContain('@alice');
+    expect(svg).toContain('Start');
+    expect(svg).toContain('End');
+    expect(svg).toContain('Dur');
   });
 });

@@ -436,6 +436,19 @@ tasks:
 * **`calendar`**:
   * `'calendar'` (default): Standard 7-day calendar arithmetic.
   * `'workdays'`: Skips Saturdays and Sundays when adding task durations.
+* **`columns`**:
+  * Optional list of additional data columns to display in the left-hand table alongside the task tree.
+  * Supported values: `start`, `end`, `duration` (or `dur`), `progress`, `assignee`.
+  * Example: `columns: [start, end, duration, progress]`
+* **`resource-allocation`**:
+  * `'no'` / `false` (default): Standard hierarchical Gantt chart view.
+  * `'yes'` / `true`: Draws a dedicated **Resource Allocation** timeline below the Gantt chart with one row per team member, visualizing their assigned tasks over time and highlighting concurrent workload overlaps.
+* **`axis`**:
+  * Granularity of dates and grid lines shown on the top timeline axis.
+  * `'all'` / `'daily'`: Displays every day tick.
+  * `'mondays'` / `'weekly'`: Displays only Monday ticks (e.g. `Dec 07 (Mon)`).
+  * `'start-of-month'` / `'monthly'`: Displays ticks on the 1st of each month (e.g. `Dec 2026`).
+  * If omitted, automatically selects daily, weekly, or monthly based on the total project span.
 
 ---
 

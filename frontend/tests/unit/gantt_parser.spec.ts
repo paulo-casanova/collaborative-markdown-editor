@@ -244,6 +244,43 @@ tasks:
       expect(model.tasks[1].start).toBe('2027-06-01');
     });
 
+    it('parses columns, resource-allocation, and axis options', () => {
+      const yaml = `
+columns:
+  - start
+  - end
+  - duration
+  - progress
+resource-allocation: yes
+axis: mondays
+tasks:
+  - id: t1
+    name: Alpha
+    start: 2026-12-01
+    duration: 5d
+    assignee: @pasc
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.errors).toHaveLength(0);
+      expect(model.columns).toEqual(['name', 'start', 'end', 'duration', 'progress']);
+      expect(model.showResourceAllocation).toBe(true);
+      expect(model.axisInterval).toBe('mondays');
+    });
+
+    it('defaults columns to name, resource-allocation to false, and axis to auto', () => {
+      const yaml = `
+tasks:
+  - id: t1
+    name: Beta
+    start: 2026-12-01
+    duration: 3d
+`;
+      const model = parseGanttMarkdown(yaml);
+      expect(model.columns).toEqual(['name']);
+      expect(model.showResourceAllocation).toBe(false);
+      expect(model.axisInterval).toBe('auto');
+    });
+
     it('returns friendly syntax error for invalid YAML syntax without throwing', () => {
       const yaml = `
 tasks:

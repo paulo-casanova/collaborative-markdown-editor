@@ -83,6 +83,74 @@ export function getWeekendsBetween(
 }
 
 /**
+ * Calculates tick timestamps and formatting based on axis mode: 'all' | 'mondays' | 'start-of-month' | 'auto'.
+ */
+export function getAxisTicks(
+  minDateStr: string,
+  maxDateStr: string,
+  mode: 'all' | 'mondays' | 'start-of-month' | 'auto' = 'auto'
+): { values?: number[]; format?: string } {
+  if (!minDateStr || !maxDateStr) return {};
+
+  const start = new Date(minDateStr + 'T00:00:00Z');
+  const end = new Date(maxDateStr + 'T00:00:00Z');
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return {};
+
+  const m = (mode || 'auto').toLowerCase().trim();
+
+  if (m === 'mondays' || m === 'monday' || m === 'week' || m === 'weekly') {
+    const values: number[] = [];
+    const cur = new Date(start.getTime());
+    while (cur <= end) {
+      if (cur.getUTCDay() === 1) {
+        values.push(cur.getTime());
+      }
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    if (values.length === 0) {
+      values.push(start.getTime());
+    }
+    return { values, format: '%b %d (%a)' };
+  }
+
+  if (m === 'start-of-month' || m === 'start_of_month' || m === 'month' || m === 'monthly') {
+    const values: number[] = [];
+    const cur = new Date(start.getTime());
+    cur.setUTCDate(1);
+    while (cur <= end) {
+      if (cur >= start) {
+        values.push(cur.getTime());
+      }
+      cur.setUTCMonth(cur.getUTCMonth() + 1);
+    }
+    if (values.length === 0) {
+      values.push(start.getTime());
+    }
+    return { values, format: '%b %Y' };
+  }
+
+  if (m === 'all' || m === 'day' || m === 'daily') {
+    const values: number[] = [];
+    const cur = new Date(start.getTime());
+    while (cur <= end) {
+      values.push(cur.getTime());
+      cur.setUTCDate(cur.getUTCDate() + 1);
+    }
+    return { values, format: '%b %d' };
+  }
+
+  // 'auto': Select based on duration in days
+  const diffDays = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays <= 21) {
+    return getAxisTicks(minDateStr, maxDateStr, 'all');
+  }
+  if (diffDays <= 90) {
+    return getAxisTicks(minDateStr, maxDateStr, 'mondays');
+  }
+  return getAxisTicks(minDateStr, maxDateStr, 'start-of-month');
+}
+
+/**
  * Builds a complete, standalone Vega specification for the hierarchical Gantt chart.
  */
 export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = false): any {
@@ -91,17 +159,113 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
   const rowHeight = 36;
   const headerHeight = 45;
 
-  // Compute compact, snug tableWidth based on actual label lengths
+  // 1. Column configuration
   const maxLabelLen = Math.max(
     8,
     ...model.tasks.map((t) => (t.wbs ? `${t.wbs} ` : '').length + t.name.length + t.depth * 2)
   );
-  const tableWidth = Math.min(240, Math.max(110, Math.round(maxLabelLen * 7.5 + 20)));
+  const nameWidth = Math.min(260, Math.max(120, Math.round(maxLabelLen * 7.5 + 20)));
+
+  interface TableCol {
+    key: string;
+    title: string;
+    width: number;
+    align: 'left' | 'center' | 'right';
+  }
+
+  const rawColList = model.columns && model.columns.length > 0 ? model.columns : ['name'];
+  const colConfigs: TableCol[] = [];
+
+  for (const rawCol of rawColList) {
+    const k = rawCol.toLowerCase().replace(/[-_]/g, '');
+    if (k === 'name' || k === 'task') {
+      colConfigs.push({ key: 'name', title: 'Task / Milestone', width: nameWidth, align: 'left' });
+    } else if (k === 'start' || k === 'startdate') {
+      colConfigs.push({ key: 'start', title: 'Start', width: 85, align: 'center' });
+    } else if (k === 'end' || k === 'enddate') {
+      colConfigs.push({ key: 'end', title: 'End', width: 85, align: 'center' });
+    } else if (k === 'duration' || k === 'dur') {
+      colConfigs.push({ key: 'duration', title: 'Dur', width: 55, align: 'right' });
+    } else if (k === 'progress' || k === 'prog') {
+      colConfigs.push({ key: 'progress', title: 'Progress', width: 65, align: 'right' });
+    } else if (k === 'assignee' || k === 'assignees' || k === 'resource' || k === 'resources') {
+      colConfigs.push({ key: 'assignee', title: 'Assignee', width: 95, align: 'left' });
+    }
+  }
+
+  if (!colConfigs.some((c) => c.key === 'name')) {
+    colConfigs.unshift({ key: 'name', title: 'Task / Milestone', width: nameWidth, align: 'left' });
+  }
+
+  const totalTableWidth = colConfigs.reduce((acc, c) => acc + c.width, 0);
+
+  let currentX = -totalTableWidth;
+  const columnsWithPos = colConfigs.map((col) => {
+    const left = currentX;
+    const right = currentX + col.width;
+    currentX = right;
+    return {
+      ...col,
+      left,
+      right,
+    };
+  });
+
   const minTimelineWidth = 600;
   const rowCount = Math.max(1, model.tasks.length);
-  const chartHeight = rowCount * rowHeight;
+  const taskChartHeight = rowCount * rowHeight;
 
-  // Compute tasks dataset with row coordinates
+  // 2. Resource Allocation configuration
+  const showResourceAllocation = Boolean(model.showResourceAllocation && model.assignees.length > 0);
+  const resourceGap = showResourceAllocation ? 38 : 0;
+  const resourceRowHeight = 32;
+  const resourceSectionY = taskChartHeight + resourceGap;
+  const resourceCount = showResourceAllocation ? model.assignees.length : 0;
+  const totalChartHeight =
+    taskChartHeight + (showResourceAllocation ? resourceGap + resourceCount * resourceRowHeight : 0);
+
+  const resourceRowsData: any[] = [];
+  const resourceTasksData: any[] = [];
+
+  if (showResourceAllocation) {
+    model.assignees.forEach((resource, rIndex) => {
+      const assignedTasks = model.tasks.filter((t) => t.assignees.includes(resource));
+      const yTop = resourceSectionY + rIndex * resourceRowHeight + 5;
+      const yCenter = resourceSectionY + rIndex * resourceRowHeight + resourceRowHeight / 2;
+      const barHeight = resourceRowHeight - 10;
+
+      resourceRowsData.push({
+        resource,
+        displayResource: resource.startsWith('@') ? resource : `@${resource}`,
+        taskCount: assignedTasks.length,
+        taskCountText: `${assignedTasks.length} task${assignedTasks.length === 1 ? '' : 's'}`,
+        index: rIndex,
+        rowIndex: rowCount + rIndex,
+        yTop: resourceSectionY + rIndex * resourceRowHeight,
+        yCenter,
+        height: resourceRowHeight,
+      });
+
+      for (const t of assignedTasks) {
+        resourceTasksData.push({
+          resource,
+          displayResource: resource.startsWith('@') ? resource : `@${resource}`,
+          taskId: t.id,
+          taskName: t.name,
+          start: t.start,
+          end: t.end,
+          progress: t.progress,
+          durationDays: t.durationDays,
+          yTop,
+          yCenter,
+          barHeight,
+          colorKey: model.colorBy === 'assignee' ? resource : t.phaseName || 'General',
+        });
+      }
+    });
+  }
+
+  // 3. Compute tasks dataset with row coordinates
   const tasksData = model.tasks.map((t, index) => {
     const yCenter = index * rowHeight + rowHeight / 2;
     const yTop = index * rowHeight + 6;
@@ -114,7 +278,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
       yTop,
       barHeight,
       progressWidthPct: t.progress,
-      labelX: 10 + t.depth * 14,
+      labelX: 8 + t.depth * 14,
       displayAssigneeText: t.displayAssignee ? `[${t.displayAssignee}]` : '',
     };
   });
@@ -155,12 +319,340 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
   const isTodayInRange = todayStr >= model.minDate && todayStr <= model.maxDate;
   const todayValues = isTodayInRange ? [{ date: todayStr }] : [];
 
+  // Axis ticks based on user selection
+  const axisTicks = getAxisTicks(model.minDate, model.maxDate, model.axisInterval);
+
+  // Dynamic marks generation for table columns
+  const tableMarks: any[] = [];
+
+  // Subtle vertical column dividers
+  columnsWithPos.forEach((col) => {
+    if (col.right < 0) {
+      tableMarks.push({
+        type: 'rule',
+        encode: {
+          enter: {
+            x: { value: col.right },
+            y: { value: -22 },
+            y2: { value: taskChartHeight },
+            stroke: { value: theme.borderColor },
+            strokeWidth: { value: 1 },
+            opacity: { value: 0.4 },
+          },
+        },
+      });
+    }
+  });
+
+  // Table Column Headers
+  columnsWithPos.forEach((col) => {
+    const headerX =
+      col.align === 'center'
+        ? col.left + col.width / 2
+        : col.align === 'right'
+        ? col.right - 8
+        : col.left + 8;
+
+    tableMarks.push({
+      type: 'text',
+      encode: {
+        enter: {
+          x: { value: headerX },
+          y: { value: -12 },
+          text: { value: col.title },
+          fontSize: { value: 11 },
+          fontWeight: { value: 'bold' },
+          fill: { value: theme.textMuted },
+          align: { value: col.align },
+          baseline: { value: 'middle' },
+        },
+      },
+    });
+  });
+
+  // Table Task Row Cells
+  columnsWithPos.forEach((col) => {
+    if (col.key === 'name') {
+      tableMarks.push({
+        type: 'text',
+        from: { data: 'tasks' },
+        encode: {
+          enter: {
+            x: { field: 'labelX', offset: col.left },
+            y: { field: 'yCenter' },
+            baseline: { value: 'middle' },
+            limit: { value: col.width - 12 },
+            ellipsis: { value: '...' },
+          },
+          update: {
+            text: { signal: "datum.wbs + ' ' + datum.name" },
+            fontWeight: { signal: "datum.isParent ? 'bold' : 'normal'" },
+            fontSize: { signal: "datum.isParent ? 12 : 11" },
+            fill: { value: theme.textColor },
+          },
+        },
+      });
+    } else if (col.key === 'start') {
+      tableMarks.push({
+        type: 'text',
+        from: { data: 'tasks' },
+        encode: {
+          enter: {
+            x: { value: col.left + col.width / 2 },
+            y: { field: 'yCenter' },
+            baseline: { value: 'middle' },
+            align: { value: 'center' },
+            fontSize: { value: 11 },
+            fontFamily: { value: 'monospace' },
+            fill: { value: theme.textColor },
+          },
+          update: {
+            text: { field: 'start' },
+          },
+        },
+      });
+    } else if (col.key === 'end') {
+      tableMarks.push({
+        type: 'text',
+        from: { data: 'tasks' },
+        encode: {
+          enter: {
+            x: { value: col.left + col.width / 2 },
+            y: { field: 'yCenter' },
+            baseline: { value: 'middle' },
+            align: { value: 'center' },
+            fontSize: { value: 11 },
+            fontFamily: { value: 'monospace' },
+            fill: { value: theme.textColor },
+          },
+          update: {
+            text: { field: 'end' },
+          },
+        },
+      });
+    } else if (col.key === 'duration') {
+      tableMarks.push({
+        type: 'text',
+        from: { data: 'tasks' },
+        encode: {
+          enter: {
+            x: { value: col.right - 8 },
+            y: { field: 'yCenter' },
+            baseline: { value: 'middle' },
+            align: { value: 'right' },
+            fontSize: { value: 11 },
+            fontFamily: { value: 'monospace' },
+            fill: { value: theme.textColor },
+          },
+          update: {
+            text: { signal: "datum.durationDays + 'd'" },
+          },
+        },
+      });
+    } else if (col.key === 'progress') {
+      tableMarks.push({
+        type: 'text',
+        from: { data: 'tasks' },
+        encode: {
+          enter: {
+            x: { value: col.right - 8 },
+            y: { field: 'yCenter' },
+            baseline: { value: 'middle' },
+            align: { value: 'right' },
+            fontSize: { value: 11 },
+            fill: { value: theme.textColor },
+          },
+          update: {
+            text: { signal: "round(datum.progress * 100) + '%'" },
+          },
+        },
+      });
+    } else if (col.key === 'assignee') {
+      tableMarks.push({
+        type: 'text',
+        from: { data: 'tasks' },
+        encode: {
+          enter: {
+            x: { value: col.left + 8 },
+            y: { field: 'yCenter' },
+            baseline: { value: 'middle' },
+            align: { value: 'left' },
+            fontSize: { value: 11 },
+            fill: { value: theme.textColor },
+            limit: { value: col.width - 12 },
+            ellipsis: { value: '...' },
+          },
+          update: {
+            text: { signal: "datum.displayAssignee ? datum.displayAssignee : '-'" },
+          },
+        },
+      });
+    }
+  });
+
+  // Resource allocation marks (if enabled)
+  const resourceMarks: any[] = [];
+  if (showResourceAllocation) {
+    // Section divider rule
+    resourceMarks.push({
+      type: 'rule',
+      encode: {
+        enter: {
+          x: { value: -(totalTableWidth + 10) },
+          x2: { signal: 'width' },
+          y: { value: taskChartHeight + 14 },
+          stroke: { value: theme.borderColor },
+          strokeWidth: { value: 1.5 },
+        },
+      },
+    });
+
+    // Section header title
+    resourceMarks.push({
+      type: 'text',
+      encode: {
+        enter: {
+          x: { value: -totalTableWidth + 2 },
+          y: { value: taskChartHeight + 28 },
+          text: { value: 'RESOURCE ALLOCATION' },
+          fontSize: { value: 10 },
+          fontWeight: { value: 'bold' },
+          fill: { value: theme.textMuted },
+          baseline: { value: 'middle' },
+        },
+      },
+    });
+
+    // Resource row hover bands
+    resourceMarks.push({
+      name: 'resourceRow',
+      type: 'rect',
+      from: { data: 'resourceRows' },
+      encode: {
+        enter: {
+          x: { value: -(totalTableWidth + 10) },
+          x2: { signal: 'width' },
+          y: { field: 'yTop' },
+          height: { field: 'height' },
+        },
+        update: {
+          fill: [
+            {
+              test: 'datum.rowIndex === rowHover',
+              value: theme.isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+            },
+            { value: 'transparent' },
+          ],
+        },
+      },
+    });
+
+    // Resource row bottom separator lines
+    resourceMarks.push({
+      type: 'rule',
+      from: { data: 'resourceRows' },
+      encode: {
+        enter: {
+          x: { value: -(totalTableWidth + 10) },
+          x2: { signal: 'width' },
+          y: { field: 'yTop', offset: resourceRowHeight },
+          stroke: { value: theme.gridColor },
+          strokeWidth: { value: 1 },
+          opacity: { value: 0.5 },
+        },
+      },
+    });
+
+    // Resource row labels in the table area
+    resourceMarks.push({
+      type: 'text',
+      from: { data: 'resourceRows' },
+      encode: {
+        enter: {
+          x: { value: -totalTableWidth + 8 },
+          y: { field: 'yCenter' },
+          baseline: { value: 'middle' },
+          fontSize: { value: 11 },
+          fontWeight: { value: 'bold' },
+          fill: { value: theme.textColor },
+        },
+        update: {
+          text: { signal: "datum.displayResource + '  (' + datum.taskCountText + ')'" },
+        },
+      },
+    });
+
+    // Resource allocation task background bars
+    resourceMarks.push({
+      type: 'rect',
+      from: { data: 'resourceTasks' },
+      encode: {
+        enter: {
+          cornerRadius: { value: 4 },
+        },
+        update: {
+          x: { scale: 'timeScale', field: 'startTime' },
+          x2: { scale: 'timeScale', field: 'endTime' },
+          y: { field: 'yTop' },
+          height: { field: 'barHeight' },
+          fill: { scale: 'colorScale', field: 'colorKey' },
+          opacity: { value: 0.45 },
+          stroke: { scale: 'colorScale', field: 'colorKey' },
+          strokeWidth: { value: 1 },
+          tooltip: {
+            signal:
+              "{'Resource': datum.displayResource, 'Task': datum.taskName, 'Dates': datum.start + ' → ' + datum.end, 'Duration': datum.durationDays + 'd', 'Progress': round(datum.progress * 100) + '%'}",
+          },
+        },
+      },
+    });
+
+    // Resource allocation progress fill bars
+    resourceMarks.push({
+      type: 'rect',
+      from: { data: 'resourceTasks' },
+      encode: {
+        enter: {
+          cornerRadius: { value: 4 },
+        },
+        update: {
+          x: { scale: 'timeScale', field: 'startTime' },
+          x2: { scale: 'timeScale', field: 'progressTime' },
+          y: { field: 'yTop' },
+          height: { field: 'barHeight' },
+          fill: { scale: 'colorScale', field: 'colorKey' },
+          opacity: { signal: 'datum.progress === 0 ? 0 : 0.9' },
+        },
+      },
+    });
+
+    // Resource task label text inside the bar
+    resourceMarks.push({
+      type: 'text',
+      from: { data: 'resourceTasks' },
+      encode: {
+        enter: {
+          baseline: { value: 'middle' },
+          fontSize: { value: 10 },
+          fontWeight: { value: 'bold' },
+          fill: { value: '#ffffff' },
+        },
+        update: {
+          x: { scale: 'timeScale', field: 'startTime', offset: 6 },
+          y: { field: 'yCenter' },
+          text: { field: 'taskName' },
+          limit: { signal: "max(10, scale('timeScale', datum.endTime) - scale('timeScale', datum.startTime) - 12)" },
+        },
+      },
+    });
+  }
+
   return {
     $schema: 'https://vega.github.io/schema/vega/v5.json',
     description: model.title || 'Hierarchical Gantt Chart',
     width: minTimelineWidth,
-    height: chartHeight,
-    padding: { top: headerHeight, left: tableWidth + 10, right: 24, bottom: 20 },
+    height: totalChartHeight,
+    padding: { top: headerHeight, left: totalTableWidth + 10, right: 24, bottom: 20 },
     autosize: 'none',
     background: 'transparent',
 
@@ -171,6 +663,12 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         on: [
           { events: '@taskRow:mouseover', update: 'datum.index' },
           { events: '@taskRow:mouseout', update: 'null' },
+          ...(showResourceAllocation
+            ? [
+                { events: '@resourceRow:mouseover', update: 'datum.rowIndex' },
+                { events: '@resourceRow:mouseout', update: 'null' },
+              ]
+            : []),
         ],
       },
     ],
@@ -240,6 +738,35 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           },
         ],
       },
+      ...(showResourceAllocation
+        ? [
+            {
+              name: 'resourceRows',
+              values: resourceRowsData,
+            },
+            {
+              name: 'resourceTasks',
+              values: resourceTasksData,
+              transform: [
+                {
+                  type: 'formula',
+                  as: 'startTime',
+                  expr: 'time(datetime(datum.start))',
+                },
+                {
+                  type: 'formula',
+                  as: 'endTime',
+                  expr: 'time(datetime(datum.end))',
+                },
+                {
+                  type: 'formula',
+                  as: 'progressTime',
+                  expr: 'datum.startTime + (datum.endTime - datum.startTime) * datum.progress',
+                },
+              ],
+            },
+          ]
+        : []),
     ],
 
     scales: [
@@ -250,6 +777,12 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           fields: [
             { data: 'tasks', field: 'startTime' },
             { data: 'tasks', field: 'endTime' },
+            ...(showResourceAllocation
+              ? [
+                  { data: 'resourceTasks', field: 'startTime' },
+                  { data: 'resourceTasks', field: 'endTime' },
+                ]
+              : []),
           ],
         },
         range: 'width',
@@ -257,7 +790,12 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
       {
         name: 'colorScale',
         type: 'ordinal',
-        domain: { data: 'tasks', field: colorField },
+        domain: {
+          fields: [
+            { data: 'tasks', field: colorField },
+            ...(showResourceAllocation ? [{ data: 'resourceTasks', field: 'colorKey' }] : []),
+          ],
+        },
         range: { scheme: 'category10' },
       },
     ],
@@ -279,6 +817,8 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         titleFontSize: 13,
         titleFontWeight: 'bold',
         titlePadding: 16,
+        ...(axisTicks.values && axisTicks.values.length > 0 ? { values: axisTicks.values } : {}),
+        ...(axisTicks.format ? { format: axisTicks.format } : {}),
       },
     ],
 
@@ -291,7 +831,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           enter: {
             fill: { value: theme.weekendColor },
             y: { value: 0 },
-            y2: { value: chartHeight },
+            y2: { value: totalChartHeight },
           },
           update: {
             x: { scale: 'timeScale', field: 'startTime' },
@@ -307,21 +847,21 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           enter: {
             x: { value: 0 },
             y: { value: 0 },
-            y2: { value: chartHeight },
+            y2: { value: totalChartHeight },
             stroke: { value: theme.borderColor },
             strokeWidth: { value: 1 },
           },
         },
       },
 
-      // 2. Row hover bands
+      // 2. Task Row hover bands
       {
         name: 'taskRow',
         type: 'rect',
         from: { data: 'tasks' },
         encode: {
           enter: {
-            x: { value: -(tableWidth + 10) },
+            x: { value: -(totalTableWidth + 10) },
             x2: { signal: 'width' },
             y: { field: 'index', mult: rowHeight },
             height: { value: rowHeight },
@@ -338,13 +878,13 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 3. Row separator lines
+      // 3. Task Row separator lines
       {
         type: 'rule',
         from: { data: 'tasks' },
         encode: {
           enter: {
-            x: { value: -(tableWidth + 10) },
+            x: { value: -(totalTableWidth + 10) },
             x2: { signal: 'width' },
             y: { field: 'index', mult: rowHeight, offset: rowHeight },
             stroke: { value: theme.gridColor },
@@ -354,45 +894,10 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 4. Table Header (Task / WBS Name)
-      {
-        type: 'text',
-        encode: {
-          enter: {
-            x: { value: -tableWidth },
-            y: { value: -12 },
-            text: { value: 'Task / Milestone' },
-            fontSize: { value: 11 },
-            fontWeight: { value: 'bold' },
-            fill: { value: theme.textMuted },
-          },
-        },
-      },
+      // 4. Injected Table Marks (Headers, dividers, cell texts)
+      ...tableMarks,
 
-      // 5. Task Tree Text Labels (Left Column)
-      {
-        type: 'text',
-        from: { data: 'tasks' },
-        encode: {
-          enter: {
-            x: { field: 'labelX', offset: -(tableWidth + 6) },
-            y: { field: 'yCenter' },
-            baseline: { value: 'middle' },
-            limit: { value: tableWidth - 10 },
-            ellipsis: { value: '...' },
-          },
-          update: {
-            text: {
-              signal: "datum.wbs + ' ' + datum.name",
-            },
-            fontWeight: { signal: "datum.isParent ? 'bold' : 'normal'" },
-            fontSize: { signal: "datum.isParent ? 12 : 11" },
-            fill: { value: theme.textColor },
-          },
-        },
-      },
-
-      // 6. Milestone Diamonds
+      // 5. Milestone Diamonds
       {
         type: 'symbol',
         from: {
@@ -418,7 +923,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 7. Standard & Parent Task Bars (Background outline / bar)
+      // 6. Standard & Parent Task Bars (Background outline / bar)
       {
         type: 'rect',
         from: { data: 'tasks' },
@@ -444,7 +949,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 8. Progress Fill Bars
+      // 7. Progress Fill Bars
       {
         type: 'rect',
         from: { data: 'tasks' },
@@ -463,7 +968,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 9. Assignee Badges / Tags next to task bars
+      // 8. Assignee Badges / Tags next to task bars
       {
         type: 'text',
         from: { data: 'tasks' },
@@ -483,7 +988,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 10. Dependency Link Connectors (Orthogonal lines with arrows)
+      // 9. Dependency Link Connectors (Orthogonal lines with arrows)
       {
         type: 'path',
         from: { data: 'links' },
@@ -506,7 +1011,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 11. Dependency Link Arrowheads
+      // 10. Dependency Link Arrowheads
       {
         type: 'symbol',
         from: { data: 'links' },
@@ -523,7 +1028,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 12. Today Marker Line (Dashed red line) - Only rendered if today is in date range
+      // 11. Today Marker Line (Dashed red line) - Only rendered if today is in date range
       {
         type: 'rule',
         from: { data: 'today' },
@@ -533,7 +1038,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
             strokeWidth: { value: 1.5 },
             strokeDash: { value: [4, 3] },
             y: { value: 0 },
-            y2: { value: chartHeight },
+            y2: { value: totalChartHeight },
           },
           update: {
             x: { scale: 'timeScale', field: 'todayTime' },
@@ -541,7 +1046,7 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
         },
       },
 
-      // 13. Today Marker Tag
+      // 12. Today Marker Tag
       {
         type: 'text',
         from: { data: 'today' },
@@ -560,6 +1065,9 @@ export function buildVegaGanttSpec(model: GanttParsedModel, isDark: boolean = fa
           },
         },
       },
+
+      // 13. Resource Allocation Section (Marks)
+      ...resourceMarks,
     ],
   };
 }

@@ -18,7 +18,12 @@ export interface RawGanttDoc {
   title?: string;
   colorBy?: 'phase' | 'assignee';
   calendar?: 'calendar' | 'workdays';
+  columns?: string[] | string;
+  'resource-allocation'?: boolean | string;
+  resourceAllocation?: boolean | string;
+  axis?: 'all' | 'mondays' | 'start-of-month' | string;
   tasks?: RawGanttTask[];
+  [key: string]: any;
 }
 
 export interface ResolvedGanttTask {
@@ -49,6 +54,9 @@ export interface GanttParsedModel {
   title?: string;
   colorBy: 'phase' | 'assignee';
   calendar: 'calendar' | 'workdays';
+  columns: string[];
+  showResourceAllocation: boolean;
+  axisInterval: 'all' | 'mondays' | 'start-of-month' | 'auto';
   tasks: ResolvedGanttTask[];
   links: GanttDependencyLink[];
   minDate: string;
@@ -211,6 +219,9 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       title: 'Invalid Gantt Chart',
       colorBy: 'phase',
       calendar: 'calendar',
+      columns: ['name'],
+      showResourceAllocation: false,
+      axisInterval: 'auto',
       tasks: [],
       links: [],
       minDate: formatDate(new Date()),
@@ -228,6 +239,59 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
     rawDoc.calendar === 'workdays' ? 'workdays' : 'calendar';
   const isWorkdays = calendar === 'workdays';
 
+  // Parse columns
+  let columns: string[] = ['name'];
+  const rawCols = rawDoc.columns;
+  if (Array.isArray(rawCols)) {
+    const list = rawCols.map((c: any) => String(c).trim().toLowerCase()).filter(Boolean);
+    if (!list.includes('name') && !list.includes('task')) {
+      columns = ['name', ...list];
+    } else {
+      columns = list.map((c: string) => (c === 'task' ? 'name' : c));
+    }
+  } else if (typeof rawCols === 'string' && rawCols.trim()) {
+    const list = rawCols
+      .split(/[,;\s]+/)
+      .map((c: string) => c.trim().toLowerCase())
+      .filter(Boolean);
+    if (!list.includes('name') && !list.includes('task')) {
+      columns = ['name', ...list];
+    } else {
+      columns = list.map((c: string) => (c === 'task' ? 'name' : c));
+    }
+  }
+
+  // Parse resource-allocation
+  const rawResourceAlloc =
+    rawDoc['resource-allocation'] ??
+    rawDoc['resourceAllocation'] ??
+    rawDoc['resource_allocation'] ??
+    rawDoc['resources'];
+  const showResourceAllocation =
+    rawResourceAlloc === true ||
+    rawResourceAlloc === 'yes' ||
+    rawResourceAlloc === 'true' ||
+    rawResourceAlloc === '1';
+
+  // Parse axis
+  const rawAxis = (rawDoc.axis ?? rawDoc['date-axis'] ?? rawDoc['dateAxis'] ?? 'auto')
+    .toString()
+    .toLowerCase()
+    .trim();
+  let axisInterval: 'all' | 'mondays' | 'start-of-month' | 'auto' = 'auto';
+  if (rawAxis === 'mondays' || rawAxis === 'monday' || rawAxis === 'week' || rawAxis === 'weekly') {
+    axisInterval = 'mondays';
+  } else if (
+    rawAxis === 'start-of-month' ||
+    rawAxis === 'start_of_month' ||
+    rawAxis === 'month' ||
+    rawAxis === 'monthly'
+  ) {
+    axisInterval = 'start-of-month';
+  } else if (rawAxis === 'all' || rawAxis === 'day' || rawAxis === 'daily') {
+    axisInterval = 'all';
+  }
+
   const rawTasks: RawGanttTask[] = Array.isArray(rawDoc)
     ? rawDoc
     : Array.isArray(rawDoc.tasks)
@@ -239,6 +303,9 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       title,
       colorBy,
       calendar,
+      columns,
+      showResourceAllocation,
+      axisInterval,
       tasks: [],
       links: [],
       minDate: formatDate(new Date()),
@@ -551,6 +618,9 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
     title,
     colorBy,
     calendar,
+    columns,
+    showResourceAllocation,
+    axisInterval,
     tasks: resolvedTasks,
     links,
     minDate: overallMin ? formatDate(overallMin) : formatDate(new Date()),
