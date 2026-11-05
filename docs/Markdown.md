@@ -447,7 +447,7 @@ tasks:
 * **`axis`**:
   * Granularity of dates and grid lines shown on the top timeline axis.
   * `'all'` / `'daily'`: Displays every day tick.
-  * `'mondays'` / `'weekly'`: Displays only Monday ticks (e.g. `Dec 07 (Mon)`).
+  * `'mondays'` / `'weekly'`: Displays only Monday ticks (e.g. `Dec 07`).
   * `'start-of-month'` / `'monthly'`: Displays ticks on the 1st of each month (e.g. `Dec 2026`).
   * If omitted, automatically selects daily, weekly, or monthly based on the total project span.
 * **`width`** (or **`timeline-width`**):

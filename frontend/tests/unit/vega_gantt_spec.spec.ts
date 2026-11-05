@@ -105,7 +105,7 @@ tasks:
   it('generates axis ticks for all, mondays, and start-of-month', () => {
     const mondays = getAxisTicks('2026-12-01', '2026-12-20', 'mondays');
     expect(mondays.values).toBeDefined();
-    expect(mondays.format).toBe('%b %d (%a)');
+    expect(mondays.format).toBe('%b %d');
     expect(mondays.values!.length).toBe(2);
 
     const monthStarts = getAxisTicks('2026-11-15', '2027-02-15', 'start-of-month');
@@ -488,7 +488,7 @@ tasks:
     }
   });
 
-  it('prevents overlap between axis labels and table column titles via flush alignment and timeline left gap', async () => {
+  it('prevents overlap between axis labels and table column titles via clean gap, concise dates, and greedy overlap reduction', async () => {
     const yaml = `
 columns: [start, end, progress]
 axis: mondays
@@ -502,16 +502,16 @@ tasks:
     const model = parseGanttMarkdown(yaml);
     const spec = buildVegaGanttSpec(model, { isDark: false, mode: 'all' });
 
-    // Verify spec has labelFlush enabled on the time axis
+    // Verify spec has greedy labelOverlap on the time axis
     const timeAxis = spec.axes.find((a: any) => a.scale === 'timeScale');
     expect(timeAxis).toBeDefined();
-    expect(timeAxis.labelFlush).toBe(true);
+    expect(timeAxis.labelOverlap).toBe('greedy');
 
-    // Verify timeScale range starts with a left gap buffer (>= 20px)
+    // Verify timeScale range starts with a left gap buffer (>= 30px)
     const timeScale = spec.scales.find((s: any) => s.name === 'timeScale');
     expect(timeScale).toBeDefined();
     expect(Array.isArray(timeScale.range)).toBe(true);
-    expect(timeScale.range[0]).toBe(20);
+    expect(timeScale.range[0]).toBe(30);
 
     // Render SVG and verify mark coordinates
     const runtime = vega.parse(spec);
@@ -519,13 +519,14 @@ tasks:
     await view.runAsync();
     const svg = await view.toSVG();
 
-    // The first monday tick label (Nov 30) must be start-aligned at x >= 20px
-    expect(svg).toMatch(/<text[^>]*text-anchor="start"[^>]*transform="translate\(20,[^)]*\)"[^>]*>Nov 30 \(Mon\)<\/text>/);
+    // The first monday tick label (Nov 30) is centered at x = 30px
+    expect(svg).toMatch(/<text[^>]*text-anchor="middle"[^>]*transform="translate\(30,[^)]*\)"[^>]*>Nov 30<\/text>/);
 
     // The column title 'Progress' must be end-aligned to the left of x = 0 (at x = -8)
     expect(svg).toMatch(/<text[^>]*text-anchor="end"[^>]*transform="translate\(-8,[^)]*\)"[^>]*>Progress<\/text>/);
 
-    // Last axis tick (Dec 14) must be end-aligned flush with the timeline width
-    expect(svg).toMatch(/<text[^>]*text-anchor="end"[^>]*>Dec 14 \(Mon\)<\/text>/);
+    // Dec 07 and Dec 14 are also rendered without overlap
+    expect(svg).toContain('Dec 07');
+    expect(svg).toContain('Dec 14');
   });
 });

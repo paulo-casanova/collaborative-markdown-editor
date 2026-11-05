@@ -110,7 +110,7 @@ export function getAxisTicks(
     if (values.length === 0) {
       values.push(start.getTime());
     }
-    return { values, format: '%b %d (%a)' };
+    return { values, format: '%b %d' };
   }
 
   if (m === 'start-of-month' || m === 'start_of_month' || m === 'month' || m === 'monthly') {
@@ -400,7 +400,7 @@ export function buildVegaGanttSpec(
 
   const rowHeight = 36;
   const headerHeight = 45;
-  const timelineLeftGap = 20;
+  const timelineLeftGap = 30;
 
   // 1. Column configuration
   const maxLabelLen = Math.max(
@@ -1504,7 +1504,8 @@ export function buildVegaGanttSpec(
       tickColor: theme.borderColor,
       domainColor: theme.borderColor,
       labelFontSize: 11,
-      labelFlush: true,
+      labelOverlap: 'greedy',
+      labelSeparation: 4,
       title: mode === 'timeline' ? undefined : model.title,
       titleColor: theme.textColor,
       titleFontSize: 13,
