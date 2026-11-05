@@ -117,11 +117,13 @@ int main() {
             "- [x] Write unit tests ✅ 2026-11-04 [[@bob]]\n"
             "* [ ] Draft architecture document ⏳ 2026-11-10 🛫 2026-11-08\n"
             "+ [X] Deploy backend service\n"
+            "- [ ] Refactor auth module @carol due:2026-11-20\n"
+            "1. [ ] Prepare release checklist deadline: 2026-12-01 @david\n"
             "- Regular list item (not a task)\n";
 
         auto tasks = cme::document::EntityExtractor::extract_tasks(task_markdown);
 
-        assert(tasks.size() == 4);
+        assert(tasks.size() == 6);
 
         // Task 1: Uncompleted with due date, assignee, priority
         assert(!tasks[0].is_completed);
@@ -142,6 +144,18 @@ int main() {
 
         // Task 4: Marked with [X]
         assert(tasks[3].is_completed);
+
+        // Task 5: due:YYYY-MM-DD and @carol
+        assert(!tasks[4].is_completed);
+        assert(tasks[4].due_date.has_value() && *tasks[4].due_date == "2026-11-20");
+        assert(tasks[4].assignee_username.has_value() && *tasks[4].assignee_username == "carol");
+        assert(tasks[4].description == "Refactor auth module");
+
+        // Task 6: Numbered task, deadline: YYYY-MM-DD and @david
+        assert(!tasks[5].is_completed);
+        assert(tasks[5].due_date.has_value() && *tasks[5].due_date == "2026-12-01");
+        assert(tasks[5].assignee_username.has_value() && *tasks[5].assignee_username == "david");
+        assert(tasks[5].description == "Prepare release checklist");
 
         std::cout << "     [PASS] Obsidian task parsing, dates, assignees, and priorities verified.\n";
     }

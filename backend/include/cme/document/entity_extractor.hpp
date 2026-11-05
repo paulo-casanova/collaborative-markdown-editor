@@ -110,7 +110,7 @@ public:
     static std::string compute_task_fingerprint(
         std::string_view description,
         std::string_view heading_anchor,
-        size_t line_number
+        size_t occurrence_index
     );
 };
 

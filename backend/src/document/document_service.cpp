@@ -703,6 +703,7 @@ Result<DocumentRecord> DocumentService::create_document(
 
         reconcile_document_mentions(tx, doc.id, user.user_id, req.content);
         reconcile_document_tags(tx, doc.id, req.content);
+        reconcile_document_tasks(tx, doc.id, req.content);
 
         tx.commit();
         return doc;
@@ -1505,6 +1506,7 @@ Result<DocumentRecord> DocumentService::update_document(
         if (content.has_value()) {
             reconcile_document_mentions(tx, doc_id, user.user_id, final_content);
             reconcile_document_tags(tx, doc_id, final_content);
+            reconcile_document_tasks(tx, doc_id, final_content);
         }
 
         tx.commit();
@@ -4498,6 +4500,116 @@ Result<void> DocumentService::reconcile_document_tags(
         return {};
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] [TAGS] reconcile_document_tags failed for doc "
+                  << document_id << ": " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<void> DocumentService::reconcile_document_tasks(
+    pqxx::transaction_base& tx,
+    const std::string& document_id,
+    std::string_view content
+) {
+    if (document_id.empty() || !is_valid_uuid(document_id)) {
+        return {};
+    }
+
+    try {
+        auto tasks = EntityExtractor::extract_tasks(content);
+        std::unordered_set<std::string> current_fps;
+
+        for (const auto& task : tasks) {
+            current_fps.insert(task.fingerprint);
+
+            // Assignee lookup by username
+            std::string assignee_id_str = "";
+            if (task.assignee_username.has_value() && !task.assignee_username->empty()) {
+                auto u_rows = tx.exec_params(
+                    "SELECT id::text FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1;",
+                    task.assignee_username.value()
+                );
+                if (!u_rows.empty()) {
+                    assignee_id_str = u_rows[0][0].as<std::string>();
+                }
+            }
+
+            // Due date string
+            std::string due_ts_str = "";
+            if (task.due_date.has_value() && !task.due_date->empty()) {
+                due_ts_str = task.due_date.value() + " 00:00:00Z";
+            }
+
+            // Check if existing markdown task with this fingerprint exists
+            auto existing = tx.exec_params(
+                "SELECT id::text, is_completed FROM tasks WHERE document_id = $1::uuid AND fingerprint = $2 AND source = 'markdown';",
+                document_id, task.fingerprint
+            );
+
+            if (existing.empty()) {
+                tx.exec_params(
+                    "INSERT INTO tasks ("
+                    "  document_id, description, is_completed, source, line_number, raw_line, heading_anchor, fingerprint, assignee_id, due_date, completed_at"
+                    ") VALUES ("
+                    "  $1::uuid, $2, $3, 'markdown', $4, $5, $6, $7, "
+                    "  (CASE WHEN $8 = '' THEN NULL ELSE $8::uuid END), "
+                    "  (CASE WHEN $9 = '' THEN NULL ELSE $9::timestamptz END), "
+                    "  (CASE WHEN $3 THEN NOW() ELSE NULL END)"
+                    ");",
+                    document_id,
+                    task.description,
+                    task.is_completed,
+                    static_cast<int>(task.line_number),
+                    task.raw_line,
+                    task.heading_anchor,
+                    task.fingerprint,
+                    assignee_id_str,
+                    due_ts_str
+                );
+            } else {
+                tx.exec_params(
+                    "UPDATE tasks SET "
+                    "  description = $1, "
+                    "  is_completed = $2, "
+                    "  line_number = $3, "
+                    "  raw_line = $4, "
+                    "  heading_anchor = $5, "
+                    "  assignee_id = (CASE WHEN $6 = '' THEN NULL ELSE $6::uuid END), "
+                    "  due_date = (CASE WHEN $7 = '' THEN NULL ELSE $7::timestamptz END), "
+                    "  completed_at = (CASE WHEN $2 THEN COALESCE(completed_at, NOW()) ELSE NULL END) "
+                    "WHERE id = $8::uuid;",
+                    task.description,
+                    task.is_completed,
+                    static_cast<int>(task.line_number),
+                    task.raw_line,
+                    task.heading_anchor,
+                    assignee_id_str,
+                    due_ts_str,
+                    existing[0][0].as<std::string>()
+                );
+            }
+        }
+
+        // Delete removed markdown tasks
+        if (current_fps.empty()) {
+            tx.exec_params(
+                "DELETE FROM tasks WHERE document_id = $1::uuid AND source = 'markdown';",
+                document_id
+            );
+        } else {
+            auto old_rows = tx.exec_params(
+                "SELECT id::text, fingerprint FROM tasks WHERE document_id = $1::uuid AND source = 'markdown';",
+                document_id
+            );
+            for (const auto& row : old_rows) {
+                if (!current_fps.contains(row[1].as<std::string>())) {
+                    tx.exec_params("DELETE FROM tasks WHERE id = $1::uuid;", row[0].as<std::string>());
+                }
+            }
+        }
+
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [TASKS] reconcile_document_tasks failed for doc "
                   << document_id << ": " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }

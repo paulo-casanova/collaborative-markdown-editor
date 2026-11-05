@@ -728,6 +728,15 @@ public:
     );
 
     /**
+     * @brief Reconciles tasks extracted from document content with the tasks database table.
+     */
+    static Result<void> reconcile_document_tasks(
+        pqxx::transaction_base& tx,
+        const std::string& document_id,
+        std::string_view content
+    );
+
+    /**
      * @brief Lists distinct tags accessible to the user, with document and occurrence counts.
      */
     Result<std::vector<TagSummary>> list_tags(

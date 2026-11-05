@@ -116,4 +116,6 @@ export interface TaskRecord {
   due_date?: string | null;
   created_at: string;
   completed_at?: string | null;
+  source?: 'markdown' | 'review';
+  line_number?: number | null;
 }

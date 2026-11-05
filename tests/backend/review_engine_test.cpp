@@ -824,6 +824,100 @@ int main() {
     }
 
     // =========================================================================
+    // 8.7 Testing Markdown Tasks Extraction, Reconcile, Dashboard Listing & In-File Toggling
+    // =========================================================================
+    std::cout << "\n[STEP 8.7] Testing Markdown Tasks Extraction, Reconcile, Dashboard Listing & In-File Toggling...\n";
+    {
+        // 1. Save document with markdown tasks
+        std::string md_with_tasks =
+            "# Sprint Tasks\n\n"
+            "- [ ] Implement markdown task syncing @rev_alice due:2026-11-20\n"
+            "- [x] Pre-existing completed task @rev_bob 📅 2026-11-05\n";
+
+        nlohmann::json update_doc_body = {
+            {"content", md_with_tasks}
+        };
+
+        auto r_put = http_curl(
+            "PUT",
+            base_url + "/api/v1/documents/" + doc_id,
+            {"Authorization: Bearer " + alice_token, "Content-Type: application/json"},
+            update_doc_body.dump()
+        );
+        assert(r_put.status_code == 200);
+
+        // 2. Fetch tasks from Dashboard endpoint: GET /api/v1/tasks
+        auto r_tasks = http_curl("GET", base_url + "/api/v1/tasks",
+                                 {"Authorization: Bearer " + alice_token});
+        assert(r_tasks.status_code == 200);
+        auto all_tasks = nlohmann::json::parse(r_tasks.body);
+
+        std::string syncing_task_id;
+        bool found_syncing_task = false;
+        bool found_completed_task = false;
+
+        for (const auto& t : all_tasks) {
+            if (t.contains("description") && t["description"] == "Implement markdown task syncing") {
+                found_syncing_task = true;
+                syncing_task_id = t["id"];
+                assert(t["is_completed"] == false);
+                assert(t["source"] == "markdown");
+                assert(!t["assignee"].is_null());
+                assert(t["assignee"]["username"] == "rev_alice");
+                assert(!t["due_date"].is_null());
+            }
+            if (t.contains("description") && t["description"] == "Pre-existing completed task") {
+                found_completed_task = true;
+                assert(t["is_completed"] == true);
+                assert(t["source"] == "markdown");
+                assert(!t["assignee"].is_null());
+                assert(t["assignee"]["username"] == "rev_bob");
+            }
+        }
+        assert(found_syncing_task);
+        assert(found_completed_task);
+        assert(!syncing_task_id.empty());
+
+        // 3. Complete the task from Dashboard: PATCH /api/v1/tasks/:id with is_completed = true
+        auto r_patch = http_curl(
+            "PATCH",
+            base_url + "/api/v1/tasks/" + syncing_task_id,
+            {"Authorization: Bearer " + alice_token, "Content-Type: application/json"},
+            R"({"is_completed": true})"
+        );
+        assert(r_patch.status_code == 200);
+        auto patched_json = nlohmann::json::parse(r_patch.body);
+        assert(patched_json["is_completed"] == true);
+
+        // 4. Verify markdown file content was updated to "- [x] Implement markdown task syncing..."
+        auto r_get_doc = http_curl("GET", base_url + "/api/v1/documents/" + doc_id,
+                                   {"Authorization: Bearer " + alice_token});
+        assert(r_get_doc.status_code == 200);
+        auto doc_json = nlohmann::json::parse(r_get_doc.body);
+        std::string updated_content = doc_json["content"];
+        assert(updated_content.find("- [x] Implement markdown task syncing @rev_alice due:2026-11-20") != std::string::npos);
+
+        // 5. Uncheck the task from Dashboard: PATCH /api/v1/tasks/:id with is_completed = false
+        auto r_uncheck = http_curl(
+            "PATCH",
+            base_url + "/api/v1/tasks/" + syncing_task_id,
+            {"Authorization: Bearer " + alice_token, "Content-Type: application/json"},
+            R"({"is_completed": false})"
+        );
+        assert(r_uncheck.status_code == 200);
+        assert(nlohmann::json::parse(r_uncheck.body)["is_completed"] == false);
+
+        // 6. Verify markdown file content reverted to "- [ ] Implement markdown task syncing..."
+        auto r_get_doc2 = http_curl("GET", base_url + "/api/v1/documents/" + doc_id,
+                                    {"Authorization: Bearer " + alice_token});
+        assert(r_get_doc2.status_code == 200);
+        std::string reverted_content = nlohmann::json::parse(r_get_doc2.body)["content"];
+        assert(reverted_content.find("- [ ] Implement markdown task syncing @rev_alice due:2026-11-20") != std::string::npos);
+
+        std::cout << "  [PASS] Markdown tasks extracted, reconciled, listed in dashboard, and toggled in-file successfully.\n";
+    }
+
+    // =========================================================================
     // 9. Teardown & Cleanup
     // =========================================================================
     std::cout << "\n[STEP 9] Terminating listener and server daemon...\n";

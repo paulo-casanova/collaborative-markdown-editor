@@ -4767,7 +4767,20 @@ Result<void> Server::start() {
                     }
                 }
             } catch (...) {}
-            auto task_res = review_service_->update_task(task_id, *auth_res.value(), update_req);
+            auto task_res = review_service_->update_task(
+                task_id,
+                *auth_res.value(),
+                update_req,
+                room_manager_,
+                [this](const std::string& did, std::span<const uint8_t> delta) {
+                    std::string update_msg;
+                    update_msg.reserve(2 + delta.size());
+                    update_msg.push_back('\x00');
+                    update_msg.push_back('\x03'); // SyncUpdate delta
+                    update_msg.append(reinterpret_cast<const char*>(delta.data()), delta.size());
+                    broadcast_to_room(did, update_msg, true);
+                }
+            );
             if (!task_res.has_value()) {
                 if (task_res.error() == ErrorCode::NotFound) {
                     send_json(res, "404 Not Found", {{"error", "Task not found"}});

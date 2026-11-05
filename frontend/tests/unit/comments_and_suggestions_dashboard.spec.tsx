@@ -11,7 +11,7 @@ import * as reviewsApi from '../../src/api/reviews';
 import * as mentionsApi from '../../src/api/mentions';
 import * as checkoutsApi from '../../src/api/checkouts';
 import * as authApi from '../../src/api/auth';
-import { CommentRecord, SuggestionRecord } from '../../src/review/types';
+import { CommentRecord, SuggestionRecord, TaskRecord } from '../../src/review/types';
 
 vi.mock('../../src/api/reviews', () => ({
   fetchParticipatedComments: vi.fn(),
@@ -349,13 +349,66 @@ describe('Comments & Suggestions Dashboard Views and Navigation', () => {
       expect(html).toContain('API Gateway Config');
       expect(html).toContain('timeout: 15s');
     });
+
+    it('renders Dashboard title, markdown and review tasks with badges and line numbers', () => {
+      const mockDashboardTasks: TaskRecord[] = [
+        {
+          id: 't-1',
+          document_id: 'doc-1',
+          document_title: 'API Gateway Config',
+          document_path: 'configs/gateway.md',
+          comment_id: null,
+          description: 'Ship caching implementation',
+          is_completed: false,
+          due_date: '2026-11-20',
+          created_at: '2026-11-05T10:00:00Z',
+          source: 'markdown',
+          line_number: 14,
+        },
+        {
+          id: 't-2',
+          document_id: 'doc-1',
+          document_title: 'API Gateway Config',
+          document_path: 'configs/gateway.md',
+          comment_id: 'c-1',
+          description: 'Review security audit comments',
+          is_completed: true,
+          due_date: null,
+          created_at: '2026-11-05T10:00:00Z',
+          completed_at: '2026-11-05T12:00:00Z',
+          source: 'review',
+        },
+      ];
+
+      queryClient.setQueryData(['all-tasks'], mockDashboardTasks);
+
+      const html = renderToStaticMarkup(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/tasks']}>
+            <TaskDashboardPage initialTab="tasks" />
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      // Dashboard Header
+      expect(html).toContain('Dashboard');
+      expect(html).toContain('Centralized action items, mentions, comments, and suggestions across your workspaces');
+
+      // Task items & badges
+      expect(html).toContain('Ship caching implementation');
+      expect(html).toContain('data-testid="task-source-markdown-badge"');
+      expect(html).toContain('Markdown');
+      expect(html).toContain('Line 14');
+
+      expect(html).toContain('Review security audit comments');
+      expect(html).toContain('data-testid="task-source-review-badge"');
+      expect(html).toContain('Review');
+    });
   });
 
-  describe('Sidebar navigation for Comments and Suggestions', () => {
-    it('renders Comments and Suggestions links with badges in the top left sidebar', () => {
-      queryClient.setQueryData(['mentions-count'], { unread_count: 2 });
-      queryClient.setQueryData(['comments-count'], { unacknowledged_count: 7 });
-      queryClient.setQueryData(['suggestions-count'], { unacknowledged_count: 3 });
+  describe('Sidebar navigation with Dashboard and unread mentions badge', () => {
+    it('renders Dashboard link with unread mentions count badge in the left sidebar', () => {
+      queryClient.setQueryData(['mentions-count'], { unread_count: 5 });
 
       const html = renderToStaticMarkup(
         <QueryClientProvider client={queryClient}>
@@ -365,17 +418,32 @@ describe('Comments & Suggestions Dashboard Views and Navigation', () => {
         </QueryClientProvider>
       );
 
-      // Links exist with correct hrefs
-      expect(html).toContain('data-testid="sidebar-comments-link"');
-      expect(html).toContain('href="/comments"');
-      expect(html).toContain('data-testid="sidebar-suggestions-link"');
-      expect(html).toContain('href="/suggestions"');
+      // Dashboard link and unread count badge
+      expect(html).toContain('data-testid="sidebar-tasks-link"');
+      expect(html).toContain('Dashboard');
+      expect(html).toContain('data-testid="sidebar-dashboard-unread-badge"');
+      expect(html).toContain('>5</span>');
 
-      // Unacknowledged count badges exist with correct counts
-      expect(html).toContain('data-testid="sidebar-comments-badge"');
-      expect(html).toContain('>7</span>');
-      expect(html).toContain('data-testid="sidebar-suggestions-badge"');
-      expect(html).toContain('>3</span>');
+      // Comments, suggestions, and mentions are removed from left sidebar
+      expect(html).not.toContain('data-testid="sidebar-comments-link"');
+      expect(html).not.toContain('data-testid="sidebar-suggestions-link"');
+      expect(html).not.toContain('data-testid="sidebar-mentions-link"');
+    });
+
+    it('does not render unread badge when unread mentions count is 0', () => {
+      queryClient.setQueryData(['mentions-count'], { unread_count: 0 });
+
+      const html = renderToStaticMarkup(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter initialEntries={['/']}>
+            <Sidebar />
+          </MemoryRouter>
+        </QueryClientProvider>
+      );
+
+      expect(html).toContain('data-testid="sidebar-tasks-link"');
+      expect(html).toContain('Dashboard');
+      expect(html).not.toContain('data-testid="sidebar-dashboard-unread-badge"');
     });
   });
 });

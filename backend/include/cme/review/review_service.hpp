@@ -166,6 +166,8 @@ struct TaskRecord {
     std::optional<std::string> due_date;
     std::string created_at;
     std::optional<std::string> completed_at;
+    std::string source{"review"};
+    std::optional<int> line_number;
 
     [[nodiscard]] nlohmann::json to_json() const {
         nlohmann::json j = {
@@ -177,8 +179,10 @@ struct TaskRecord {
             {"is_completed", is_completed},
             {"due_date", due_date.has_value() ? nlohmann::json(due_date.value()) : nlohmann::json(nullptr)},
             {"created_at", created_at},
-            {"completed_at", completed_at.has_value() ? nlohmann::json(completed_at.value()) : nlohmann::json(nullptr)}
+            {"completed_at", completed_at.has_value() ? nlohmann::json(completed_at.value()) : nlohmann::json(nullptr)},
+            {"source", source}
         };
+        if (line_number.has_value()) j["line_number"] = line_number.value();
         if (!document_title.empty()) j["document_title"] = document_title;
         if (!document_path.empty()) j["document_path"] = document_path;
         return j;
@@ -282,8 +286,20 @@ public:
     );
     Result<TaskRecord> get_task(const std::string& task_id, const auth::UserIdentity& user);
     Result<TaskRecord> create_task(const std::string& document_id, const auth::UserIdentity& user, const CreateTaskRequest& req);
-    Result<TaskRecord> update_task(const std::string& task_id, const auth::UserIdentity& user, const UpdateTaskRequest& req);
-    Result<TaskRecord> update_task(const std::string& task_id, const auth::UserIdentity& user, bool is_completed);
+    Result<TaskRecord> update_task(
+        const std::string& task_id,
+        const auth::UserIdentity& user,
+        const UpdateTaskRequest& req,
+        std::shared_ptr<collab::RoomManager> room_manager = nullptr,
+        std::function<void(const std::string& doc_id, std::span<const uint8_t> delta)> broadcast_sync_cb = nullptr
+    );
+    Result<TaskRecord> update_task(
+        const std::string& task_id,
+        const auth::UserIdentity& user,
+        bool is_completed,
+        std::shared_ptr<collab::RoomManager> room_manager = nullptr,
+        std::function<void(const std::string& doc_id, std::span<const uint8_t> delta)> broadcast_sync_cb = nullptr
+    );
     Result<void> delete_task(const std::string& task_id, const auth::UserIdentity& user);
 
 private:

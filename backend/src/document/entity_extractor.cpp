@@ -9,6 +9,7 @@
 #include <regex>
 #include <cctype>
 #include <algorithm>
+#include <unordered_map>
 
 namespace cme::document {
 
@@ -221,9 +222,9 @@ std::string EntityExtractor::compute_mention_fingerprint(
 std::string EntityExtractor::compute_task_fingerprint(
     std::string_view description,
     std::string_view heading_anchor,
-    size_t line_number
+    size_t occurrence_index
 ) {
-    std::string key = std::string(heading_anchor) + ":" + std::string(description) + ":" + std::to_string(line_number);
+    std::string key = std::string(heading_anchor) + ":" + std::string(description) + ":" + std::to_string(occurrence_index);
     return auth::sha256_hex(key);
 }
 
@@ -232,6 +233,7 @@ ExtractedEntities EntityExtractor::extract_all(std::string_view content) {
 
     std::string current_heading_title;
     std::string current_heading_anchor;
+    std::unordered_map<std::string, size_t> task_occ_counts;
 
     bool in_fenced_code = false;
     std::string fence_delim;
@@ -325,28 +327,45 @@ ExtractedEntities EntityExtractor::extract_all(std::string_view content) {
             }
         }
 
-        // 3. Check for Task Items (- [ ] or - [x])
+        // 3. Check for Task Items (- [ ] or - [x] or * [ ] or + [ ] or 1. [ ])
         {
             size_t t_sp = 0;
-            while (t_sp < line.size() && line[t_sp] == ' ') t_sp++;
-            if (t_sp + 4 < line.size() && (line[t_sp] == '-' || line[t_sp] == '*' || line[t_sp] == '+') && line[t_sp + 1] == ' ') {
-                if (line[t_sp + 2] == '[' && (line[t_sp + 3] == ' ' || line[t_sp + 3] == 'x' || line[t_sp + 3] == 'X') && line[t_sp + 4] == ']') {
+            while (t_sp < line.size() && (line[t_sp] == ' ' || line[t_sp] == '\t')) t_sp++;
+            size_t bullet_len = 0;
+            if (t_sp + 1 < line.size() && (line[t_sp] == '-' || line[t_sp] == '*' || line[t_sp] == '+') && line[t_sp + 1] == ' ') {
+                bullet_len = 2;
+            } else {
+                size_t d = t_sp;
+                while (d < line.size() && std::isdigit(static_cast<unsigned char>(line[d]))) d++;
+                if (d > t_sp && d + 1 < line.size() && line[d] == '.' && line[d + 1] == ' ') {
+                    bullet_len = (d + 2) - t_sp;
+                }
+            }
+
+            if (bullet_len > 0 && t_sp + bullet_len + 3 <= line.size()) {
+                size_t b_start = t_sp + bullet_len;
+                if (line[b_start] == '[' && (line[b_start + 1] == ' ' || line[b_start + 1] == 'x' || line[b_start + 1] == 'X') && line[b_start + 2] == ']') {
                     ExtractedTask task;
                     task.raw_line = std::string(line);
-                    task.is_completed = (line[t_sp + 3] == 'x' || line[t_sp + 3] == 'X');
+                    task.is_completed = (line[b_start + 1] == 'x' || line[b_start + 1] == 'X');
                     task.line_number = line_num;
                     task.heading_anchor = current_heading_anchor;
 
-                    std::string task_body = std::string(line.substr(t_sp + 5));
-                    while (!task_body.empty() && task_body.front() == ' ') task_body.erase(task_body.begin());
+                    std::string task_body = std::string(line.substr(b_start + 3));
+                    while (!task_body.empty() && (task_body.front() == ' ' || task_body.front() == '\t')) task_body.erase(task_body.begin());
 
-                    // Parse Obsidian emojis
-                    static const std::regex due_regex(R"(📅\s*(\d{4}-\d{2}-\d{2}))");
+                    // Parse due dates & deadlines:
+                    // 1. 📅 YYYY-MM-DD
+                    // 2. due:YYYY-MM-DD or due: YYYY-MM-DD
+                    // 3. deadline:YYYY-MM-DD or deadline: YYYY-MM-DD
+                    // 4. @due(YYYY-MM-DD)
+                    static const std::regex due_regex(R"((?:📅\s*|(?:\b(?:due|deadline):\s*)|@due\s*\()(\d{4}-\d{2}-\d{2})\)?)", std::regex::icase);
                     static const std::regex sched_regex(R"(⏳\s*(\d{4}-\d{2}-\d{2}))");
                     static const std::regex start_regex(R"(🛫\s*(\d{4}-\d{2}-\d{2}))");
                     static const std::regex done_regex(R"(✅\s*(\d{4}-\d{2}-\d{2}))");
                     static const std::regex priority_regex(R"((🔺|⏫|🔼|🔽|⏬))");
-                    static const std::regex assignee_regex(R"((?:\[\[@|@)([a-zA-Z0-9_\-\.]+)(?:\]\])?)");
+                    // Assignee: @user, [[@user]], assignee:@user, assignee:user
+                    static const std::regex assignee_regex(R"((?:(?:\bassignee:\s*@?)|\[\[@|@)([a-zA-Z0-9_\-\.]+)(?:\]\])?)", std::regex::icase);
 
                     std::smatch m;
                     if (std::regex_search(task_body, m, due_regex)) task.due_date = m[1].str();
@@ -356,8 +375,38 @@ ExtractedEntities EntityExtractor::extract_all(std::string_view content) {
                     if (std::regex_search(task_body, m, priority_regex)) task.priority = m[1].str();
                     if (std::regex_search(task_body, m, assignee_regex)) task.assignee_username = m[1].str();
 
-                    task.description = task_body;
-                    task.fingerprint = compute_task_fingerprint(task.description, task.heading_anchor, task.line_number);
+                    // Clean task description of metadata tags for crisp display in UI
+                    std::string clean_desc = task_body;
+                    clean_desc = std::regex_replace(clean_desc, due_regex, "");
+                    clean_desc = std::regex_replace(clean_desc, sched_regex, "");
+                    clean_desc = std::regex_replace(clean_desc, start_regex, "");
+                    clean_desc = std::regex_replace(clean_desc, done_regex, "");
+                    clean_desc = std::regex_replace(clean_desc, priority_regex, "");
+                    clean_desc = std::regex_replace(clean_desc, assignee_regex, "");
+
+                    std::string trimmed_desc;
+                    trimmed_desc.reserve(clean_desc.size());
+                    bool in_sp = false;
+                    for (char c : clean_desc) {
+                        if (std::isspace(static_cast<unsigned char>(c))) {
+                            if (!in_sp) {
+                                trimmed_desc.push_back(' ');
+                                in_sp = true;
+                            }
+                        } else {
+                            trimmed_desc.push_back(c);
+                            in_sp = false;
+                        }
+                    }
+                    while (!trimmed_desc.empty() && trimmed_desc.front() == ' ') trimmed_desc.erase(trimmed_desc.begin());
+                    while (!trimmed_desc.empty() && trimmed_desc.back() == ' ') trimmed_desc.pop_back();
+
+                    task.description = trimmed_desc.empty() ? task_body : trimmed_desc;
+
+                    std::string group_key = task.heading_anchor + ":" + task.description;
+                    size_t occ_idx = task_occ_counts[group_key]++;
+                    task.fingerprint = compute_task_fingerprint(task.description, task.heading_anchor, occ_idx);
+
                     result.tasks.push_back(std::move(task));
                 }
             }

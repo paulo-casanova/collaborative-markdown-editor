@@ -1476,7 +1476,8 @@ Result<std::vector<TaskRecord>> ReviewService::list_tasks(
         auto rows = tx.exec_params(
             "SELECT t.id::text, t.document_id::text, t.comment_id::text, t.description, "
             "       t.is_completed, t.due_date::text, t.created_at::text, t.completed_at::text, "
-            "       u.id::text, u.username, u.display_name, u.avatar_color "
+            "       u.id::text, u.username, u.display_name, u.avatar_color, "
+            "       COALESCE(t.source, 'review'), t.line_number "
             "FROM tasks t "
             "LEFT JOIN users u ON t.assignee_id = u.id "
             "WHERE t.document_id = $1::uuid "
@@ -1498,13 +1499,17 @@ Result<std::vector<TaskRecord>> ReviewService::list_tasks(
             list.push_back(TaskRecord{
                 .id = row[0].as<std::string>(),
                 .document_id = row[1].as<std::string>(),
+                .document_title = "",
+                .document_path = "",
                 .comment_id = row[2].is_null() ? std::nullopt : std::optional<std::string>(row[2].as<std::string>()),
                 .description = row[3].as<std::string>(),
                 .assignee = assignee,
                 .is_completed = row[4].as<bool>(),
                 .due_date = row[5].is_null() ? std::nullopt : std::optional<std::string>(row[5].as<std::string>()),
                 .created_at = row[6].as<std::string>(),
-                .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>())
+                .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>()),
+                .source = row[12].as<std::string>(),
+                .line_number = row[13].is_null() ? std::nullopt : std::optional<int>(row[13].as<int>())
             });
         }
     } catch (const std::exception& e) {
@@ -1531,7 +1536,8 @@ Result<std::vector<TaskRecord>> ReviewService::list_all_tasks(
             "SELECT t.id::text, t.document_id::text, t.comment_id::text, t.description, "
             "       t.is_completed, t.due_date::text, t.created_at::text, t.completed_at::text, "
             "       u.id::text, u.username, u.display_name, u.avatar_color, "
-            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, '') "
+            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, ''), "
+            "       COALESCE(t.source, 'review'), t.line_number "
             "FROM tasks t "
             "JOIN documents d ON t.document_id = d.id "
             "LEFT JOIN users u ON t.assignee_id = u.id "
@@ -1569,7 +1575,9 @@ Result<std::vector<TaskRecord>> ReviewService::list_all_tasks(
                 .is_completed = row[4].as<bool>(),
                 .due_date = row[5].is_null() ? std::nullopt : std::optional<std::string>(row[5].as<std::string>()),
                 .created_at = row[6].as<std::string>(),
-                .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>())
+                .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>()),
+                .source = row[14].as<std::string>(),
+                .line_number = row[15].is_null() ? std::nullopt : std::optional<int>(row[15].as<int>())
             });
         }
     } catch (const std::exception& e) {
@@ -1596,7 +1604,8 @@ Result<TaskRecord> ReviewService::get_task(
             "SELECT t.id::text, t.document_id::text, t.comment_id::text, t.description, "
             "       t.is_completed, t.due_date::text, t.created_at::text, t.completed_at::text, "
             "       u.id::text, u.username, u.display_name, u.avatar_color, "
-            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, '') "
+            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, ''), "
+            "       COALESCE(t.source, 'review'), t.line_number "
             "FROM tasks t "
             "JOIN documents d ON t.document_id = d.id "
             "LEFT JOIN users u ON t.assignee_id = u.id "
@@ -1630,7 +1639,9 @@ Result<TaskRecord> ReviewService::get_task(
             .is_completed = row[4].as<bool>(),
             .due_date = row[5].is_null() ? std::nullopt : std::optional<std::string>(row[5].as<std::string>()),
             .created_at = row[6].as<std::string>(),
-            .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>())
+            .completed_at = row[7].is_null() ? std::nullopt : std::optional<std::string>(row[7].as<std::string>()),
+            .source = row[14].as<std::string>(),
+            .line_number = row[15].is_null() ? std::nullopt : std::optional<int>(row[15].as<int>())
         };
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] ReviewService::get_task failed: " << e.what() << "\n";
@@ -1738,26 +1749,188 @@ Result<TaskRecord> ReviewService::create_task(
 Result<TaskRecord> ReviewService::update_task(
     const std::string& task_id,
     const auth::UserIdentity& user,
-    const UpdateTaskRequest& req
+    const UpdateTaskRequest& req,
+    std::shared_ptr<collab::RoomManager> room_manager,
+    std::function<void(const std::string& doc_id, std::span<const uint8_t> delta)> broadcast_sync_cb
 ) {
     if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
     auto conn_res = db_pool_->acquire();
     if (!conn_res.has_value()) return std::unexpected(conn_res.error());
 
     std::string doc_id;
+    std::string task_source = "review";
+    int task_line = 0;
+    std::string task_raw_line;
+    std::string task_desc;
+    bool current_is_completed = false;
+
     try {
         pqxx::work tx(conn_res->get());
-        auto rows = tx.exec_params("SELECT document_id::text FROM tasks WHERE id = $1::uuid;", task_id);
+        auto rows = tx.exec_params(
+            "SELECT document_id::text, COALESCE(source, 'review'), COALESCE(line_number, 0), "
+            "       COALESCE(raw_line, ''), description, is_completed "
+            "FROM tasks WHERE id = $1::uuid;",
+            task_id
+        );
         if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
         doc_id = rows[0][0].as<std::string>();
+        task_source = rows[0][1].as<std::string>();
+        task_line = rows[0][2].as<int>();
+        task_raw_line = rows[0][3].as<std::string>();
+        task_desc = rows[0][4].as<std::string>();
+        current_is_completed = rows[0][5].as<bool>();
     } catch (...) {
         return std::unexpected(ErrorCode::DatabaseError);
     }
 
     auto access_res = check_doc_access(doc_id, user);
     if (!access_res.has_value()) return std::unexpected(access_res.error());
-    if (access_res.value() < db::AccessLevel::Comment) {
-        return std::unexpected(ErrorCode::PermissionDenied);
+    if (task_source == "markdown") {
+        if (access_res.value() < db::AccessLevel::Edit) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+    } else {
+        if (access_res.value() < db::AccessLevel::Comment) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+    }
+
+    // If this is a markdown task and completion status is changing: update the markdown document!
+    if (task_source == "markdown" && req.is_completed.has_value() && req.is_completed.value() != current_is_completed) {
+        bool target_completed = req.is_completed.value();
+
+        std::shared_ptr<collab::DocumentRoom> room;
+        if (room_manager) {
+            room = room_manager->get_room(doc_id);
+            if (!room && doc_service_) {
+                auto d = doc_service_->get_document_by_id(doc_id, user);
+                if (d.has_value()) {
+                    std::vector<uint8_t> crdt_state;
+                    if (doc_service_->storage()) {
+                        auto crdt_res = doc_service_->storage()->load_crdt_state(doc_id);
+                        if (crdt_res.has_value()) {
+                            crdt_state = std::move(*crdt_res);
+                        }
+                    }
+                    room = room_manager->get_or_create_room(doc_id, d->content, d->path, crdt_state);
+                }
+            }
+        }
+
+        std::string content;
+        std::string fs_path;
+        if (room) {
+            content = room->get_content();
+            fs_path = room->fs_path();
+        } else if (doc_service_) {
+            auto d = doc_service_->get_document_by_id(doc_id, user);
+            if (d.has_value()) {
+                content = d->content;
+                fs_path = d->path;
+            }
+        }
+
+        // Split content into lines and locate the task checkbox
+        std::vector<std::pair<size_t, std::string_view>> lines;
+        size_t cur = 0;
+        while (cur < content.size()) {
+            size_t nl = content.find('\n', cur);
+            size_t len = (nl == std::string::npos) ? (content.size() - cur) : (nl - cur);
+            std::string_view l = std::string_view(content).substr(cur, len);
+            if (!l.empty() && l.back() == '\r') l.remove_suffix(1);
+            lines.emplace_back(cur, l);
+            if (nl == std::string::npos) break;
+            cur = nl + 1;
+        }
+
+        size_t target_box_pos = std::string::npos;
+        std::string old_box;
+        bool found_line = false;
+        size_t matched_line_idx = 0;
+
+        auto check_line_for_task = [&](std::string_view l, size_t line_offset) -> bool {
+            size_t sp = 0;
+            while (sp < l.size() && (l[sp] == ' ' || l[sp] == '\t')) sp++;
+            size_t b_len = 0;
+            if (sp + 1 < l.size() && (l[sp] == '-' || l[sp] == '*' || l[sp] == '+') && l[sp + 1] == ' ') {
+                b_len = 2;
+            } else {
+                size_t d = sp;
+                while (d < l.size() && std::isdigit(static_cast<unsigned char>(l[d]))) d++;
+                if (d > sp && d + 1 < l.size() && l[d] == '.' && l[d + 1] == ' ') {
+                    b_len = (d + 2) - sp;
+                }
+            }
+            if (b_len > 0 && sp + b_len + 3 <= l.size()) {
+                size_t b_start = sp + b_len;
+                if (l[b_start] == '[' && (l[b_start + 1] == ' ' || l[b_start + 1] == 'x' || l[b_start + 1] == 'X') && l[b_start + 2] == ']') {
+                    target_box_pos = line_offset + b_start;
+                    old_box = std::string(l.substr(b_start, 3));
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        if (task_line >= 1 && static_cast<size_t>(task_line) <= lines.size()) {
+            size_t idx = static_cast<size_t>(task_line - 1);
+            if (check_line_for_task(lines[idx].second, lines[idx].first)) {
+                if (lines[idx].second.find(task_desc) != std::string_view::npos ||
+                    (!task_raw_line.empty() && lines[idx].second.find(task_raw_line.substr(std::min<size_t>(5, task_raw_line.size()))) != std::string_view::npos)) {
+                    found_line = true;
+                    matched_line_idx = idx;
+                }
+            }
+        }
+
+        if (!found_line) {
+            for (size_t idx = 0; idx < lines.size(); ++idx) {
+                if (lines[idx].second.find(task_desc) != std::string_view::npos) {
+                    if (check_line_for_task(lines[idx].second, lines[idx].first)) {
+                        found_line = true;
+                        matched_line_idx = idx;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (found_line && target_box_pos != std::string::npos) {
+            std::string new_box = target_completed ? "[x]" : "[ ]";
+            if (room) {
+                room->delete_text(static_cast<uint32_t>(target_box_pos), 3);
+                room->insert_text(static_cast<uint32_t>(target_box_pos), new_box);
+                if (broadcast_sync_cb) {
+                    std::vector<uint8_t> empty_sv = {0};
+                    auto delta = room->compute_sync_step2(empty_sv);
+                    if (!delta.empty()) {
+                        broadcast_sync_cb(doc_id, delta);
+                    }
+                }
+            } else if (doc_service_ && doc_service_->storage()) {
+                content.replace(target_box_pos, 3, new_box);
+                bool is_bundle = doc_service_->storage()->is_bundle(fs_path).value_or(false);
+                std::string content_file = is_bundle ? (fs_path + "/index.md") : fs_path;
+                doc_service_->storage()->write_file(content_file, content, true);
+            }
+
+            // Update raw_line in tasks table
+            std::string updated_raw_line = std::string(lines[matched_line_idx].second);
+            size_t rbox = updated_raw_line.find(old_box);
+            if (rbox != std::string::npos) {
+                updated_raw_line.replace(rbox, 3, new_box);
+            }
+            try {
+                pqxx::work tx(conn_res->get());
+                tx.exec_params(
+                    "UPDATE tasks SET raw_line = $1, line_number = $2 WHERE id = $3::uuid;",
+                    updated_raw_line,
+                    static_cast<int>(matched_line_idx + 1),
+                    task_id
+                );
+                tx.commit();
+            } catch (...) {}
+        }
     }
 
     try {
@@ -1816,11 +1989,13 @@ Result<TaskRecord> ReviewService::update_task(
 Result<TaskRecord> ReviewService::update_task(
     const std::string& task_id,
     const auth::UserIdentity& user,
-    bool is_completed
+    bool is_completed,
+    std::shared_ptr<collab::RoomManager> room_manager,
+    std::function<void(const std::string& doc_id, std::span<const uint8_t> delta)> broadcast_sync_cb
 ) {
     UpdateTaskRequest req;
     req.is_completed = is_completed;
-    return update_task(task_id, user, req);
+    return update_task(task_id, user, req, std::move(room_manager), std::move(broadcast_sync_cb));
 }
 
 Result<void> ReviewService::delete_task(

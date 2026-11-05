@@ -81,7 +81,7 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
     } else if (dashboardTab === 'suggestions') {
       setBreadcrumbs([{ label: 'Suggestions', path: '/suggestions', isCurrent: true }]);
     } else {
-      setBreadcrumbs([{ label: 'Task Dashboard', path: '/tasks', isCurrent: true }]);
+      setBreadcrumbs([{ label: 'Dashboard', path: '/tasks', isCurrent: true }]);
     }
   }, [setBreadcrumbs, dashboardTab]);
 
@@ -278,7 +278,7 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
             <div>
               <h1 className="text-xl font-bold text-cme-text-base">
                 {dashboardTab === 'tasks'
-                  ? 'Task Dashboard'
+                  ? 'Dashboard'
                   : dashboardTab === 'mentions'
                   ? 'Mentions Inbox'
                   : dashboardTab === 'comments'
@@ -287,7 +287,7 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
               </h1>
               <p className="text-xs text-cme-text-muted mt-0.5">
                 {dashboardTab === 'tasks'
-                  ? 'Centralized action items and review tasks across your workspaces'
+                  ? 'Centralized action items, mentions, comments, and suggestions across your workspaces'
                   : dashboardTab === 'mentions'
                   ? 'Notifications and mentions addressed to you across documents'
                   : dashboardTab === 'comments'
@@ -617,6 +617,28 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
                       </p>
 
                       <div className="flex flex-wrap items-center gap-2.5 mt-1.5 text-[10px] text-cme-text-muted">
+                        {task.source === 'markdown' ? (
+                          <span
+                            data-testid="task-source-markdown-badge"
+                            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                          >
+                            Markdown
+                          </span>
+                        ) : (
+                          <span
+                            data-testid="task-source-review-badge"
+                            className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20"
+                          >
+                            Review
+                          </span>
+                        )}
+
+                        {task.source === 'markdown' && task.line_number && (
+                          <span className="font-mono text-cme-text-muted">
+                            Line {task.line_number}
+                          </span>
+                        )}
+
                         {task.assignee && (
                           <span className="flex items-center gap-1 font-medium text-cme-text-subtle">
                             <span
