@@ -210,34 +210,55 @@ function preprocessGanttYaml(source: string): string {
 }
 
 /**
+ * Detects whether a parsed task entry is empty (e.g. null from an empty '-' in YAML,
+ * an empty object '{}', or an object where all values are empty/null).
+ */
+export function isEmptyTask(t: any): boolean {
+  if (t === null || t === undefined) return true;
+  if (typeof t === 'string') return t.trim() === '';
+  if (typeof t !== 'object') return true;
+  const keys = Object.keys(t);
+  if (keys.length === 0) return true;
+  return keys.every((k) => {
+    const val = t[k];
+    return val === null || val === undefined || (typeof val === 'string' && val.trim() === '');
+  });
+}
+
+/**
  * Parses raw Gantt markdown/YAML code into a fully scheduled, validated Gantt model.
  */
 export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
   const errors: string[] = [];
 
-  let rawDoc: any;
   try {
-    const cleanedYaml = preprocessGanttYaml(yamlSource);
-    rawDoc = parseYaml(cleanedYaml) || {};
-  } catch (e: any) {
-    return {
-      title: 'Invalid Gantt Chart',
-      colorBy: 'phase',
-      calendar: 'calendar',
-      columns: ['name'],
-      showResourceAllocation: false,
-      axisInterval: 'auto',
-      tasks: [],
-      links: [],
-      minDate: formatDate(new Date()),
-      maxDate: formatDate(new Date()),
-      assignees: [],
-      phases: [],
-      errors: [`YAML Syntax Error: ${e?.message || 'Failed to parse'}`],
-    };
-  }
+    let rawDoc: any;
+    try {
+      const cleanedYaml = preprocessGanttYaml(yamlSource);
+      rawDoc = parseYaml(cleanedYaml) || {};
+    } catch (e: any) {
+      return {
+        title: 'Invalid Gantt Chart',
+        colorBy: 'phase',
+        calendar: 'calendar',
+        columns: ['name'],
+        showResourceAllocation: false,
+        axisInterval: 'auto',
+        tasks: [],
+        links: [],
+        minDate: formatDate(new Date()),
+        maxDate: formatDate(new Date()),
+        assignees: [],
+        phases: [],
+        errors: [`YAML Syntax Error: ${e?.message || 'Failed to parse'}`],
+      };
+    }
 
-  const title = typeof rawDoc.title === 'string' ? rawDoc.title : undefined;
+    if (!rawDoc || typeof rawDoc !== 'object') {
+      rawDoc = {};
+    }
+
+    const title = typeof rawDoc.title === 'string' ? rawDoc.title : undefined;
   const colorBy: 'phase' | 'assignee' =
     rawDoc.colorBy === 'assignee' ? 'assignee' : 'phase';
   const calendar: 'calendar' | 'workdays' =
@@ -346,15 +367,21 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
 
   // 1. Flatten hierarchy and normalize IDs, assignees, durations
   function flatten(
-    tasks: RawGanttTask[],
+    tasks: any[],
     parentId: string | null,
     parentWbs: string,
     depth: number,
     currentPhaseId: string,
     currentPhaseName: string
   ) {
-    tasks.forEach((t, idx) => {
+    tasks.forEach((rawT, idx) => {
       const wbs = parentWbs ? `${parentWbs}.${idx + 1}` : `${idx + 1}`;
+      if (isEmptyTask(rawT)) {
+        errors.push(`Empty task definition at item ${wbs}: unexpected empty item after "-"`);
+        return;
+      }
+
+      const t: RawGanttTask = typeof rawT === 'string' ? { name: (rawT as string).trim() } : rawT;
       let id = t.id ? String(t.id).trim() : `task-${wbs.replace(/\./g, '_')}`;
       if (idSet.has(id)) {
         errors.push(`Duplicate task ID '${id}'. Renaming to '${id}_${idx}'`);
@@ -362,7 +389,9 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
       }
       idSet.add(id);
 
-      const hasChildren = Array.isArray(t.children) && t.children.length > 0;
+      const hasChildren =
+        Array.isArray(t.children) &&
+        t.children.some((c) => !isEmptyTask(c));
       const isMilestone = Boolean(t.milestone) || t.duration === '0' || t.duration === '0d' || t.duration === 0;
 
       // Extract assignees and allocations
@@ -461,13 +490,35 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
         dependencies,
       });
 
-      if (hasChildren) {
-        flatten(t.children!, id, wbs, depth + 1, phaseId, phaseName);
+      if (Array.isArray(t.children) && t.children.length > 0) {
+        flatten(t.children, id, wbs, depth + 1, phaseId, phaseName);
       }
     });
   }
 
   flatten(rawTasks, null, '', 0, '', '');
+
+  if (intermediateList.length === 0) {
+    if (errors.length === 0) {
+      errors.push('No valid tasks defined in Gantt specification');
+    }
+    return {
+      title,
+      width: widthConfig,
+      colorBy,
+      calendar,
+      columns,
+      showResourceAllocation,
+      axisInterval,
+      tasks: [],
+      links: [],
+      minDate: formatDate(new Date()),
+      maxDate: formatDate(new Date()),
+      assignees: [],
+      phases: [],
+      errors,
+    };
+  }
 
   const taskMap = new Map<string, IntermediateTask>();
   intermediateList.forEach((t) => taskMap.set(t.id, t));
@@ -722,20 +773,37 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
     });
   }
 
-  return {
-    title,
-    width: widthConfig,
-    colorBy,
-    calendar,
-    columns,
-    showResourceAllocation,
-    axisInterval,
-    tasks: resolvedTasks,
-    links,
-    minDate: overallMin ? formatDate(overallMin) : formatDate(new Date()),
-    maxDate: overallMax ? formatDate(overallMax) : formatDate(new Date()),
-    assignees: Array.from(assigneesSet),
-    phases: Array.from(phasesSet),
-    errors,
-  };
+    return {
+      title,
+      width: widthConfig,
+      colorBy,
+      calendar,
+      columns,
+      showResourceAllocation,
+      axisInterval,
+      tasks: resolvedTasks,
+      links,
+      minDate: overallMin ? formatDate(overallMin) : formatDate(new Date()),
+      maxDate: overallMax ? formatDate(overallMax) : formatDate(new Date()),
+      assignees: Array.from(assigneesSet),
+      phases: Array.from(phasesSet),
+      errors,
+    };
+  } catch (err: any) {
+    return {
+      title: 'Invalid Gantt Chart',
+      colorBy: 'phase',
+      calendar: 'calendar',
+      columns: ['name'],
+      showResourceAllocation: false,
+      axisInterval: 'auto',
+      tasks: [],
+      links: [],
+      minDate: formatDate(new Date()),
+      maxDate: formatDate(new Date()),
+      assignees: [],
+      phases: [],
+      errors: [`Error parsing Gantt specification: ${err?.message || 'Unknown error'}`],
+    };
+  }
 }

@@ -362,6 +362,53 @@ tasks:
       const model = parseGanttMarkdown(yaml);
       expect(model.errors.some((e) => e.includes('YAML Syntax Error'))).toBe(true);
     });
+
+    it('detects and reports empty task entries (dash with no fields) without crashing', () => {
+      // 1. tasks list with an empty dash
+      const yamlSingleEmpty = `
+tasks:
+  -
+`;
+      const model1 = parseGanttMarkdown(yamlSingleEmpty);
+      expect(model1.tasks).toHaveLength(0);
+      expect(model1.errors.some((e) => e.includes('Empty task definition at item 1'))).toBe(true);
+
+      // 2. top-level list with an empty dash
+      const yamlBareDash = `-`;
+      const model2 = parseGanttMarkdown(yamlBareDash);
+      expect(model2.tasks).toHaveLength(0);
+      expect(model2.errors.some((e) => e.includes('Empty task definition at item 1'))).toBe(true);
+
+      // 3. tasks list with a valid task followed by an empty dash
+      const yamlMixed = `
+tasks:
+  - id: t1
+    name: Task 1
+    duration: 3d
+  -
+`;
+      const model3 = parseGanttMarkdown(yamlMixed);
+      expect(model3.errors.some((e) => e.includes('Empty task definition at item 2'))).toBe(true);
+
+      // 4. parent task with an empty child dash
+      const yamlEmptyChild = `
+tasks:
+  - id: p1
+    name: Phase 1
+    children:
+      -
+`;
+      const model4 = parseGanttMarkdown(yamlEmptyChild);
+      expect(model4.errors.some((e) => e.includes('Empty task definition at item 1.1'))).toBe(true);
+
+      // 5. empty object item `- {}`
+      const yamlEmptyObj = `
+tasks:
+  - {}
+`;
+      const model5 = parseGanttMarkdown(yamlEmptyObj);
+      expect(model5.errors.some((e) => e.includes('Empty task definition at item 1'))).toBe(true);
+    });
   });
 
   describe('Summary Task Dependencies & Start Inheritance', () => {
