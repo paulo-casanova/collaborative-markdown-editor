@@ -9,11 +9,17 @@ import {
   AtSign,
   Hash,
   Lock,
+  MessageSquare,
+  GitPullRequest,
 } from 'lucide-react';
 import { useUIStore } from '../../stores/uiStore';
 import { fetchCurrentUser } from '../../api/auth';
 import { fetchUnreadMentionsCount } from '../../api/mentions';
 import { fetchMyCheckouts } from '../../api/checkouts';
+import {
+  fetchUnacknowledgedCommentsCount,
+  fetchUnacknowledgedSuggestionsCount,
+} from '../../api/reviews';
 import { FileTree } from '../navigation/FileTree';
 import { RecentDocuments } from '../navigation/RecentDocuments';
 
@@ -60,6 +66,22 @@ export const Sidebar: React.FC = () => {
     refetchInterval: 15000,
   });
   const unreadMentionsCount = unreadMentionsData?.unread_count || 0;
+
+  const { data: unackCommentsData } = useQuery({
+    queryKey: ['comments-count'],
+    queryFn: fetchUnacknowledgedCommentsCount,
+    staleTime: 5000,
+    refetchInterval: 15000,
+  });
+  const unackCommentsCount = unackCommentsData?.unacknowledged_count || 0;
+
+  const { data: unackSuggestionsData } = useQuery({
+    queryKey: ['suggestions-count'],
+    queryFn: fetchUnacknowledgedSuggestionsCount,
+    staleTime: 5000,
+    refetchInterval: 15000,
+  });
+  const unackSuggestionsCount = unackSuggestionsData?.unacknowledged_count || 0;
 
   const { data: rawMyCheckouts = [] } = useQuery({
     queryKey: ['my-checkouts'],
@@ -124,6 +146,52 @@ export const Sidebar: React.FC = () => {
               data-testid="sidebar-mentions-badge"
             >
               {unreadMentionsCount}
+            </span>
+          )}
+        </Link>
+
+        <Link
+          to="/comments"
+          className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+            isActive('/comments')
+              ? 'bg-cme-primary/10 text-cme-primary font-medium'
+              : 'text-cme-text-base hover:bg-cme-bg-hover'
+          }`}
+          data-testid="sidebar-comments-link"
+        >
+          <div className="flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-sky-500" />
+            <span>Comments</span>
+          </div>
+          {unackCommentsCount > 0 && (
+            <span
+              className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-sky-500 text-white"
+              data-testid="sidebar-comments-badge"
+            >
+              {unackCommentsCount}
+            </span>
+          )}
+        </Link>
+
+        <Link
+          to="/suggestions"
+          className={`flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+            isActive('/suggestions')
+              ? 'bg-cme-primary/10 text-cme-primary font-medium'
+              : 'text-cme-text-base hover:bg-cme-bg-hover'
+          }`}
+          data-testid="sidebar-suggestions-link"
+        >
+          <div className="flex items-center gap-2">
+            <GitPullRequest className="w-4 h-4 text-emerald-500" />
+            <span>Suggestions</span>
+          </div>
+          {unackSuggestionsCount > 0 && (
+            <span
+              className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-emerald-500 text-white"
+              data-testid="sidebar-suggestions-badge"
+            >
+              {unackSuggestionsCount}
             </span>
           )}
         </Link>

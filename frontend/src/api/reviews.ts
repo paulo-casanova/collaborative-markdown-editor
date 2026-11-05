@@ -68,6 +68,37 @@ export async function archiveComment(commentId: string): Promise<CommentRecord> 
   });
 }
 
+export async function fetchParticipatedComments(statusFilter = 'active'): Promise<CommentRecord[]> {
+  try {
+    const q = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
+    return await apiRequest<CommentRecord[]>(`/api/v1/comments${q}`);
+  } catch (err) {
+    console.warn('[ReviewAPI] fetchParticipatedComments failed:', err);
+    return [];
+  }
+}
+
+export async function fetchUnacknowledgedCommentsCount(): Promise<{ unacknowledged_count: number }> {
+  try {
+    return await apiRequest<{ unacknowledged_count: number }>('/api/v1/comments/count');
+  } catch (err) {
+    console.warn('[ReviewAPI] fetchUnacknowledgedCommentsCount failed:', err);
+    return { unacknowledged_count: 0 };
+  }
+}
+
+export async function acknowledgeComment(commentId: string): Promise<void> {
+  await apiRequest<void>(`/api/v1/comments/${commentId}/ack`, {
+    method: 'POST',
+  });
+}
+
+export async function acknowledgeAllComments(): Promise<{ status: string; count: number }> {
+  return await apiRequest<{ status: string; count: number }>('/api/v1/comments/ack-all', {
+    method: 'POST',
+  });
+}
+
 // =============================================================================
 // Suggestions API
 // =============================================================================
@@ -115,6 +146,37 @@ export async function rejectSuggestion(suggestionId: string): Promise<Suggestion
 
 export async function archiveSuggestion(suggestionId: string): Promise<SuggestionRecord> {
   return await apiRequest<SuggestionRecord>(`/api/v1/suggestions/${suggestionId}/archive`, {
+    method: 'POST',
+  });
+}
+
+export async function fetchAllSuggestions(statusFilter = 'active'): Promise<SuggestionRecord[]> {
+  try {
+    const q = statusFilter ? `?status=${encodeURIComponent(statusFilter)}` : '';
+    return await apiRequest<SuggestionRecord[]>(`/api/v1/suggestions${q}`);
+  } catch (err) {
+    console.warn('[ReviewAPI] fetchAllSuggestions failed:', err);
+    return [];
+  }
+}
+
+export async function fetchUnacknowledgedSuggestionsCount(): Promise<{ unacknowledged_count: number }> {
+  try {
+    return await apiRequest<{ unacknowledged_count: number }>('/api/v1/suggestions/count');
+  } catch (err) {
+    console.warn('[ReviewAPI] fetchUnacknowledgedSuggestionsCount failed:', err);
+    return { unacknowledged_count: 0 };
+  }
+}
+
+export async function acknowledgeSuggestion(suggestionId: string): Promise<void> {
+  await apiRequest<void>(`/api/v1/suggestions/${suggestionId}/ack`, {
+    method: 'POST',
+  });
+}
+
+export async function acknowledgeAllSuggestions(): Promise<{ status: string; count: number }> {
+  return await apiRequest<{ status: string; count: number }>('/api/v1/suggestions/ack-all', {
     method: 'POST',
   });
 }

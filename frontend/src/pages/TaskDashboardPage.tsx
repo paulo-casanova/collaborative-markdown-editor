@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   CheckSquare,
@@ -14,31 +14,54 @@ import {
   Inbox,
   Pencil,
   AtSign,
+  MessageSquare,
+  GitPullRequest,
 } from 'lucide-react';
-import { fetchAllTasks, updateTask, deleteTask } from '../api/reviews';
+import {
+  fetchAllTasks,
+  updateTask,
+  deleteTask,
+  fetchUnacknowledgedCommentsCount,
+  fetchUnacknowledgedSuggestionsCount,
+} from '../api/reviews';
 import { fetchCurrentUser } from '../api/auth';
 import { fetchUnreadMentionsCount } from '../api/mentions';
 import { TaskRecord } from '../review/types';
 import { useUIStore } from '../stores/uiStore';
 import { EditTaskModal } from '../components/review/EditTaskModal';
 import { MentionsView } from '../components/mentions/MentionsView';
+import { CommentsDashboardView } from '../components/review/CommentsDashboardView';
+import { SuggestionsDashboardView } from '../components/review/SuggestionsDashboardView';
 
 export interface TaskDashboardPageProps {
-  initialTab?: 'tasks' | 'mentions';
+  initialTab?: 'tasks' | 'mentions' | 'comments' | 'suggestions';
 }
 
 export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab }) => {
   const location = useLocation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { viewMode, setBreadcrumbs } = useUIStore();
   const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
 
-  const defaultTab = initialTab || (location.pathname === '/mentions' ? 'mentions' : 'tasks');
-  const [dashboardTab, setDashboardTab] = useState<'tasks' | 'mentions'>(defaultTab);
+  const defaultTab =
+    initialTab ||
+    (location.pathname === '/mentions'
+      ? 'mentions'
+      : location.pathname === '/comments'
+      ? 'comments'
+      : location.pathname === '/suggestions'
+      ? 'suggestions'
+      : 'tasks');
+  const [dashboardTab, setDashboardTab] = useState<'tasks' | 'mentions' | 'comments' | 'suggestions'>(defaultTab);
 
   useEffect(() => {
     if (location.pathname === '/mentions') {
       setDashboardTab('mentions');
+    } else if (location.pathname === '/comments') {
+      setDashboardTab('comments');
+    } else if (location.pathname === '/suggestions') {
+      setDashboardTab('suggestions');
     } else if (location.pathname === '/tasks' || location.pathname === '/') {
       if (!initialTab) {
         setDashboardTab('tasks');
@@ -53,6 +76,10 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
   useEffect(() => {
     if (dashboardTab === 'mentions') {
       setBreadcrumbs([{ label: 'Mentions Inbox', path: '/mentions', isCurrent: true }]);
+    } else if (dashboardTab === 'comments') {
+      setBreadcrumbs([{ label: 'Comments', path: '/comments', isCurrent: true }]);
+    } else if (dashboardTab === 'suggestions') {
+      setBreadcrumbs([{ label: 'Suggestions', path: '/suggestions', isCurrent: true }]);
     } else {
       setBreadcrumbs([{ label: 'Task Dashboard', path: '/tasks', isCurrent: true }]);
     }
@@ -72,6 +99,24 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
     refetchInterval: 15000,
   });
   const unreadMentionsCount = unreadMentionsData?.unread_count || 0;
+
+  // Fetch unacknowledged comments count for header tab badge
+  const { data: unackCommentsData } = useQuery({
+    queryKey: ['comments-count'],
+    queryFn: fetchUnacknowledgedCommentsCount,
+    staleTime: 5000,
+    refetchInterval: 15000,
+  });
+  const unackCommentsCount = unackCommentsData?.unacknowledged_count || 0;
+
+  // Fetch unacknowledged suggestions count for header tab badge
+  const { data: unackSuggestionsData } = useQuery({
+    queryKey: ['suggestions-count'],
+    queryFn: fetchUnacknowledgedSuggestionsCount,
+    staleTime: 5000,
+    refetchInterval: 15000,
+  });
+  const unackSuggestionsCount = unackSuggestionsData?.unacknowledged_count || 0;
 
   // Fetch all tasks
   const { data: tasks = [], isLoading } = useQuery({
@@ -222,30 +267,47 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
             <div className="p-2 rounded-xl bg-cme-primary/10 text-cme-primary">
               {dashboardTab === 'tasks' ? (
                 <CheckSquare className="w-6 h-6" />
-              ) : (
+              ) : dashboardTab === 'mentions' ? (
                 <AtSign className="w-6 h-6" />
+              ) : dashboardTab === 'comments' ? (
+                <MessageSquare className="w-6 h-6 text-sky-500" />
+              ) : (
+                <GitPullRequest className="w-6 h-6 text-emerald-500" />
               )}
             </div>
             <div>
               <h1 className="text-xl font-bold text-cme-text-base">
-                {dashboardTab === 'tasks' ? 'Task Dashboard' : 'Mentions Inbox'}
+                {dashboardTab === 'tasks'
+                  ? 'Task Dashboard'
+                  : dashboardTab === 'mentions'
+                  ? 'Mentions Inbox'
+                  : dashboardTab === 'comments'
+                  ? 'Comments'
+                  : 'Suggestions'}
               </h1>
               <p className="text-xs text-cme-text-muted mt-0.5">
                 {dashboardTab === 'tasks'
                   ? 'Centralized action items and review tasks across your workspaces'
-                  : 'Notifications and mentions addressed to you across documents'}
+                  : dashboardTab === 'mentions'
+                  ? 'Notifications and mentions addressed to you across documents'
+                  : dashboardTab === 'comments'
+                  ? 'Comment threads you participated in, ordered by last activity'
+                  : 'Inline edit suggestions across documents, ordered by date'}
               </p>
             </div>
           </div>
         </div>
 
-        {/* Top-level Section Switcher: Tasks vs Mentions */}
-        <div className="flex items-center gap-1.5 bg-cme-bg-surface p-1 rounded-xl border border-cme-border-base shadow-xs text-xs">
+        {/* Top-level Section Switcher: Tasks vs Mentions vs Comments vs Suggestions */}
+        <div className="flex items-center gap-1.5 bg-cme-bg-surface p-1 rounded-xl border border-cme-border-base shadow-xs text-xs overflow-x-auto">
           <button
             type="button"
             data-testid="dashboard-tab-tasks"
-            onClick={() => setDashboardTab('tasks')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+            onClick={() => {
+              setDashboardTab('tasks');
+              navigate('/tasks');
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
               dashboardTab === 'tasks'
                 ? 'bg-cme-primary text-white shadow-xs'
                 : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
@@ -269,8 +331,11 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
           <button
             type="button"
             data-testid="dashboard-tab-mentions"
-            onClick={() => setDashboardTab('mentions')}
-            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-colors cursor-pointer ${
+            onClick={() => {
+              setDashboardTab('mentions');
+              navigate('/mentions');
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
               dashboardTab === 'mentions'
                 ? 'bg-cme-primary text-white shadow-xs'
                 : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
@@ -290,11 +355,73 @@ export const TaskDashboardPage: React.FC<TaskDashboardPageProps> = ({ initialTab
               </span>
             )}
           </button>
+
+          <button
+            type="button"
+            data-testid="dashboard-tab-comments"
+            onClick={() => {
+              setDashboardTab('comments');
+              navigate('/comments');
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
+              dashboardTab === 'comments'
+                ? 'bg-cme-primary text-white shadow-xs'
+                : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+            }`}
+          >
+            <MessageSquare className="w-4 h-4 text-sky-500" />
+            <span>Comments</span>
+            {unackCommentsCount > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  dashboardTab === 'comments'
+                    ? 'bg-white text-sky-600'
+                    : 'bg-sky-500 text-white'
+                }`}
+                data-testid="dashboard-tab-comments-badge"
+              >
+                {unackCommentsCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
+            data-testid="dashboard-tab-suggestions"
+            onClick={() => {
+              setDashboardTab('suggestions');
+              navigate('/suggestions');
+            }}
+            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg font-medium transition-colors cursor-pointer whitespace-nowrap ${
+              dashboardTab === 'suggestions'
+                ? 'bg-cme-primary text-white shadow-xs'
+                : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+            }`}
+          >
+            <GitPullRequest className="w-4 h-4 text-emerald-500" />
+            <span>Suggestions</span>
+            {unackSuggestionsCount > 0 && (
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                  dashboardTab === 'suggestions'
+                    ? 'bg-white text-emerald-600'
+                    : 'bg-emerald-500 text-white'
+                }`}
+                data-testid="dashboard-tab-suggestions-badge"
+              >
+                {unackSuggestionsCount}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
       {dashboardTab === 'mentions' ? (
         <MentionsView />
+      ) : dashboardTab === 'comments' ? (
+        <CommentsDashboardView />
+      ) : dashboardTab === 'suggestions' ? (
+        <SuggestionsDashboardView />
       ) : (
         <>
           {/* Metrics Cards */}

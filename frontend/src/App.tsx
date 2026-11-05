@@ -39,6 +39,8 @@ export const App: React.FC = () => {
             <Route path="docs/*" element={<ReaderPage />} />
             <Route path="tasks" element={<TaskDashboardPage />} />
             <Route path="mentions" element={<TaskDashboardPage initialTab="mentions" />} />
+            <Route path="comments" element={<TaskDashboardPage initialTab="comments" />} />
+            <Route path="suggestions" element={<TaskDashboardPage initialTab="suggestions" />} />
             <Route path="tags" element={<TagsPage />} />
             <Route path="tags/:tag" element={<TagsPage />} />
             <Route path="checked-out" element={<CheckedOutPage />} />

@@ -48,6 +48,8 @@ struct AuthorInfo {
 struct CommentRecord {
     std::string id;
     std::string document_id;
+    std::string document_title{""};
+    std::string document_path{""};
     std::optional<std::string> parent_id;
     AuthorInfo author;
     std::string content;
@@ -55,6 +57,9 @@ struct CommentRecord {
     nlohmann::json anchor = nlohmann::json::object();
     std::string created_at;
     std::string updated_at;
+    std::string last_activity_at{""};
+    bool is_acknowledged{false};
+    std::optional<std::string> acknowledged_at;
     std::vector<CommentRecord> replies;
 
     [[nodiscard]] nlohmann::json to_json() const {
@@ -67,8 +72,15 @@ struct CommentRecord {
             {"status", status},
             {"anchor", anchor},
             {"created_at", created_at},
-            {"updated_at", updated_at}
+            {"updated_at", updated_at},
+            {"is_acknowledged", is_acknowledged},
+            {"acknowledged_at", acknowledged_at.has_value() ? nlohmann::json(acknowledged_at.value()) : nlohmann::json(nullptr)}
         };
+        if (!document_title.empty()) j["document_title"] = document_title;
+        if (!document_path.empty()) j["document_path"] = document_path;
+        if (!last_activity_at.empty()) j["last_activity_at"] = last_activity_at;
+        else j["last_activity_at"] = updated_at.empty() ? created_at : updated_at;
+
         if (!replies.empty()) {
             nlohmann::json arr = nlohmann::json::array();
             for (const auto& r : replies) {
@@ -97,6 +109,8 @@ struct CreateCommentRequest {
 struct SuggestionRecord {
     std::string id;
     std::string document_id;
+    std::string document_title{""};
+    std::string document_path{""};
     AuthorInfo author;
     std::string status{"PENDING"}; // "PENDING", "ACCEPTED", "REJECTED"
     std::string original_text;
@@ -104,9 +118,11 @@ struct SuggestionRecord {
     nlohmann::json anchor = nlohmann::json::object();
     std::string created_at;
     std::optional<std::string> resolved_at;
+    bool is_acknowledged{false};
+    std::optional<std::string> acknowledged_at;
 
     [[nodiscard]] nlohmann::json to_json() const {
-        return {
+        nlohmann::json j = {
             {"id", id},
             {"document_id", document_id},
             {"author", author.to_json()},
@@ -115,8 +131,13 @@ struct SuggestionRecord {
             {"suggested_text", suggested_text},
             {"anchor", anchor},
             {"created_at", created_at},
-            {"resolved_at", resolved_at.has_value() ? nlohmann::json(resolved_at.value()) : nlohmann::json(nullptr)}
+            {"resolved_at", resolved_at.has_value() ? nlohmann::json(resolved_at.value()) : nlohmann::json(nullptr)},
+            {"is_acknowledged", is_acknowledged},
+            {"acknowledged_at", acknowledged_at.has_value() ? nlohmann::json(acknowledged_at.value()) : nlohmann::json(nullptr)}
         };
+        if (!document_title.empty()) j["document_title"] = document_title;
+        if (!document_path.empty()) j["document_path"] = document_path;
+        return j;
     }
 };
 
@@ -206,11 +227,29 @@ public:
     Result<CommentRecord> update_comment_status(const std::string& comment_id, const auth::UserIdentity& user, const std::string& status);
     Result<CommentRecord> archive_comment(const std::string& comment_id, const auth::UserIdentity& user);
     Result<void> delete_comment(const std::string& comment_id, const auth::UserIdentity& user);
+    Result<std::vector<CommentRecord>> list_participated_comments(
+        const auth::UserIdentity& user,
+        const std::string& status_filter = "active"
+    );
+    Result<void> acknowledge_comment(
+        const std::string& comment_id,
+        const auth::UserIdentity& user
+    );
+    Result<int64_t> acknowledge_all_comments(
+        const auth::UserIdentity& user
+    );
+    Result<int64_t> get_unacknowledged_comments_count(
+        const auth::UserIdentity& user
+    );
 
     // =========================================================================
     // Suggestions
     // =========================================================================
     Result<std::vector<SuggestionRecord>> list_suggestions(const std::string& document_id, const auth::UserIdentity& user, const std::string& status_filter = "");
+    Result<std::vector<SuggestionRecord>> list_all_suggestions(
+        const auth::UserIdentity& user,
+        const std::string& status_filter = "active"
+    );
     Result<SuggestionRecord> get_suggestion(const std::string& suggestion_id, const auth::UserIdentity& user);
     Result<SuggestionRecord> create_suggestion(const std::string& document_id, const auth::UserIdentity& user, const CreateSuggestionRequest& req);
     Result<SuggestionRecord> accept_suggestion(
@@ -221,6 +260,16 @@ public:
     );
     Result<SuggestionRecord> reject_suggestion(const std::string& suggestion_id, const auth::UserIdentity& user);
     Result<SuggestionRecord> archive_suggestion(const std::string& suggestion_id, const auth::UserIdentity& user);
+    Result<void> acknowledge_suggestion(
+        const std::string& suggestion_id,
+        const auth::UserIdentity& user
+    );
+    Result<int64_t> acknowledge_all_suggestions(
+        const auth::UserIdentity& user
+    );
+    Result<int64_t> get_unacknowledged_suggestions_count(
+        const auth::UserIdentity& user
+    );
 
     // =========================================================================
     // Tasks

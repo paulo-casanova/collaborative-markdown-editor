@@ -20,7 +20,33 @@ ReviewService::ReviewService(
     std::shared_ptr<db::ConnectionPool> db_pool,
     std::shared_ptr<document::DocumentService> doc_service
 ) : db_pool_(std::move(db_pool)),
-    doc_service_(std::move(doc_service)) {}
+    doc_service_(std::move(doc_service)) {
+    if (db_pool_) {
+        try {
+            auto conn_res = db_pool_->acquire();
+            if (conn_res.has_value()) {
+                pqxx::work tx(conn_res->get());
+                tx.exec(
+                    "CREATE TABLE IF NOT EXISTS comment_user_acks ("
+                    "    comment_id UUID NOT NULL REFERENCES comments(id) ON DELETE CASCADE,"
+                    "    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+                    "    acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+                    "    PRIMARY KEY (comment_id, user_id)"
+                    ");"
+                    "CREATE INDEX IF NOT EXISTS idx_comment_user_acks_user ON comment_user_acks(user_id);"
+                    "CREATE TABLE IF NOT EXISTS suggestion_user_acks ("
+                    "    suggestion_id UUID NOT NULL REFERENCES suggestions(id) ON DELETE CASCADE,"
+                    "    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,"
+                    "    acknowledged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+                    "    PRIMARY KEY (suggestion_id, user_id)"
+                    ");"
+                    "CREATE INDEX IF NOT EXISTS idx_suggestion_user_acks_user ON suggestion_user_acks(user_id);"
+                );
+                tx.commit();
+            }
+        } catch (...) {}
+    }
+}
 
 Result<db::AccessLevel> ReviewService::check_doc_access(
     const std::string& document_id,
@@ -568,6 +594,228 @@ Result<void> ReviewService::delete_comment(
     }
 }
 
+Result<std::vector<CommentRecord>> ReviewService::list_participated_comments(
+    const auth::UserIdentity& user,
+    const std::string& status_filter
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    std::vector<CommentRecord> list;
+    try {
+        pqxx::work tx(conn_res->get());
+        std::string q =
+            "SELECT c.id::text, c.document_id::text, c.author_id::text, c.content, c.status, "
+            "       c.anchor::text, c.created_at::text, c.updated_at::text, "
+            "       u.username, u.display_name, u.avatar_color, "
+            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, ''), "
+            "       GREATEST(c.created_at, c.updated_at, COALESCE((SELECT MAX(r.created_at) FROM comments r WHERE r.parent_id = c.id), c.created_at))::text AS last_activity, "
+            "       ack.acknowledged_at::text, "
+            "       (ack.acknowledged_at IS NOT NULL) AS is_ack "
+            "FROM comments c "
+            "JOIN documents d ON c.document_id = d.id "
+            "JOIN users u ON c.author_id = u.id "
+            "LEFT JOIN comment_user_acks ack ON ack.comment_id = c.id AND ack.user_id = " + tx.quote(user.user_id) + "::uuid "
+            "WHERE c.parent_id IS NULL "
+            "  AND c.status != 'ARCHIVED' "
+            "  AND ( "
+            "      c.author_id = " + tx.quote(user.user_id) + "::uuid "
+            "      OR EXISTS (SELECT 1 FROM comments r WHERE r.parent_id = c.id AND r.author_id = " + tx.quote(user.user_id) + "::uuid) "
+            "  ) ";
+
+        if (status_filter == "open") {
+            q += "AND c.status = 'OPEN' ";
+        } else if (status_filter == "resolved" || status_filter == "closed") {
+            q += "AND c.status = 'RESOLVED' ";
+        } else if (status_filter == "acknowledged") {
+            q += "AND ack.acknowledged_at IS NOT NULL ";
+        } else if (status_filter == "all") {
+            // no extra filter
+        } else {
+            // "active" (default): open threads OR closed threads that are NOT yet ACKed by this user
+            q += "AND (c.status = 'OPEN' OR (c.status = 'RESOLVED' AND ack.acknowledged_at IS NULL)) ";
+        }
+
+        q += "ORDER BY last_activity DESC;";
+
+        auto rows = tx.exec(q);
+        std::vector<std::string> parent_ids;
+        for (const auto& row : rows) {
+            std::string comment_id = row[0].as<std::string>();
+            parent_ids.push_back(comment_id);
+
+            list.push_back(CommentRecord{
+                .id = comment_id,
+                .document_id = row[1].as<std::string>(),
+                .document_title = row[11].as<std::string>(),
+                .document_path = row[12].as<std::string>(),
+                .parent_id = std::nullopt,
+                .author = AuthorInfo{
+                    .id = row[2].as<std::string>(),
+                    .username = row[8].as<std::string>(),
+                    .display_name = row[9].as<std::string>(),
+                    .avatar_color = row[10].as<std::string>()
+                },
+                .content = row[3].as<std::string>(),
+                .status = row[4].as<std::string>(),
+                .anchor = parse_json_safe(row[5].as<std::string>()),
+                .created_at = row[6].as<std::string>(),
+                .updated_at = row[7].as<std::string>(),
+                .last_activity_at = row[13].as<std::string>(),
+                .is_acknowledged = row[15].as<bool>(),
+                .acknowledged_at = row[14].is_null() ? std::nullopt : std::optional<std::string>(row[14].as<std::string>()),
+                .replies = {}
+            });
+        }
+
+        if (!parent_ids.empty()) {
+            std::string parent_in;
+            for (size_t i = 0; i < parent_ids.size(); ++i) {
+                if (i > 0) parent_in += ", ";
+                parent_in += tx.quote(parent_ids[i]) + "::uuid";
+            }
+            auto reply_rows = tx.exec(
+                "SELECT r.id::text, r.document_id::text, r.parent_id::text, r.author_id::text, "
+                "       r.content, r.status, r.anchor::text, r.created_at::text, r.updated_at::text, "
+                "       u.username, u.display_name, u.avatar_color "
+                "FROM comments r "
+                "JOIN users u ON r.author_id = u.id "
+                "WHERE r.parent_id IN (" + parent_in + ") "
+                "  AND r.status != 'ARCHIVED' "
+                "ORDER BY r.created_at ASC;"
+            );
+
+            std::unordered_map<std::string, std::vector<CommentRecord>> replies_map;
+            for (const auto& rrow : reply_rows) {
+                std::string p_id = rrow[2].as<std::string>();
+                replies_map[p_id].push_back(CommentRecord{
+                    .id = rrow[0].as<std::string>(),
+                    .document_id = rrow[1].as<std::string>(),
+                    .document_title = "",
+                    .document_path = "",
+                    .parent_id = p_id,
+                    .author = AuthorInfo{
+                        .id = rrow[3].as<std::string>(),
+                        .username = rrow[9].as<std::string>(),
+                        .display_name = rrow[10].as<std::string>(),
+                        .avatar_color = rrow[11].as<std::string>()
+                    },
+                    .content = rrow[4].as<std::string>(),
+                    .status = rrow[5].as<std::string>(),
+                    .anchor = parse_json_safe(rrow[6].as<std::string>()),
+                    .created_at = rrow[7].as<std::string>(),
+                    .updated_at = rrow[8].as<std::string>(),
+                    .last_activity_at = rrow[7].as<std::string>(),
+                    .is_acknowledged = false,
+                    .acknowledged_at = std::nullopt,
+                    .replies = {}
+                });
+            }
+
+            for (auto& item : list) {
+                auto it = replies_map.find(item.id);
+                if (it != replies_map.end()) {
+                    item.replies = std::move(it->second);
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::list_participated_comments failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    return list;
+}
+
+Result<void> ReviewService::acknowledge_comment(
+    const std::string& comment_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto chk = tx.exec_params("SELECT id FROM comments WHERE id = $1::uuid;", comment_id);
+        if (chk.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        tx.exec_params(
+            "INSERT INTO comment_user_acks (comment_id, user_id, acknowledged_at) "
+            "VALUES ($1::uuid, $2::uuid, NOW()) "
+            "ON CONFLICT (comment_id, user_id) DO UPDATE SET acknowledged_at = NOW();",
+            comment_id, user.user_id
+        );
+        tx.commit();
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::acknowledge_comment failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<int64_t> ReviewService::acknowledge_all_comments(
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto res = tx.exec_params(
+            "INSERT INTO comment_user_acks (comment_id, user_id, acknowledged_at) "
+            "SELECT c.id, $1::uuid, NOW() "
+            "FROM comments c "
+            "WHERE c.parent_id IS NULL "
+            "  AND c.status = 'RESOLVED' "
+            "  AND ( "
+            "      c.author_id = $1::uuid "
+            "      OR EXISTS (SELECT 1 FROM comments r WHERE r.parent_id = c.id AND r.author_id = $1::uuid) "
+            "  ) "
+            "ON CONFLICT (comment_id, user_id) DO UPDATE SET acknowledged_at = NOW();",
+            user.user_id
+        );
+        tx.commit();
+        return res.affected_rows();
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::acknowledge_all_comments failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<int64_t> ReviewService::get_unacknowledged_comments_count(
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto res = tx.exec_params(
+            "SELECT COUNT(*) "
+            "FROM comments c "
+            "LEFT JOIN comment_user_acks ack ON ack.comment_id = c.id AND ack.user_id = $1::uuid "
+            "WHERE c.parent_id IS NULL "
+            "  AND c.status = 'RESOLVED' "
+            "  AND ack.acknowledged_at IS NULL "
+            "  AND ( "
+            "      c.author_id = $1::uuid "
+            "      OR EXISTS (SELECT 1 FROM comments r WHERE r.parent_id = c.id AND r.author_id = $1::uuid) "
+            "  );",
+            user.user_id
+        );
+        return res[0][0].as<int64_t>();
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::get_unacknowledged_comments_count failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
 // =============================================================================
 // Suggestions
 // =============================================================================
@@ -1050,6 +1298,157 @@ Result<SuggestionRecord> ReviewService::archive_suggestion(
         return get_suggestion(suggestion_id, user);
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] ReviewService::archive_suggestion failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<std::vector<SuggestionRecord>> ReviewService::list_all_suggestions(
+    const auth::UserIdentity& user,
+    const std::string& status_filter
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    std::vector<SuggestionRecord> list;
+    try {
+        pqxx::work tx(conn_res->get());
+        std::string q =
+            "SELECT s.id::text, s.document_id::text, s.author_id::text, s.status, "
+            "       s.original_text, s.suggested_text, s.anchor::text, "
+            "       s.created_at::text, s.resolved_at::text, "
+            "       u.username, u.display_name, u.avatar_color, "
+            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, ''), "
+            "       ack.acknowledged_at::text, "
+            "       (ack.acknowledged_at IS NOT NULL) AS is_ack "
+            "FROM suggestions s "
+            "JOIN documents d ON s.document_id = d.id "
+            "JOIN users u ON s.author_id = u.id "
+            "LEFT JOIN suggestion_user_acks ack ON ack.suggestion_id = s.id AND ack.user_id = " + tx.quote(user.user_id) + "::uuid "
+            "WHERE s.status != 'ARCHIVED' ";
+
+        if (status_filter == "pending") {
+            q += "AND s.status = 'PENDING' ";
+        } else if (status_filter == "accepted") {
+            q += "AND s.status = 'ACCEPTED' ";
+        } else if (status_filter == "rejected") {
+            q += "AND s.status = 'REJECTED' ";
+        } else if (status_filter == "acknowledged") {
+            q += "AND ack.acknowledged_at IS NOT NULL ";
+        } else if (status_filter == "all") {
+            // no extra filter
+        } else {
+            // "active" (default): pending suggestions OR (accepted/rejected suggestions that are NOT yet ACKed by this user)
+            q += "AND (s.status = 'PENDING' OR (s.status IN ('ACCEPTED', 'REJECTED') AND ack.acknowledged_at IS NULL)) ";
+        }
+
+        q += "ORDER BY s.created_at DESC;";
+
+        auto rows = tx.exec(q);
+        for (const auto& row : rows) {
+            list.push_back(SuggestionRecord{
+                .id = row[0].as<std::string>(),
+                .document_id = row[1].as<std::string>(),
+                .document_title = row[12].as<std::string>(),
+                .document_path = row[13].as<std::string>(),
+                .author = AuthorInfo{
+                    .id = row[2].as<std::string>(),
+                    .username = row[9].as<std::string>(),
+                    .display_name = row[10].as<std::string>(),
+                    .avatar_color = row[11].as<std::string>()
+                },
+                .status = row[3].as<std::string>(),
+                .original_text = row[4].as<std::string>(),
+                .suggested_text = row[5].as<std::string>(),
+                .anchor = parse_json_safe(row[6].as<std::string>()),
+                .created_at = row[7].as<std::string>(),
+                .resolved_at = row[8].is_null() ? std::nullopt : std::optional<std::string>(row[8].as<std::string>()),
+                .is_acknowledged = row[15].as<bool>(),
+                .acknowledged_at = row[14].is_null() ? std::nullopt : std::optional<std::string>(row[14].as<std::string>())
+            });
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::list_all_suggestions failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    return list;
+}
+
+Result<void> ReviewService::acknowledge_suggestion(
+    const std::string& suggestion_id,
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto chk = tx.exec_params("SELECT id FROM suggestions WHERE id = $1::uuid;", suggestion_id);
+        if (chk.empty()) {
+            return std::unexpected(ErrorCode::NotFound);
+        }
+
+        tx.exec_params(
+            "INSERT INTO suggestion_user_acks (suggestion_id, user_id, acknowledged_at) "
+            "VALUES ($1::uuid, $2::uuid, NOW()) "
+            "ON CONFLICT (suggestion_id, user_id) DO UPDATE SET acknowledged_at = NOW();",
+            suggestion_id, user.user_id
+        );
+        tx.commit();
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::acknowledge_suggestion failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<int64_t> ReviewService::acknowledge_all_suggestions(
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto res = tx.exec_params(
+            "INSERT INTO suggestion_user_acks (suggestion_id, user_id, acknowledged_at) "
+            "SELECT s.id, $1::uuid, NOW() "
+            "FROM suggestions s "
+            "WHERE s.status IN ('ACCEPTED', 'REJECTED') "
+            "ON CONFLICT (suggestion_id, user_id) DO UPDATE SET acknowledged_at = NOW();",
+            user.user_id
+        );
+        tx.commit();
+        return res.affected_rows();
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::acknowledge_all_suggestions failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<int64_t> ReviewService::get_unacknowledged_suggestions_count(
+    const auth::UserIdentity& user
+) {
+    if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) return std::unexpected(conn_res.error());
+
+    try {
+        pqxx::work tx(conn_res->get());
+        auto res = tx.exec_params(
+            "SELECT COUNT(*) "
+            "FROM suggestions s "
+            "LEFT JOIN suggestion_user_acks ack ON ack.suggestion_id = s.id AND ack.user_id = $1::uuid "
+            "WHERE s.status IN ('ACCEPTED', 'REJECTED') "
+            "  AND ack.acknowledged_at IS NULL;",
+            user.user_id
+        );
+        return res[0][0].as<int64_t>();
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] ReviewService::get_unacknowledged_suggestions_count failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
 }

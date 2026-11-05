@@ -73,6 +73,8 @@ export interface ReconciledAnchorResult {
 export interface CommentRecord {
   id: string;
   document_id: string;
+  document_title?: string;
+  document_path?: string;
   parent_id: string | null;
   author: AuthorInfo;
   content: string;
@@ -80,12 +82,17 @@ export interface CommentRecord {
   anchor: DualAnchor | any;
   created_at: string;
   updated_at: string;
+  last_activity_at?: string;
+  is_acknowledged?: boolean;
+  acknowledged_at?: string | null;
   replies?: CommentRecord[];
 }
 
 export interface SuggestionRecord {
   id: string;
   document_id: string;
+  document_title?: string;
+  document_path?: string;
   author: AuthorInfo;
   status: 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'ARCHIVED' | 'REVISION_DIFF';
   original_text: string;
@@ -93,6 +100,8 @@ export interface SuggestionRecord {
   anchor: DualAnchor | any;
   created_at: string;
   resolved_at?: string | null;
+  is_acknowledged?: boolean;
+  acknowledged_at?: string | null;
 }
 
 export interface TaskRecord {

@@ -204,6 +204,7 @@ int main() {
     srv_cfg.server.port = 18095;
     srv_cfg.storage.root_path = test_storage.string();
     srv_cfg.database.url = db_url;
+    srv_cfg.database.lease_enabled = false;
     srv_cfg.authz.admin_provider = "file";
     srv_cfg.authz.admin_file_path = admin_cfg.string();
 
@@ -674,6 +675,152 @@ int main() {
         }
         assert(!found);
         std::cout << "  [PASS] list_suggestions correctly excludes ARCHIVED suggestions.\n";
+    }
+
+    // =========================================================================
+    // 8.6 Participated Comments & Suggestions Dashboards with User Acknowledgements
+    // =========================================================================
+    std::cout << "\n[STEP 8.6] Testing Participated Comments & Suggestions Dashboards & User Acknowledgements...\n";
+    {
+        // 1. Create a fresh thread by Alice and reply by Bob
+        auto r_c = http_curl("POST", base_url + "/api/v1/documents/" + doc_id + "/comments",
+                             {"Authorization: Bearer " + alice_token, "Content-Type: application/json"},
+                             R"({"content": "Main thread topic by Alice"})");
+        assert(r_c.status_code == 201);
+        auto c_json = nlohmann::json::parse(r_c.body);
+        std::string thread_id = c_json["id"];
+
+        auto r_rep = http_curl("POST", base_url + "/api/v1/comments/" + thread_id + "/replies",
+                               {"Authorization: Bearer " + bob_token, "Content-Type: application/json"},
+                               R"({"content": "Reply by Bob on Alice thread"})");
+        assert(r_rep.status_code == 201);
+
+        // 2. GET /api/v1/comments for Alice: must see the thread with Bob's reply
+        auto r_alice_comments = http_curl("GET", base_url + "/api/v1/comments?status=active",
+                                          {"Authorization: Bearer " + alice_token});
+        assert(r_alice_comments.status_code == 200);
+        auto alice_threads = nlohmann::json::parse(r_alice_comments.body);
+        assert(!alice_threads.empty());
+        bool found_thread = false;
+        for (const auto& th : alice_threads) {
+            if (th["id"] == thread_id) {
+                found_thread = true;
+                assert(th["document_title"] == "Review Engine Specifications");
+                assert(th["replies"].size() >= 1);
+                assert(th["is_acknowledged"] == false);
+            }
+        }
+        assert(found_thread);
+
+        // 3. GET /api/v1/comments for Bob: Bob also participated in this thread
+        auto r_bob_comments = http_curl("GET", base_url + "/api/v1/comments?status=active",
+                                        {"Authorization: Bearer " + bob_token});
+        assert(r_bob_comments.status_code == 200);
+        auto bob_threads = nlohmann::json::parse(r_bob_comments.body);
+        bool bob_found = false;
+        for (const auto& th : bob_threads) {
+            if (th["id"] == thread_id) bob_found = true;
+        }
+        assert(bob_found);
+
+        // 4. Resolve the thread: status -> "RESOLVED"
+        auto r_res = http_curl("PATCH", base_url + "/api/v1/comments/" + thread_id + "/status",
+                               {"Authorization: Bearer " + alice_token, "Content-Type: application/json"},
+                               R"({"status": "RESOLVED"})");
+        assert(r_res.status_code == 200);
+
+        // 5. In active list, closed thread STILL appears because it is NOT yet ACKed by Alice
+        auto r_alice_after_res = http_curl("GET", base_url + "/api/v1/comments?status=active",
+                                           {"Authorization: Bearer " + alice_token});
+        auto alice_threads2 = nlohmann::json::parse(r_alice_after_res.body);
+        bool found_unack_closed = false;
+        for (const auto& th : alice_threads2) {
+            if (th["id"] == thread_id && th["status"] == "RESOLVED") {
+                found_unack_closed = true;
+            }
+        }
+        assert(found_unack_closed);
+
+        // Count of unacknowledged closed comments for Alice is >= 1
+        auto r_count = http_curl("GET", base_url + "/api/v1/comments/count",
+                                 {"Authorization: Bearer " + alice_token});
+        assert(r_count.status_code == 200);
+        auto cnt_json = nlohmann::json::parse(r_count.body);
+        assert(cnt_json["unacknowledged_count"].get<int>() >= 1);
+
+        // 6. Alice ACKs the comment thread
+        auto r_ack = http_curl("POST", base_url + "/api/v1/comments/" + thread_id + "/ack",
+                               {"Authorization: Bearer " + alice_token});
+        assert(r_ack.status_code == 200);
+
+        // 7. In active list, thread no longer appears for Alice
+        auto r_alice_after_ack = http_curl("GET", base_url + "/api/v1/comments?status=active",
+                                           {"Authorization: Bearer " + alice_token});
+        auto alice_threads3 = nlohmann::json::parse(r_alice_after_ack.body);
+        for (const auto& th : alice_threads3) {
+            assert(th["id"] != thread_id); // closed and ACKed, should not appear in active
+        }
+
+        // Thread DOES appear in "all" or "acknowledged" list with is_acknowledged = true
+        auto r_alice_all = http_curl("GET", base_url + "/api/v1/comments?status=all",
+                                     {"Authorization: Bearer " + alice_token});
+        auto alice_threads_all = nlohmann::json::parse(r_alice_all.body);
+        for (const auto& th : alice_threads_all) {
+            if (th["id"] == thread_id) {
+                assert(th["is_acknowledged"] == true);
+            }
+        }
+
+        // Bob hasn't ACKed it yet, so it STILL appears in Bob's active list!
+        auto r_bob_active = http_curl("GET", base_url + "/api/v1/comments?status=active",
+                                      {"Authorization: Bearer " + bob_token});
+        auto bob_threads_active = nlohmann::json::parse(r_bob_active.body);
+        bool bob_still_sees = false;
+        for (const auto& th : bob_threads_active) {
+            if (th["id"] == thread_id) bob_still_sees = true;
+        }
+        assert(bob_still_sees);
+
+        // Bob can ACK all
+        auto r_bob_ackall = http_curl("POST", base_url + "/api/v1/comments/ack-all",
+                                      {"Authorization: Bearer " + bob_token});
+        assert(r_bob_ackall.status_code == 200);
+        auto r_bob_after_ackall = http_curl("GET", base_url + "/api/v1/comments?status=active",
+                                            {"Authorization: Bearer " + bob_token});
+        auto bob_threads_after = nlohmann::json::parse(r_bob_after_ackall.body);
+        for (const auto& th : bob_threads_after) {
+            assert(th["id"] != thread_id);
+        }
+
+        std::cout << "  [PASS] Participated comments dashboard, order by activity, and user ACK verified.\n";
+
+        // 8. Testing Suggestions Dashboard & User ACK
+        auto r_suggs = http_curl("GET", base_url + "/api/v1/suggestions?status=all",
+                                 {"Authorization: Bearer " + alice_token});
+        assert(r_suggs.status_code == 200);
+        auto suggs_all = nlohmann::json::parse(r_suggs.body);
+        assert(!suggs_all.empty());
+        assert(suggs_all[0]["document_title"] == "Review Engine Specifications");
+
+        // ACK a suggestion
+        std::string sug_id = suggs_all[0]["id"];
+        auto r_sug_ack = http_curl("POST", base_url + "/api/v1/suggestions/" + sug_id + "/ack",
+                                   {"Authorization: Bearer " + alice_token});
+        assert(r_sug_ack.status_code == 200);
+
+        // Suggestion ack-all
+        auto r_sug_ackall = http_curl("POST", base_url + "/api/v1/suggestions/ack-all",
+                                      {"Authorization: Bearer " + alice_token});
+        assert(r_sug_ackall.status_code == 200);
+
+        // Unacknowledged count should now be 0
+        auto r_sug_cnt = http_curl("GET", base_url + "/api/v1/suggestions/count",
+                                   {"Authorization: Bearer " + alice_token});
+        assert(r_sug_cnt.status_code == 200);
+        auto sug_cnt_json = nlohmann::json::parse(r_sug_cnt.body);
+        assert(sug_cnt_json["unacknowledged_count"].get<int>() == 0);
+
+        std::cout << "  [PASS] Suggestions dashboard and user ACK verified.\n";
     }
 
     // =========================================================================

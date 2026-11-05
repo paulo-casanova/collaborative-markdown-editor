@@ -4832,6 +4832,146 @@ Result<void> Server::start() {
     });
 
     // =========================================================================
+    // Participated Comments REST Endpoints
+    // =========================================================================
+
+    // GET /api/v1/comments (Centralized Participated Comments Dashboard)
+    app.get("/api/v1/comments", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string status = std::string(req->getQuery("status"));
+        if (status.empty()) status = "active";
+
+        auto list_res = review_service_->list_participated_comments(*user, status);
+        if (!list_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list comments"}});
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& c : list_res.value()) {
+            out.push_back(c.to_json());
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    // GET /api/v1/comments/count (Unacknowledged closed comments count)
+    app.get("/api/v1/comments/count", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        auto count_res = review_service_->get_unacknowledged_comments_count(*user);
+        if (!count_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to get unacknowledged comments count"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"unacknowledged_count", count_res.value()}});
+    });
+
+    // POST /api/v1/comments/ack-all
+    app.post("/api/v1/comments/ack-all", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        auto ack_res = review_service_->acknowledge_all_comments(*user);
+        if (!ack_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to acknowledge comments"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "acknowledged"}, {"count", ack_res.value()}});
+    });
+
+    // POST /api/v1/comments/:id/ack and PATCH /api/v1/comments/:id/ack
+    auto handle_ack_comment = [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        std::string comment_id = url_decode(req->getParameter(0));
+        auto ack_res = review_service_->acknowledge_comment(comment_id, *user);
+        if (!ack_res.has_value()) {
+            if (ack_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Comment not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to acknowledge comment"}});
+            }
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "acknowledged"}});
+    };
+    app.post("/api/v1/comments/:id/ack", handle_ack_comment);
+    app.patch("/api/v1/comments/:id/ack", handle_ack_comment);
+
+    // =========================================================================
+    // Suggestions Dashboard REST Endpoints
+    // =========================================================================
+
+    // GET /api/v1/suggestions (Centralized Suggestions Dashboard)
+    app.get("/api/v1/suggestions", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        std::string status = std::string(req->getQuery("status"));
+        if (status.empty()) status = "active";
+
+        auto list_res = review_service_->list_all_suggestions(*user, status);
+        if (!list_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to list suggestions"}});
+            return;
+        }
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& s : list_res.value()) {
+            out.push_back(s.to_json());
+        }
+        send_json(res, "200 OK", out);
+    });
+
+    // GET /api/v1/suggestions/count (Unacknowledged suggestions count)
+    app.get("/api/v1/suggestions/count", [this, authenticate_user](auto *res, auto *req) {
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+        auto count_res = review_service_->get_unacknowledged_suggestions_count(*user);
+        if (!count_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to get unacknowledged suggestions count"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"unacknowledged_count", count_res.value()}});
+    });
+
+    // POST /api/v1/suggestions/ack-all
+    app.post("/api/v1/suggestions/ack-all", [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        auto ack_res = review_service_->acknowledge_all_suggestions(*user);
+        if (!ack_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to acknowledge suggestions"}});
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "acknowledged"}, {"count", ack_res.value()}});
+    });
+
+    // POST /api/v1/suggestions/:id/ack and PATCH /api/v1/suggestions/:id/ack
+    auto handle_ack_suggestion = [this, authenticate_user, check_barrier](auto *res, auto *req) {
+        if (check_barrier(res)) return;
+        auto user = authenticate_user(req, res);
+        if (!user) return;
+
+        std::string suggestion_id = url_decode(req->getParameter(0));
+        auto ack_res = review_service_->acknowledge_suggestion(suggestion_id, *user);
+        if (!ack_res.has_value()) {
+            if (ack_res.error() == ErrorCode::NotFound) {
+                send_json(res, "404 Not Found", {{"error", "Suggestion not found"}});
+            } else {
+                send_json(res, "500 Internal Server Error", {{"error", "Failed to acknowledge suggestion"}});
+            }
+            return;
+        }
+        send_json(res, "200 OK", {{"status", "acknowledged"}});
+    };
+    app.post("/api/v1/suggestions/:id/ack", handle_ack_suggestion);
+    app.patch("/api/v1/suggestions/:id/ack", handle_ack_suggestion);
+
+    // =========================================================================
     // Document Mentions REST Endpoints
     // =========================================================================
 
