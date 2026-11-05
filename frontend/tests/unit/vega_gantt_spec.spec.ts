@@ -7,6 +7,8 @@ import {
   getAxisTicks,
   copyGanttAsPng,
   computeResourceIntervals,
+  calculateTimelineWidth,
+  renderVegaGantt,
 } from '../../src/components/editor/utils/vegaGanttTemplate';
 
 describe('Vega Gantt Template Compiler', () => {
@@ -292,5 +294,197 @@ tasks:
     expect(intervals[0].allocationText).toBe('1');
     expect(intervals[0].taskNames).toContain('Task 1');
     expect(intervals[0].taskNames).toContain('Task 2');
+  });
+
+  it('calculates timeline width dynamically or from user configuration', () => {
+    const yamlFixed = `
+width: 1500
+tasks:
+  - id: t1
+    start: 2026-12-01
+    duration: 10d
+`;
+    const modelFixed = parseGanttMarkdown(yamlFixed);
+    expect(calculateTimelineWidth(modelFixed, 800, 300)).toBe(1500);
+
+    const yamlAuto = `
+width: auto
+tasks:
+  - id: t1
+    start: 2026-12-01
+    duration: 60d
+`;
+    const modelAuto = parseGanttMarkdown(yamlAuto);
+    // 60 days * 25px/day = 1500px
+    const autoWidth = calculateTimelineWidth(modelAuto, 800, 300);
+    expect(autoWidth).toBeGreaterThanOrEqual(1200);
+
+    const yamlDefault = `
+tasks:
+  - id: t1
+    start: 2026-12-01
+    duration: 10d
+`;
+    const modelDefault = parseGanttMarkdown(yamlDefault);
+    // When container width is 900 and table is 300, fits the reading column
+    expect(calculateTimelineWidth(modelDefault, 900, 300)).toBe(560);
+    // When no container width is provided, defaults to 600
+    expect(calculateTimelineWidth(modelDefault, undefined, 300)).toBe(600);
+  });
+
+  it('compiles standalone table spec and standalone timeline spec', async () => {
+    const yaml = `
+columns: [start, end, duration, progress]
+resource-allocation: yes
+tasks:
+  - id: t1
+    name: Architecture Audit
+    start: 2026-12-01
+    duration: 5d
+    assignee: @pasc
+    progress: 50%
+`;
+    const model = parseGanttMarkdown(yaml);
+
+    // 1. Standalone Table Spec
+    const tableSpec = buildVegaGanttSpec(model, { isDark: false, mode: 'table' });
+    expect(tableSpec.scales).toHaveLength(0);
+    expect(tableSpec.axes).toHaveLength(0);
+    expect(tableSpec.data.some((d: any) => d.name === 'tasks')).toBe(true);
+    expect(tableSpec.data.some((d: any) => d.name === 'resourceRows')).toBe(true);
+
+    const tableRuntime = vega.parse(tableSpec);
+    const tableView = new vega.View(tableRuntime, { renderer: 'none' });
+    await tableView.runAsync();
+    const tableSvg = await tableView.toSVG();
+    expect(tableSvg).toContain('Architecture');
+    expect(tableSvg).toContain('RESOURCE ALLOCATION');
+    expect(tableSvg).toContain('@pasc');
+
+    // 2. Standalone Timeline Spec
+    const timelineSpec = buildVegaGanttSpec(model, {
+      isDark: false,
+      mode: 'timeline',
+      timelineWidth: 1200,
+    });
+    expect(timelineSpec.width).toBe(1200);
+    expect(timelineSpec.scales.some((s: any) => s.name === 'timeScale')).toBe(true);
+    expect(timelineSpec.axes.some((a: any) => a.scale === 'timeScale')).toBe(true);
+
+    const timelineRuntime = vega.parse(timelineSpec);
+    const timelineView = new vega.View(timelineRuntime, { renderer: 'none' });
+    await timelineView.runAsync();
+    const timelineSvg = await timelineView.toSVG();
+    expect(timelineSvg).toContain('1'); // allocation block count
+  });
+
+  it('renders split frozen table and scrollable timeline with renderVegaGantt', async () => {
+    const yaml = `
+width: 1400
+tasks:
+  - id: t1
+    name: Backend Service
+    start: 2026-12-01
+    duration: 5d
+    assignee: @pasc
+`;
+    const model = parseGanttMarkdown(yaml);
+
+    // Mock minimal DOM container & elements for Node test environment
+    const originalDoc = (globalThis as any).document;
+    const createMockElement = (tag: string) => {
+      const el: any = {
+        tagName: tag.toUpperCase(),
+        className: '',
+        style: {},
+        children: [] as any[],
+        classList: {
+          add: vi.fn((...cls: string[]) => {
+            el.className = (el.className + ' ' + cls.join(' ')).trim();
+          }),
+          remove: vi.fn((...cls: string[]) => {
+            const classes = el.className.split(/\s+/);
+            el.className = classes.filter((c: string) => !cls.includes(c)).join(' ');
+          }),
+        },
+        appendChild: vi.fn((child: any) => {
+          el.children.push(child);
+          return child;
+        }),
+        addEventListener: vi.fn(),
+        querySelector: vi.fn((sel: string) => {
+          const cls = sel.replace('.', '');
+          const search = (node: any): any => {
+            if (node.className && node.className.includes(cls)) return node;
+            for (const child of node.children || []) {
+              const found = search(child);
+              if (found) return found;
+            }
+            return null;
+          };
+          return search(el);
+        }),
+      };
+      return el;
+    };
+
+    const container = createMockElement('div');
+    container.clientWidth = 1000;
+
+    (globalThis as any).document = {
+      createElement: vi.fn((tag: string) => createMockElement(tag)),
+      body: {
+        appendChild: vi.fn(),
+        removeChild: vi.fn(),
+      },
+    };
+
+    // Mock vega-embed to avoid browser Canvas requirement in Node
+    const mockTableView = {
+      addSignalListener: vi.fn(),
+      signal: vi.fn(() => ({ runAsync: vi.fn() })),
+      finalize: vi.fn(),
+    };
+    const mockTimelineView = {
+      addSignalListener: vi.fn(),
+      signal: vi.fn(() => ({ runAsync: vi.fn() })),
+      finalize: vi.fn(),
+      data: vi.fn(),
+    };
+    vi.doMock('vega-embed', () => ({
+      default: vi.fn(async (target: any) => {
+        if (target.className?.includes('gantt-table-pane')) {
+          return { view: mockTableView };
+        }
+        return { view: mockTimelineView };
+      }),
+    }));
+
+    try {
+      const res = await renderVegaGantt(container as any, model, false);
+      expect(container.querySelector('.gantt-split-wrapper')).not.toBeNull();
+      expect(container.querySelector('.gantt-table-pane')).not.toBeNull();
+      expect(container.querySelector('.gantt-timeline-pane')).not.toBeNull();
+
+      // Verify timeline pane has overflow-x-auto
+      const timelinePane = container.querySelector('.gantt-timeline-pane');
+      expect(timelinePane.className).toContain('overflow-x-auto');
+
+      // Verify signal listeners were wired between table and timeline
+      expect(mockTableView.addSignalListener).toHaveBeenCalledWith('rowHover', expect.any(Function));
+      expect(mockTimelineView.addSignalListener).toHaveBeenCalledWith('rowHover', expect.any(Function));
+
+      // Verify res.view exports unified toSVG
+      const unifiedSvg = await res.view.toSVG();
+      expect(unifiedSvg).toBeDefined();
+      expect(unifiedSvg).toContain('Backend');
+
+      res.finalize();
+      expect(mockTableView.finalize).toHaveBeenCalled();
+      expect(mockTimelineView.finalize).toHaveBeenCalled();
+    } finally {
+      (globalThis as any).document = originalDoc;
+      vi.doUnmock('vega-embed');
+    }
   });
 });

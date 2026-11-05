@@ -362,7 +362,7 @@ export class GanttBlockWidget extends WidgetType {
     // Chart container
     const chartWrapper = document.createElement('div');
     chartWrapper.className =
-      'gantt-chart-container p-3 flex items-start justify-start overflow-x-auto min-h-[100px] cursor-pointer bg-transparent';
+      'gantt-chart-container p-3 flex items-start justify-start w-full overflow-hidden min-h-[100px] cursor-pointer bg-transparent';
     card.appendChild(chartWrapper);
 
     container.appendChild(card);

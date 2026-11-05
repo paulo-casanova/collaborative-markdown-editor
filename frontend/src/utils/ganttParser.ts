@@ -54,6 +54,7 @@ export interface GanttDependencyLink {
 
 export interface GanttParsedModel {
   title?: string;
+  width?: string | number;
   colorBy: 'phase' | 'assignee';
   calendar: 'calendar' | 'workdays';
   columns: string[];
@@ -295,6 +296,25 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
     axisInterval = 'all';
   }
 
+  // Parse width / timeline-width
+  const rawWidth =
+    rawDoc.width ??
+    rawDoc['timeline-width'] ??
+    rawDoc['timelineWidth'] ??
+    rawDoc['timeline_width'];
+  let widthConfig: string | number | undefined = undefined;
+  if (typeof rawWidth === 'number' && rawWidth > 0) {
+    widthConfig = rawWidth;
+  } else if (typeof rawWidth === 'string' && rawWidth.trim()) {
+    const cleanW = rawWidth.trim().toLowerCase();
+    if (/^[0-9]+(?:\.[0-9]+)?(?:px)?$/.test(cleanW)) {
+      const num = parseFloat(cleanW);
+      if (!isNaN(num) && num > 0) widthConfig = Math.round(num);
+    } else {
+      widthConfig = cleanW;
+    }
+  }
+
   const rawTasks: RawGanttTask[] = Array.isArray(rawDoc)
     ? rawDoc
     : Array.isArray(rawDoc.tasks)
@@ -304,6 +324,7 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
   if (rawTasks.length === 0) {
     return {
       title,
+      width: widthConfig,
       colorBy,
       calendar,
       columns,
@@ -649,6 +670,7 @@ export function parseGanttMarkdown(yamlSource: string): GanttParsedModel {
 
   return {
     title,
+    width: widthConfig,
     colorBy,
     calendar,
     columns,

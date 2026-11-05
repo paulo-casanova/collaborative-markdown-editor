@@ -302,6 +302,35 @@ tasks:
       expect(model.tasks[1].assigneeAllocations).toEqual({ bob: 0.25 });
     });
 
+    it('parses width and timeline-width configurations', () => {
+      const yamlNum = `
+width: 1400
+tasks:
+  - id: t1
+    start: 2026-12-01
+    duration: 3d
+`;
+      expect(parseGanttMarkdown(yamlNum).width).toBe(1400);
+
+      const yamlStr = `
+timeline-width: 1200px
+tasks:
+  - id: t1
+    start: 2026-12-01
+    duration: 3d
+`;
+      expect(parseGanttMarkdown(yamlStr).width).toBe(1200);
+
+      const yamlAuto = `
+width: auto
+tasks:
+  - id: t1
+    start: 2026-12-01
+    duration: 3d
+`;
+      expect(parseGanttMarkdown(yamlAuto).width).toBe('auto');
+    });
+
     it('returns friendly syntax error for invalid YAML syntax without throwing', () => {
       const yaml = `
 tasks:

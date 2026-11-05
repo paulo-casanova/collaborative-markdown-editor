@@ -3560,7 +3560,7 @@ const VegaGanttBlock: React.FC<{ source: string }> = ({ source }) => {
       </div>
       <div
         ref={containerRef}
-        className="p-3 flex items-start justify-start overflow-x-auto min-h-[100px] vega-gantt-container bg-transparent"
+        className="p-3 flex items-start justify-start w-full overflow-hidden min-h-[100px] vega-gantt-container bg-transparent"
       />
     </div>
   );

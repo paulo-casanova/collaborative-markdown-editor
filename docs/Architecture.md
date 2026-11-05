@@ -138,6 +138,7 @@ flowchart LR
 4. **Hierarchical Gantt & Visualization Engine**:
    - Parses Markdown YAML Gantt blocks into scheduled task models with dynamic duration resolution (`5d`, `2w`), topological dependency scheduling (`dependsOn`), and parent summary rollups.
    - Built on Vega templates with lazy-loaded `vega-embed` chunks, theme synchronization, WBS hierarchy tree, progress bars, milestone diamonds, and orthogonal connector arrows.
+   - **Split Frozen Layout & Independent Bar Scrolling**: Splits rendering into a fixed-width left table pane (`.gantt-table-pane`) and an independently horizontally scrollable timeline pane (`.gantt-timeline-pane`, `overflow-x-auto`). Supports explicit numeric widths or dynamic auto-scaling (`width: auto` / `as-needed`), forward wheel scrolling from table to timeline, bidirectional row hover synchronization via Vega signals (`rowHover`), and headless 2x retina canvas compilation for unified clipboard PNG export (`copyGanttAsPng`).
 5. **Document Checkout & External File Lifecycle Subsystem**:
    - Manages exclusive checkout locks for non-markdown documents (Office documents, PDFs, binary assets).
    - Coordinates local folder downloads/sync using the Web File System Access API with standard browser download fallbacks.

@@ -450,6 +450,13 @@ tasks:
   * `'mondays'` / `'weekly'`: Displays only Monday ticks (e.g. `Dec 07 (Mon)`).
   * `'start-of-month'` / `'monthly'`: Displays ticks on the 1st of each month (e.g. `Dec 2026`).
   * If omitted, automatically selects daily, weekly, or monthly based on the total project span.
+* **`width`** (or **`timeline-width`**):
+  * Controls the width and horizontal scrolling behavior of the timeline bars:
+    * `'fit'` (default): Fits within the reader or editor column width.
+    * Explicit pixel value (e.g. `width: 1400` or `width: 1600px`): Sets the timeline area to an exact pixel width.
+    * `'auto'` / `'as-needed'` / `'scroll'`: Dynamically scales the timeline width according to the total project span (days × ~28px per day, minimum 900px), giving long schedules ample breathing room.
+  * **Split Layout with Frozen Table**: When the timeline width exceeds the available container width, the left-hand table pane (tasks, columns, WBS, resource rows) stays permanently pinned in place while the timeline pane (date axis, weekend shading bands, task bars, dependencies, and workload intervals) scrolls horizontally. Horizontal mouse wheel gestures over the table pane automatically forward scrolling to the timeline, and row hover highlighting is synchronized seamlessly across both panes.
+  * **Copy as PNG**: The header "Copy as PNG" button generates a unified full-resolution (2x retina) export containing both the pinned table and full scrollable timeline.
 
 ---
 
