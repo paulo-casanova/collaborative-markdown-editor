@@ -1,8 +1,10 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { useParams, Link, useSearchParams } from 'react-router-dom';
+import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   BookOpen,
+  ArrowLeft,
+  ArrowRight,
   Edit3,
   MessageSquare,
   AlertCircle,
@@ -100,6 +102,7 @@ export function computeCommentsSignature(comments: CommentRecord[] = []): string
 export const ReaderPage: React.FC = () => {
   const params = useParams();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const wildcard = params['*'];
   const idParam = params.id;
   const pathParam = searchParams.get('path');
@@ -1410,8 +1413,30 @@ export const ReaderPage: React.FC = () => {
         {/* Top Reader Controls Header */}
       <header className="sticky top-0 z-20 bg-cme-bg-base/95 backdrop-blur-md border-b border-cme-border-base px-4 md:px-8 py-2.5 shadow-xs">
         <div className={`${containerWidthClass} flex items-center justify-between gap-4`}>
-          {/* Left Metadata */}
-          <div className="flex items-center gap-3 truncate">
+          {/* Left Metadata & History Navigation */}
+          <div className="flex items-center gap-2 truncate">
+            {/* Back / Forward Navigation Buttons */}
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => navigate(-1)}
+                className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+                title="Go back to previous page (Alt+Left)"
+                data-testid="reader-back-btn"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => navigate(1)}
+                className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+                title="Go forward to next page (Alt+Right)"
+                data-testid="reader-forward-btn"
+              >
+                <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cme-primary/10 text-cme-primary text-[11px] font-semibold tracking-wide uppercase flex-shrink-0">
               <BookOpen className="w-3.5 h-3.5" />
               <span>Reader Mode</span>
