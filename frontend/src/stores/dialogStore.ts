@@ -34,7 +34,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempts = 0;
 let isExplicitDisconnect = false;
 let pollIntervalTimer: ReturnType<typeof setInterval> | null = null;
-const PROMPT_TIMEOUT_MS = 90_000;
+export const PROMPT_TIMEOUT_MS = 600_000; // 10 minutes (600 seconds)
 const POLL_INTERVAL_MS = 3_000;
 
 export const stopPendingPromptPolling = () => {
@@ -55,24 +55,26 @@ export const startPendingPromptPolling = (dialogId: string) => {
     }
 
     const now = Date.now();
-    const startTime = state.generatingStartTime || now;
+    const lastActive = state.lastActivityTime || state.generatingStartTime || now;
 
-    // Timeout check: visible error in conversation
-    if (now - startTime > PROMPT_TIMEOUT_MS) {
+    // Timeout check: visible error in conversation if completely inactive for PROMPT_TIMEOUT_MS
+    if (now - lastActive > PROMPT_TIMEOUT_MS) {
       stopPendingPromptPolling();
+      const minutes = Math.round(PROMPT_TIMEOUT_MS / 60_000);
       const timeoutMsg: DialogMessage = {
         id: `timeout-error-${Date.now()}`,
         dialog_id: dialogId,
         user_id: '',
         role: 'assistant',
         content:
-          '⚠️ **Request Timed Out:** The AI agent did not respond within 90 seconds. Please check that your local agent companion is running and connected, then try again.',
+          `⚠️ **Request Timed Out:** The AI agent did not respond within ${minutes} minutes. Please check that your local agent companion is running and connected, then try again.`,
         created_at: new Date().toISOString(),
       };
       useDialogStore.setState((s) => ({
         messages: sortDialogMessages([...s.messages, timeoutMsg]),
         isGenerating: false,
         generatingStartTime: null,
+        lastActivityTime: null,
         activeToolActivity: null,
         streamingContent: '',
       }));
@@ -111,6 +113,7 @@ interface DialogState {
   isSending: boolean;
   isGenerating: boolean;
   generatingStartTime: number | null;
+  lastActivityTime: number | null;
   agentStatus: AgentStatus;
   streamingContent: string;
   activeToolActivity: { tool: string; status: string } | null;
@@ -150,6 +153,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   isSending: false,
   isGenerating: false,
   generatingStartTime: null,
+  lastActivityTime: null,
   agentStatus: {
     online: false,
     agent_name: '',
@@ -196,6 +200,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       isLoading: true,
       isGenerating: false,
       generatingStartTime: null,
+      lastActivityTime: null,
     });
 
     try {
@@ -257,6 +262,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
             agentActions: [],
             isGenerating: false,
             generatingStartTime: null,
+            lastActivityTime: null,
           });
         }
       }
@@ -288,6 +294,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       isSending: true,
       isGenerating: isOnline,
       generatingStartTime: isOnline ? Date.now() : null,
+      lastActivityTime: isOnline ? Date.now() : null,
       streamingContent: '',
       activeToolActivity: null,
     }));
@@ -313,6 +320,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
           isSending: false,
           isGenerating: shouldGenerate,
           generatingStartTime: shouldGenerate ? (state.generatingStartTime || Date.now()) : null,
+          lastActivityTime: shouldGenerate ? (state.lastActivityTime || Date.now()) : null,
         };
       });
     } catch (err) {
@@ -323,6 +331,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
         isSending: false,
         isGenerating: false,
         generatingStartTime: null,
+        lastActivityTime: null,
       }));
     }
   },
@@ -369,6 +378,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
           ? {
               isGenerating: false,
               generatingStartTime: null,
+              lastActivityTime: null,
               activeToolActivity: null,
               streamingContent: '',
             }
@@ -499,6 +509,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
                 stopPendingPromptPolling();
                 updates.isGenerating = false;
                 updates.generatingStartTime = null;
+                updates.lastActivityTime = null;
                 updates.activeToolActivity = null;
                 updates.streamingContent = '';
               }
@@ -521,6 +532,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
             if (data.dialog_id === get().activeDialogId && data.delta) {
               set((state) => ({
                 streamingContent: state.streamingContent + data.delta,
+                lastActivityTime: Date.now(),
               }));
             }
           } else if (type === 'tool_activity') {
@@ -530,6 +542,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
                   tool: data.tool || 'local_tool',
                   status: data.status || 'running',
                 },
+                lastActivityTime: Date.now(),
               });
             }
           } else if (type === 'diff_proposal') {
@@ -544,6 +557,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
               };
               set((state) => ({
                 diffProposals: [...state.diffProposals, proposal],
+                lastActivityTime: Date.now(),
               }));
             }
           } else if (type === 'agent_action') {
@@ -559,6 +573,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
               };
               set((state) => ({
                 agentActions: [...state.agentActions, actionRecord],
+                lastActivityTime: Date.now(),
               }));
             }
           } else if (type === 'dialog_truncated') {
@@ -586,6 +601,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
                   activeToolActivity: null,
                   isGenerating: false,
                   generatingStartTime: null,
+                  lastActivityTime: null,
                 };
               });
               void (async () => {
@@ -667,6 +683,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
     set({
       isGenerating: false,
       generatingStartTime: null,
+      lastActivityTime: null,
       activeToolActivity: null,
       streamingContent: '',
     });

@@ -42,6 +42,15 @@ interface DialogSidecarProps {
   onJumpToEdit?: (action: any) => void;
 }
 
+export function formatElapsedTime(totalSeconds: number): string {
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return `${mins}m ${secs < 10 ? '0' : ''}${secs}s`;
+}
+
 export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   documentId,
   documentTitle,
@@ -992,7 +1001,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
               </span>
               <span className="flex items-center gap-1 text-[10px] text-cme-text-muted px-1.5 py-0.5 rounded-full bg-cme-bg-subtle border border-cme-border-base font-mono">
                 <Clock className="w-2.5 h-2.5 text-cme-primary/70" />
-                {elapsedSeconds}s
+                {formatElapsedTime(elapsedSeconds)}
               </span>
               {wsStatus !== 'connected' && (
                 <span className="text-[10px] text-amber-600 dark:text-amber-400 font-normal">
@@ -1034,7 +1043,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
               {elapsedSeconds > 0 && (
                 <span className="flex items-center gap-1 text-[10px] text-cme-text-muted px-1.5 py-0.5 rounded-full bg-cme-bg-subtle border border-cme-border-base font-mono">
                   <Clock className="w-2.5 h-2.5 text-cme-primary/70" />
-                  {elapsedSeconds}s
+                  {formatElapsedTime(elapsedSeconds)}
                 </span>
               )}
             </div>

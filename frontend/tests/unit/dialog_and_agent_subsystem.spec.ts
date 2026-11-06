@@ -1028,13 +1028,16 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
   it('times out pending prompt after timeout period and appends visible error message', async () => {
     vi.useFakeTimers();
 
+    const { startPendingPromptPolling, stopPendingPromptPolling, PROMPT_TIMEOUT_MS } = await import('../../src/stores/dialogStore');
+
+    const pastTime = Date.now() - (PROMPT_TIMEOUT_MS + 5000);
     const userMsg: DialogMessage = {
       id: 'm-user-timeout',
       dialog_id: 'dlg-timeout',
       user_id: 'u1',
       role: 'user',
       content: 'Slow task that hangs',
-      created_at: new Date(Date.now() - 95000).toISOString(),
+      created_at: new Date(pastTime).toISOString(),
     };
 
     vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue([userMsg]);
@@ -1042,13 +1045,13 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     useDialogStore.setState({
       activeDialogId: 'dlg-timeout',
       isGenerating: true,
-      generatingStartTime: Date.now() - 95000,
+      generatingStartTime: pastTime,
+      lastActivityTime: pastTime,
       messages: [userMsg],
       agentStatus: { online: true, agent_name: 'TestAgent', connected_at: null, capabilities: [] },
     });
 
     // Start fallback prompt polling
-    const { startPendingPromptPolling, stopPendingPromptPolling } = await import('../../src/stores/dialogStore');
     startPendingPromptPolling('dlg-timeout');
 
     // Advance by polling interval (3000ms)
@@ -1060,6 +1063,49 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     const timeoutMsg = state.messages.find((m) => m.content.includes('Request Timed Out'));
     expect(timeoutMsg).toBeDefined();
     expect(timeoutMsg?.role).toBe('assistant');
+
+    stopPendingPromptPolling();
+    vi.useRealTimers();
+  });
+
+  it('keeps waiting and does not time out while agent is actively streaming tokens', async () => {
+    vi.useFakeTimers();
+
+    const { startPendingPromptPolling, stopPendingPromptPolling, PROMPT_TIMEOUT_MS } = await import('../../src/stores/dialogStore');
+
+    // Started a long time ago, but recent token stream activity just arrived
+    const startedAt = Date.now() - (PROMPT_TIMEOUT_MS + 60000); // 11 mins ago
+    const recentActivity = Date.now() - 5000; // 5s ago
+    const userMsg: DialogMessage = {
+      id: 'm-user-active',
+      dialog_id: 'dlg-active',
+      user_id: 'u1',
+      role: 'user',
+      content: 'Long running task with continuous streaming',
+      created_at: new Date(startedAt).toISOString(),
+    };
+
+    vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue([userMsg]);
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-active',
+      isGenerating: true,
+      generatingStartTime: startedAt,
+      lastActivityTime: recentActivity,
+      messages: [userMsg],
+      agentStatus: { online: true, agent_name: 'LongTaskAgent', connected_at: null, capabilities: [] },
+    });
+
+    startPendingPromptPolling('dlg-active');
+
+    // Advance by polling interval (3000ms)
+    await vi.advanceTimersByTimeAsync(3500);
+
+    const state = useDialogStore.getState();
+    // Still generating because agent was recently active!
+    expect(state.isGenerating).toBe(true);
+    expect(state.generatingStartTime).toBe(startedAt);
+    expect(state.messages.some((m) => m.content.includes('Request Timed Out'))).toBe(false);
 
     stopPendingPromptPolling();
     vi.useRealTimers();
@@ -1098,5 +1144,14 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(html).toContain('data-testid="dialog-sidecar-resizer"');
     expect(html).toContain('width:500px');
     expect(html).toContain('cursor-col-resize');
+  });
+
+  it('formats elapsed time appropriately for seconds and minutes', async () => {
+    const { formatElapsedTime } = await import('../../src/components/dialog/DialogSidecar');
+    expect(formatElapsedTime(0)).toBe('0s');
+    expect(formatElapsedTime(45)).toBe('45s');
+    expect(formatElapsedTime(60)).toBe('1m 00s');
+    expect(formatElapsedTime(85)).toBe('1m 25s');
+    expect(formatElapsedTime(185)).toBe('3m 05s');
   });
 });

@@ -63,6 +63,7 @@ class CMEAgentDaemon:
         self.header_cmd = header_cmd
         self.command = command
         self.stream_limit = stream_limit or int(os.environ.get("CME_AGENT_STREAM_LIMIT", 128 * 1024 * 1024))
+        self.request_timeout = float(os.environ.get("CME_AGENT_REQUEST_TIMEOUT", "600.0"))
         self.running = True
         self.active_tasks: Dict[str, asyncio.Task] = {}
         self.active_processes: Dict[str, asyncio.subprocess.Process] = {}
@@ -744,7 +745,7 @@ class CMEAgentDaemon:
             )
 
             full_content = ""
-            with urllib.request.urlopen(req, timeout=60.0) as resp:
+            with urllib.request.urlopen(req, timeout=self.request_timeout) as resp:
                 for line in resp:
                     decoded = line.decode("utf-8").strip()
                     if decoded.startswith("data: "):
@@ -847,7 +848,7 @@ class CMEAgentDaemon:
             )
 
             full_content = ""
-            with urllib.request.urlopen(req, timeout=60.0) as resp:
+            with urllib.request.urlopen(req, timeout=self.request_timeout) as resp:
                 for line in resp:
                     decoded = line.decode("utf-8").strip()
                     if decoded.startswith("data: "):
@@ -926,7 +927,7 @@ class CMEAgentDaemon:
             )
 
             full_content = ""
-            with urllib.request.urlopen(req, timeout=45.0) as resp:
+            with urllib.request.urlopen(req, timeout=self.request_timeout) as resp:
                 for line in resp:
                     if not line:
                         continue
@@ -1001,7 +1002,7 @@ class CMEAgentDaemon:
             )
 
             full_content = ""
-            with urllib.request.urlopen(req, timeout=60.0) as resp:
+            with urllib.request.urlopen(req, timeout=self.request_timeout) as resp:
                 for line in resp:
                     decoded = line.decode("utf-8").strip()
                     if decoded.startswith("data: "):

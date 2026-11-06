@@ -6237,7 +6237,7 @@ Result<void> Server::start() {
         .idleTimeout = ws_idle_timeout,
         .maxBackpressure = 1 * 1024 * 1024,
         .closeOnBackpressureLimit = false,
-        .resetIdleTimeoutOnSend = false,
+        .resetIdleTimeoutOnSend = true,
         .sendPingsAutomatically = true,
         .maxLifetime = 0,
         .upgrade = [this](auto *res, auto *req, auto *context) {
@@ -6440,7 +6440,7 @@ Result<void> Server::start() {
         .idleTimeout = ws_idle_timeout,
         .maxBackpressure = 1 * 1024 * 1024,
         .closeOnBackpressureLimit = false,
-        .resetIdleTimeoutOnSend = false,
+        .resetIdleTimeoutOnSend = true,
         .sendPingsAutomatically = true,
         .maxLifetime = 0,
         .upgrade = [this](auto *res, auto *req, auto *context) {
