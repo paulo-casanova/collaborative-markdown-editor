@@ -430,9 +430,14 @@ export const useDialogStore = create<DialogState>((set, get) => ({
 
   updateAgentActionStatus: (actionId: string, status: 'applied' | 'failed', error?: string) => {
     set((state) => ({
-      agentActions: state.agentActions.map((a) =>
-        a.id === actionId ? { ...a, status, error } : a
-      ),
+      agentActions: state.agentActions.map((a) => {
+        if (a.id !== actionId) return a;
+        // Never downgrade an already 'applied' action to 'failed'
+        if (a.status === 'applied' && status === 'failed') {
+          return a;
+        }
+        return { ...a, status, error };
+      }),
     }));
   },
 

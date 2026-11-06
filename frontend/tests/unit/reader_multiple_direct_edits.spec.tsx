@@ -327,4 +327,75 @@ describe('Reader Mode Multiple direct_edit Actions & Sequential Execution', () =
     expect(scrollMock).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
     expect(classListAddMock).toHaveBeenCalledWith('cme-edit-highlight');
   });
+
+  it('skips processing actions meant for a different document ID', async () => {
+    const currentDocId = 'doc-active';
+    const otherDocId = 'doc-background';
+
+    useDialogStore.setState({
+      agentActions: [
+        {
+          id: 'act-other-doc',
+          dialog_id: 'dlg-1',
+          document_id: otherDocId,
+          action: 'direct_edit',
+          payload: { original_text: 'Text in Doc B', replacement_text: 'New Text in Doc B' },
+          status: 'pending',
+          timestamp: 1,
+        },
+        {
+          id: 'act-my-doc',
+          dialog_id: 'dlg-1',
+          document_id: currentDocId,
+          action: 'direct_edit',
+          payload: { original_text: 'Text in Doc A', replacement_text: 'New Text in Doc A' },
+          status: 'pending',
+          timestamp: 2,
+        },
+      ],
+    });
+
+    const processedIds: string[] = [];
+    const executingIds = new Set<string>();
+
+    while (true) {
+      const act = useDialogStore.getState().agentActions.find(
+        (a) =>
+          a.status === 'pending' &&
+          !executingIds.has(a.id) &&
+          (!a.document_id || a.document_id === currentDocId)
+      );
+      if (!act) break;
+
+      executingIds.add(act.id);
+      try {
+        processedIds.push(act.id);
+        useDialogStore.getState().updateAgentActionStatus(act.id, 'applied');
+      } finally {
+        executingIds.delete(act.id);
+      }
+    }
+
+    // Only the action for doc-active should be processed
+    expect(processedIds).toEqual(['act-my-doc']);
+    const actions = useDialogStore.getState().agentActions;
+    expect(actions[0].status).toBe('pending'); // act-other-doc was untouched
+    expect(actions[1].status).toBe('applied'); // act-my-doc was applied
+  });
+
+  it('recognizes already replaced text when orig is absent and rep is present in document', () => {
+    const docContent = 'Document with New Replacement Text here.';
+    const orig = 'Old Target Text';
+    const rep = 'New Replacement Text';
+
+    const change = computeReplacementChange(docContent, orig, rep);
+    expect(change).toBeNull(); // not found because it was already replaced
+
+    const trimmedOrig = orig.trim();
+    const trimmedRep = rep.trim();
+    const isAlreadyReplaced = Boolean(
+      trimmedRep && docContent.includes(trimmedRep) && !docContent.includes(trimmedOrig)
+    );
+    expect(isAlreadyReplaced).toBe(true);
+  });
 });

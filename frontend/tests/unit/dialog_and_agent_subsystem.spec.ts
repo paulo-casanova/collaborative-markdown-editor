@@ -1154,4 +1154,27 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(formatElapsedTime(85)).toBe('1m 25s');
     expect(formatElapsedTime(185)).toBe('3m 05s');
   });
+
+  it('updateAgentActionStatus never downgrades an already applied action to failed', () => {
+    const action: AgentAction = {
+      id: 'act-applied-protect',
+      dialog_id: 'dlg-1',
+      document_id: 'doc-1',
+      action: 'direct_edit',
+      payload: { original_text: 'Old', replacement_text: 'New' },
+      status: 'pending',
+      timestamp: Date.now(),
+    };
+
+    useDialogStore.setState({ agentActions: [action] });
+    // First mark applied
+    useDialogStore.getState().updateAgentActionStatus('act-applied-protect', 'applied');
+    expect(useDialogStore.getState().agentActions[0].status).toBe('applied');
+
+    // Attempt to downgrade to failed (e.g. from a background tab's failure)
+    useDialogStore.getState().updateAgentActionStatus('act-applied-protect', 'failed', 'Target replacement text not found in document');
+    // Status must remain 'applied'
+    expect(useDialogStore.getState().agentActions[0].status).toBe('applied');
+    expect(useDialogStore.getState().agentActions[0].error).toBeUndefined();
+  });
 });

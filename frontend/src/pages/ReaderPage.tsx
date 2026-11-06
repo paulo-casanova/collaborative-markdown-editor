@@ -507,6 +507,12 @@ export const ReaderPage: React.FC = () => {
 
           const change = computeReplacementChange(currentContent, orig, rep);
           if (!change) {
+            const trimmedOrig = orig ? orig.trim() : '';
+            const trimmedRep = rep ? rep.trim() : '';
+            if (trimmedRep && currentContent.includes(trimmedRep) && !currentContent.includes(trimmedOrig)) {
+              console.info('[ReaderPage] handleApplyReplacement: text appears already replaced.');
+              return true;
+            }
             console.warn('[ReaderPage] Target replacement text not found in reader document, skipped.');
             return false;
           }

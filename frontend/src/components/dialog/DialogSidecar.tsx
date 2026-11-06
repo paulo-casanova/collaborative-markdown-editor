@@ -287,6 +287,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   };
 
   const isExecutingActionsRef = useRef(false);
+  const executingActionIdsRef = useRef<Set<string>>(new Set());
   const isUnmountedRef = useRef(false);
   const onApplyReplacementRef = useRef(onApplyReplacement);
   onApplyReplacementRef.current = onApplyReplacement;
@@ -310,16 +311,29 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
   // Automatically execute pending agent actions sequentially as they arrive
   useEffect(() => {
-    const hasPending = agentActions.some((a) => a.status === 'pending');
+    const hasPending = agentActions.some(
+      (a) =>
+        a.status === 'pending' &&
+        !executingActionIdsRef.current.has(a.id) &&
+        (!a.document_id || !documentIdRef.current || a.document_id === documentIdRef.current)
+    );
     if (!hasPending || isExecutingActionsRef.current || isUnmountedRef.current) return;
 
     const processActionsSequentially = async () => {
       isExecutingActionsRef.current = true;
       try {
         while (!isUnmountedRef.current) {
-          const act = useDialogStore.getState().agentActions.find((a) => a.status === 'pending');
+          const act = useDialogStore
+            .getState()
+            .agentActions.find(
+              (a) =>
+                a.status === 'pending' &&
+                !executingActionIdsRef.current.has(a.id) &&
+                (!a.document_id || !documentIdRef.current || a.document_id === documentIdRef.current)
+            );
           if (!act) break;
 
+          executingActionIdsRef.current.add(act.id);
           try {
             const payload = act.payload || {};
             const docText = documentContentRef.current || '';
@@ -485,12 +499,21 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           } catch (err: any) {
             console.warn('[DialogSidecar] Error executing agent action:', err);
             updateAgentActionStatus(act.id, 'failed', err?.message || String(err));
+          } finally {
+            executingActionIdsRef.current.delete(act.id);
           }
         }
       } finally {
         isExecutingActionsRef.current = false;
         if (!isUnmountedRef.current) {
-          const hasRemaining = useDialogStore.getState().agentActions.some((a) => a.status === 'pending');
+          const hasRemaining = useDialogStore
+            .getState()
+            .agentActions.some(
+              (a) =>
+                a.status === 'pending' &&
+                !executingActionIdsRef.current.has(a.id) &&
+                (!a.document_id || !documentIdRef.current || a.document_id === documentIdRef.current)
+            );
           if (hasRemaining) {
             void processActionsSequentially();
           }

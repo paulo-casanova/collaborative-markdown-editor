@@ -473,6 +473,13 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
           view.focus();
           return true;
         } else {
+          // If original text is already replaced by replacement text, treat as applied
+          const trimmedOrig = orig ? orig.trim() : '';
+          const trimmedRep = rep ? rep.trim() : '';
+          if (trimmedRep && docText.includes(trimmedRep) && !docText.includes(trimmedOrig)) {
+            console.info('[EditorPane] handleApplyReplacement: text appears already replaced.');
+            return true;
+          }
           console.warn('[EditorPane] handleApplyReplacement: target text not found in document, skipped to prevent misplacement.');
           return false;
         }
@@ -1124,7 +1131,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         )}
 
         {/* Review Sidebar */}
-        {isSidebarOpen && (
+        {isPrimary && isSidebarOpen && (
           <ReviewSidebar
             onScrollToAnchor={handleScrollToAnchor}
             onApplyReplacement={handleApplyReplacement}
@@ -1132,7 +1139,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         )}
 
         {/* Dialog & Local Agent Sidecar */}
-        {dialogSidecarOpen && (
+        {isPrimary && dialogSidecarOpen && (
           <DialogSidecar
             documentId={document.id}
             documentTitle={document.title}
@@ -1145,7 +1152,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         )}
 
         {/* Bundle Assets Drawer */}
-        {showAssets && (
+        {isPrimary && showAssets && (
           <BundleAssetsSidebar
             documentId={document.id}
             onClose={() => setShowAssets(false)}
