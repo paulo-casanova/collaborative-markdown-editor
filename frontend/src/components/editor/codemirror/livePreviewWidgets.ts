@@ -1,7 +1,7 @@
 import { WidgetType, EditorView } from '@codemirror/view';
 import { StateEffect } from '@codemirror/state';
 import katex from 'katex';
-import { renderMermaidSvg } from '../utils/mermaidRenderer';
+import { renderMermaidSvg, getCachedMermaidSvg } from '../utils/mermaidRenderer';
 import { parseGanttMarkdown } from '../../../utils/ganttParser';
 import { renderVegaGantt, copyGanttAsPng } from '../utils/vegaGanttTemplate';
 import hljs from 'highlight.js';
@@ -40,6 +40,97 @@ import {
 
 export const setRawTablePos = StateEffect.define<number | null>();
 
+function getCodeBlockRange(
+  view: EditorView,
+  dom: HTMLElement,
+  fallbackFrom: number,
+  fallbackTo: number
+): { from: number; to: number } {
+  try {
+    const pos = view.posAtDOM(dom);
+    if (typeof pos === 'number' && pos >= 0 && pos <= view.state.doc.length) {
+      const doc = view.state.doc;
+      const startLine = doc.lineAt(pos);
+      const match = startLine.text.match(/^(\s*)(`{3,}|~{3,})/);
+      if (match) {
+        const fence = match[2];
+        const fenceLen = fence.length;
+        const fenceChar = fence[0];
+        for (let ln = startLine.number + 1; ln <= doc.lines; ln++) {
+          const line = doc.line(ln);
+          const closeMatch = line.text.match(/^(\s*)(`{3,}|~{3,})\s*$/);
+          if (closeMatch && closeMatch[2][0] === fenceChar && closeMatch[2].length >= fenceLen) {
+            return { from: startLine.from, to: line.to };
+          }
+        }
+        return { from: startLine.from, to: doc.length };
+      }
+    }
+  } catch {
+    // DOM detached or pos lookup failed
+  }
+  return { from: fallbackFrom, to: fallbackTo };
+}
+
+function getMathBlockRange(
+  view: EditorView,
+  dom: HTMLElement,
+  fallbackFrom: number,
+  fallbackTo: number
+): { from: number; to: number } {
+  try {
+    const pos = view.posAtDOM(dom);
+    if (typeof pos === 'number' && pos >= 0 && pos <= view.state.doc.length) {
+      const doc = view.state.doc;
+      const startLine = doc.lineAt(pos);
+      if (startLine.text.trim().startsWith('$$')) {
+        if (
+          startLine.text.trim().endsWith('$$') &&
+          startLine.text.trim().length > 2 &&
+          startLine.text.trim().slice(2).includes('$$')
+        ) {
+          return { from: startLine.from, to: startLine.to };
+        }
+        for (let ln = startLine.number + 1; ln <= doc.lines; ln++) {
+          const line = doc.line(ln);
+          if (line.text.trim().endsWith('$$')) {
+            return { from: startLine.from, to: line.to };
+          }
+        }
+        return { from: startLine.from, to: doc.length };
+      }
+    }
+  } catch {
+    // DOM detached or pos lookup failed
+  }
+  return { from: fallbackFrom, to: fallbackTo };
+}
+
+function getTableBlockRange(
+  view: EditorView,
+  dom: HTMLElement,
+  fallbackFrom: number,
+  fallbackTo: number
+): { from: number; to: number } {
+  try {
+    const pos = view.posAtDOM(dom);
+    if (typeof pos === 'number' && pos >= 0 && pos <= view.state.doc.length) {
+      const doc = view.state.doc;
+      const startLine = doc.lineAt(pos);
+      let endLineNum = startLine.number;
+      for (let ln = startLine.number; ln <= doc.lines; ln++) {
+        const line = doc.line(ln);
+        if (!line.text.trim().startsWith('|') && !line.text.includes('|')) {
+          break;
+        }
+        endLineNum = ln;
+      }
+      return { from: startLine.from, to: doc.line(endLineNum).to };
+    }
+  } catch {}
+  return { from: fallbackFrom, to: fallbackTo };
+}
+
 export class MathBlockWidget extends WidgetType {
   constructor(
     public latex: string,
@@ -50,7 +141,7 @@ export class MathBlockWidget extends WidgetType {
   }
 
   eq(other: MathBlockWidget): boolean {
-    return this.latex === other.latex && this.from === other.from && this.to === other.to;
+    return this.latex === other.latex;
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -120,8 +211,9 @@ export class MathBlockWidget extends WidgetType {
     applyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const newLatex = textarea.value.trim();
+      const range = getMathBlockRange(view, container, this.from, this.to);
       view.dispatch({
-        changes: { from: this.from, to: this.to, insert: `$$\n${newLatex}\n$$` },
+        changes: { from: range.from, to: range.to, insert: `$$\n${newLatex}\n$$` },
       });
     });
 
@@ -134,7 +226,8 @@ export class MathBlockWidget extends WidgetType {
     body.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const targetPos = Math.min(this.from + 2, this.to);
+      const range = getMathBlockRange(view, container, this.from, this.to);
+      const targetPos = Math.min(range.from + 2, range.to);
       view.dispatch({
         selection: { anchor: targetPos },
         effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
@@ -166,8 +259,6 @@ export class MermaidBlockWidget extends WidgetType {
   eq(other: MermaidBlockWidget): boolean {
     return (
       this.source === other.source &&
-      this.from === other.from &&
-      this.to === other.to &&
       this.isDark === other.isDark
     );
   }
@@ -257,8 +348,9 @@ export class MermaidBlockWidget extends WidgetType {
       drawer.classList.add('hidden');
       svgWrapper.classList.remove('hidden');
       if (newSource !== this.source) {
+        const range = getCodeBlockRange(view, container, this.from, this.to);
         view.dispatch({
-          changes: { from: this.from, to: this.to, insert: `\`\`\`mermaid\n${newSource}\n\`\`\`` },
+          changes: { from: range.from, to: range.to, insert: `\`\`\`mermaid\n${newSource}\n\`\`\`` },
         });
       }
     });
@@ -276,10 +368,11 @@ export class MermaidBlockWidget extends WidgetType {
         e.preventDefault();
         e.stopPropagation();
       }
+      const range = getCodeBlockRange(view, container, this.from, this.to);
       const doc = view.state.doc;
-      const firstLine = doc.lineAt(this.from);
+      const firstLine = doc.lineAt(range.from);
       // Place cursor right after the opening fence (start of first line inside mermaid block)
-      const targetPos = Math.min(firstLine.to + 1, this.to);
+      const targetPos = Math.min(firstLine.to + 1, range.to);
 
       view.dispatch({
         selection: { anchor: targetPos },
@@ -300,14 +393,20 @@ export class MermaidBlockWidget extends WidgetType {
       activateSourceEditing(e);
     });
 
-    // Render Mermaid async
-    renderMermaidSvg(this.source, this.isDark)
-      .then((svg) => {
-        svgWrapper.innerHTML = svg;
-      })
-      .catch((err) => {
-        svgWrapper.innerHTML = `<div class="text-xs text-rose-500 font-mono p-2">Mermaid render error: ${err.message || 'Syntax error'}</div>`;
-      });
+    // Check cache first for synchronous render without blinking
+    const cachedSvg = getCachedMermaidSvg(this.source, this.isDark);
+    if (cachedSvg) {
+      svgWrapper.innerHTML = cachedSvg;
+    } else {
+      // Render Mermaid async
+      renderMermaidSvg(this.source, this.isDark)
+        .then((svg) => {
+          svgWrapper.innerHTML = svg;
+        })
+        .catch((err) => {
+          svgWrapper.innerHTML = `<div class="text-xs text-rose-500 font-mono p-2">Mermaid render error: ${err.message || 'Syntax error'}</div>`;
+        });
+    }
 
     return container;
   }
@@ -326,8 +425,6 @@ export class GanttBlockWidget extends WidgetType {
   eq(other: GanttBlockWidget): boolean {
     return (
       this.source === other.source &&
-      this.from === other.from &&
-      this.to === other.to &&
       this.isDark === other.isDark
     );
   }
@@ -372,9 +469,10 @@ export class GanttBlockWidget extends WidgetType {
         e.preventDefault();
         e.stopPropagation();
       }
+      const range = getCodeBlockRange(view, container, this.from, this.to);
       const doc = view.state.doc;
-      const firstLine = doc.lineAt(this.from);
-      const targetPos = Math.min(firstLine.to + 1, this.to);
+      const firstLine = doc.lineAt(range.from);
+      const targetPos = Math.min(firstLine.to + 1, range.to);
 
       view.dispatch({
         selection: { anchor: targetPos },
@@ -480,8 +578,6 @@ export class ImageEmbedWidget extends WidgetType {
     return (
       this.alt === other.alt &&
       this.src === other.src &&
-      this.from === other.from &&
-      this.to === other.to &&
       this.docPath === other.docPath &&
       this.linkHref === other.linkHref
     );
@@ -569,7 +665,12 @@ export class ImageEmbedWidget extends WidgetType {
       badge.title = `Image file could not be loaded: ${cleanSrc} (Click to edit)`;
       badge.onclick = (e) => {
         e.stopPropagation();
-        view.dispatch({ selection: { anchor: this.from + 2 } });
+        let clickPos = this.from + 2;
+        try {
+          const domPos = view.posAtDOM(wrapper);
+          if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos + 2;
+        } catch {}
+        view.dispatch({ selection: { anchor: clickPos } });
         view.focus();
       };
       wrapper.appendChild(badge);
@@ -580,7 +681,12 @@ export class ImageEmbedWidget extends WidgetType {
 
     wrapper.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      view.dispatch({ selection: { anchor: this.from + 2 } });
+      let clickPos = this.from + 2;
+      try {
+        const domPos = view.posAtDOM(wrapper);
+        if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos + 2;
+      } catch {}
+      view.dispatch({ selection: { anchor: clickPos } });
       view.focus();
     });
 
@@ -803,7 +909,7 @@ export class TaskCheckboxWidget extends WidgetType {
   }
 
   eq(other: TaskCheckboxWidget): boolean {
-    return this.checked === other.checked && this.pos === other.pos;
+    return this.checked === other.checked;
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -814,9 +920,14 @@ export class TaskCheckboxWidget extends WidgetType {
       'mr-1.5 align-middle rounded border-cme-border-base text-cme-primary focus:ring-0 cursor-pointer';
     input.addEventListener('click', (e) => {
       e.stopPropagation();
+      let clickPos = this.pos;
+      try {
+        const domPos = view.posAtDOM(input);
+        if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos;
+      } catch {}
       const newBox = input.checked ? '[x]' : '[ ]';
       view.dispatch({
-        changes: { from: this.pos, to: this.pos + 3, insert: newBox },
+        changes: { from: clickPos, to: clickPos + 3, insert: newBox },
       });
     });
     return input;
@@ -828,8 +939,8 @@ export class DividerWidget extends WidgetType {
     super();
   }
 
-  eq(other: DividerWidget): boolean {
-    return this.from === other.from;
+  eq(_other: DividerWidget): boolean {
+    return true;
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -844,9 +955,14 @@ export class DividerWidget extends WidgetType {
     wrap.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      let clickPos = this.from;
+      try {
+        const domPos = view.posAtDOM(wrap);
+        if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos;
+      } catch {}
       view.dispatch({
-        selection: { anchor: this.from },
-        effects: EditorView.scrollIntoView(this.from, { y: 'nearest', yMargin: 60 }),
+        selection: { anchor: clickPos },
+        effects: EditorView.scrollIntoView(clickPos, { y: 'nearest', yMargin: 60 }),
       });
       view.focus();
     });
@@ -869,8 +985,6 @@ export class CodeBlockWidget extends WidgetType {
     return (
       this.language === other.language &&
       this.code === other.code &&
-      this.from === other.from &&
-      this.to === other.to &&
       this.docPath === other.docPath
     );
   }
@@ -962,10 +1076,11 @@ export class CodeBlockWidget extends WidgetType {
             cached.code !== undefined &&
             cached.code.trim() !== this.code.trim()
           ) {
+            const range = getCodeBlockRange(view, container, this.from, this.to);
             view.dispatch({
               changes: {
-                from: this.from,
-                to: this.to,
+                from: range.from,
+                to: range.to,
                 insert: `\`\`\`${this.language}\n${cached.code}\n\`\`\``,
               },
             });
@@ -992,10 +1107,11 @@ export class CodeBlockWidget extends WidgetType {
               });
               updateSyncBadge('synced');
               if (extracted.code.trim() !== this.code.trim()) {
+                const range = getCodeBlockRange(view, container, this.from, this.to);
                 view.dispatch({
                   changes: {
-                    from: this.from,
-                    to: this.to,
+                    from: range.from,
+                    to: range.to,
                     insert: `\`\`\`${this.language}\n${extracted.code}\n\`\`\``,
                   },
                 });
@@ -1064,10 +1180,11 @@ export class CodeBlockWidget extends WidgetType {
         e.stopPropagation();
         const newLang = select.value;
         const langHeader = newLang ? newLang : '';
+        const range = getCodeBlockRange(view, container, this.from, this.to);
         view.dispatch({
           changes: {
-            from: this.from,
-            to: this.to,
+            from: range.from,
+            to: range.to,
             insert: `\`\`\`${langHeader}\n${this.code}\n\`\`\``,
           },
         });
@@ -1132,8 +1249,9 @@ export class CodeBlockWidget extends WidgetType {
     body.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const firstLine = view.state.doc.lineAt(this.from);
-      const targetPos = Math.min(firstLine.to + 1, this.to);
+      const range = getCodeBlockRange(view, container, this.from, this.to);
+      const firstLine = view.state.doc.lineAt(range.from);
+      const targetPos = Math.min(firstLine.to + 1, range.to);
       view.dispatch({
         selection: { anchor: targetPos },
         effects: EditorView.scrollIntoView(targetPos, { y: 'nearest', yMargin: 60 }),
@@ -1165,7 +1283,7 @@ export class InlineMathWidget extends WidgetType {
   }
 
   eq(other: InlineMathWidget): boolean {
-    return this.latex === other.latex && this.from === other.from && this.to === other.to;
+    return this.latex === other.latex;
   }
 
   toDOM(view: EditorView): HTMLElement {
@@ -1185,7 +1303,12 @@ export class InlineMathWidget extends WidgetType {
 
     span.addEventListener('click', (e) => {
       e.stopPropagation();
-      view.dispatch({ selection: { anchor: this.from + 1 } });
+      let clickPos = this.from + 1;
+      try {
+        const domPos = view.posAtDOM(span);
+        if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos + 1;
+      } catch {}
+      view.dispatch({ selection: { anchor: clickPos } });
       view.focus();
     });
 
@@ -1231,8 +1354,6 @@ export class TableBlockWidget extends WidgetType {
   eq(other: TableBlockWidget): boolean {
     return (
       this.rawText === other.rawText &&
-      this.from === other.from &&
-      this.to === other.to &&
       this.docPath === other.docPath
     );
   }
@@ -1275,11 +1396,7 @@ export class TableBlockWidget extends WidgetType {
     addRowBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const updated = addRow(tableData);
-      const newMarkdown = formatMarkdownTable(updated);
-      pendingTableFocus = { pos: this.from, row: tableData.rows.length, col: 0 };
-      view.dispatch({
-        changes: { from: this.from, to: this.to, insert: newMarkdown },
-      });
+      dispatchTableChange(updated, { row: tableData.rows.length, col: 0 });
     });
     rightActions.appendChild(addRowBtn);
 
@@ -1293,11 +1410,7 @@ export class TableBlockWidget extends WidgetType {
     addColBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const updated = addColumn(tableData);
-      const newMarkdown = formatMarkdownTable(updated);
-      pendingTableFocus = { pos: this.from, row: -1, col: tableData.headers.length };
-      view.dispatch({
-        changes: { from: this.from, to: this.to, insert: newMarkdown },
-      });
+      dispatchTableChange(updated, { row: -1, col: tableData.headers.length });
     });
     rightActions.appendChild(addColBtn);
 
@@ -1310,9 +1423,10 @@ export class TableBlockWidget extends WidgetType {
     rawBtn.title = 'Switch to raw Markdown mode';
     rawBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      const range = getTableBlockRange(view, container, this.from, this.to);
       view.dispatch({
-        effects: setRawTablePos.of(this.from),
-        selection: { anchor: this.from },
+        effects: setRawTablePos.of(range.from),
+        selection: { anchor: range.from },
       });
       view.focus();
     });
@@ -1336,12 +1450,13 @@ export class TableBlockWidget extends WidgetType {
       updatedData: TableData,
       nextFocus?: { row: number; col: number }
     ) => {
+      const range = getTableBlockRange(view, container, this.from, this.to);
       if (nextFocus) {
-        pendingTableFocus = { pos: this.from, row: nextFocus.row, col: nextFocus.col };
+        pendingTableFocus = { pos: range.from, row: nextFocus.row, col: nextFocus.col };
       }
       const newMarkdown = formatMarkdownTable(updatedData);
       view.dispatch({
-        changes: { from: this.from, to: this.to, insert: newMarkdown },
+        changes: { from: range.from, to: range.to, insert: newMarkdown },
       });
     };
 
@@ -1719,7 +1834,8 @@ export class TableBlockWidget extends WidgetType {
     container.appendChild(card);
 
     // 6. Handle pending focus on mount
-    if (pendingTableFocus && pendingTableFocus.pos === this.from) {
+    const currentRange = getTableBlockRange(view, container, this.from, this.to);
+    if (pendingTableFocus && (pendingTableFocus.pos === this.from || pendingTableFocus.pos === currentRange.from)) {
       const target = pendingTableFocus;
       pendingTableFocus = null;
       requestAnimationFrame(() => {
@@ -2020,8 +2136,6 @@ export class PillWidget extends WidgetType {
     return (
       this.color === other.color &&
       this.label === other.label &&
-      this.from === other.from &&
-      this.to === other.to &&
       this.rawText === other.rawText
     );
   }
@@ -2052,7 +2166,12 @@ export class PillWidget extends WidgetType {
     // Focus cursor inside pill text on click to reveal raw markdown
     span.addEventListener('click', (e) => {
       e.stopPropagation();
-      view.dispatch({ selection: { anchor: this.from + 1 } });
+      let clickPos = this.from + 1;
+      try {
+        const domPos = view.posAtDOM(span);
+        if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos + 1;
+      } catch {}
+      view.dispatch({ selection: { anchor: clickPos } });
       view.focus();
     });
 
@@ -2073,9 +2192,7 @@ export class CalloutHeaderWidget extends WidgetType {
   eq(other: CalloutHeaderWidget): boolean {
     return (
       this.calloutType === other.calloutType &&
-      this.title === other.title &&
-      this.from === other.from &&
-      this.to === other.to
+      this.title === other.title
     );
   }
 
@@ -2096,7 +2213,12 @@ export class CalloutHeaderWidget extends WidgetType {
 
     banner.addEventListener('click', (e) => {
       e.stopPropagation();
-      view.dispatch({ selection: { anchor: Math.min(this.to, this.from + 2) } });
+      let clickPos = Math.min(this.to, this.from + 2);
+      try {
+        const domPos = view.posAtDOM(banner);
+        if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos + 2;
+      } catch {}
+      view.dispatch({ selection: { anchor: clickPos } });
       view.focus();
     });
 
