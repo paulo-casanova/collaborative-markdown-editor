@@ -78,7 +78,7 @@ export const AgentActionCard: React.FC<AgentActionCardProps> = ({ action, onJump
             ) : diff ? (
               <div
                 onClick={() => onJumpToEdit?.(action)}
-                className={`bg-zinc-950/80 rounded p-2 font-mono text-[11px] text-zinc-200 max-h-36 overflow-y-auto whitespace-pre ${
+                className={`bg-zinc-950/80 rounded p-2 font-mono text-[11px] text-zinc-200 max-h-36 overflow-y-auto overflow-x-auto max-w-full whitespace-pre ${
                   onJumpToEdit
                     ? 'cursor-pointer hover:ring-1 hover:ring-emerald-500/50 hover:bg-zinc-900 transition-all'
                     : ''
@@ -240,7 +240,7 @@ export const AgentActionCard: React.FC<AgentActionCardProps> = ({ action, onJump
 
   return (
     <div
-      className="rounded-lg border border-cme-border-base bg-cme-bg-base overflow-hidden my-2 shadow-sm text-xs"
+      className="rounded-lg border border-cme-border-base bg-cme-bg-base overflow-hidden my-2 shadow-sm text-xs w-full min-w-0 max-w-full"
       data-testid={`agent-action-card-${action.id}`}
     >
       <div

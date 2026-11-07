@@ -30,7 +30,7 @@ export const DiffProposalCard: React.FC<DiffProposalCardProps> = ({ proposal, on
   const lines = proposal.diff.split('\n');
 
   return (
-    <div className="rounded-lg border border-cme-border-base bg-cme-bg-base overflow-hidden my-2 shadow-sm text-xs">
+    <div className="rounded-lg border border-cme-border-base bg-cme-bg-base overflow-hidden my-2 shadow-sm text-xs w-full min-w-0 max-w-full">
       {/* Card Header */}
       <div className="px-3 py-2 bg-cme-bg-subtle border-b border-cme-border-base flex items-center justify-between">
         <div className="flex items-center gap-1.5 font-semibold text-cme-text-base">

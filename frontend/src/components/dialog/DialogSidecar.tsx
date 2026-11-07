@@ -20,6 +20,7 @@ import {
   Clock,
   Square,
   WifiOff,
+  WrapText,
 } from 'lucide-react';
 import { useDialogStore } from '../../stores/dialogStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -61,7 +62,13 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   onReviewAction,
   onJumpToEdit,
 }) => {
-  const { setDialogSidecarOpen, dialogSidecarWidth, setDialogSidecarWidth } = useUIStore();
+  const {
+    setDialogSidecarOpen,
+    dialogSidecarWidth,
+    setDialogSidecarWidth,
+    agentCodeWrap,
+    toggleAgentCodeWrap,
+  } = useUIStore();
   const storeState = useDialogStore();
   // Fall back to getState() in SSR / unit test static render when initial snapshot is empty
   const isServer = typeof window === 'undefined';
@@ -752,6 +759,25 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           </span>
         </button>
 
+        {/* Code Wrap Toggle */}
+        <button
+          type="button"
+          onClick={toggleAgentCodeWrap}
+          className={`p-1.5 rounded-lg text-xs transition-colors shrink-0 ${
+            agentCodeWrap
+              ? 'bg-cme-primary/15 text-cme-primary border border-cme-primary/30'
+              : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+          }`}
+          title={
+            agentCodeWrap
+              ? 'Code wrapping enabled (click to scroll code horizontally)'
+              : 'Code horizontal scrolling enabled (click to wrap lines)'
+          }
+          data-testid="toggle-code-wrap-btn"
+        >
+          <WrapText className="w-4 h-4" />
+        </button>
+
         {/* Close Sidecar */}
         <button
           onClick={() => setDialogSidecarOpen(false)}
@@ -763,7 +789,7 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
       </div>
 
       {/* Messages Thread Container */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 text-xs min-w-0">
         {!activeDialogId || !currentDialog ? (
           <div
             className="h-full flex flex-col items-center justify-center text-center p-6 text-cme-text-muted space-y-3"
@@ -898,12 +924,12 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
           return (
             <div
               key={m.id}
-              className={`group flex flex-col space-y-1.5 ${
+              className={`group flex flex-col space-y-1.5 w-full min-w-0 ${
                 isUser ? 'items-end' : 'items-start'
               }`}
             >
               {/* Header Pill */}
-              <div className="flex items-center gap-1.5 text-[11px] text-cme-text-subtle px-1">
+              <div className="flex items-center gap-1.5 text-[11px] text-cme-text-subtle px-1 max-w-full">
                 {isUser ? (
                   <>
                     <span className="font-medium">You</span>
@@ -983,17 +1009,21 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
               {/* Message Content Bubble */}
               <div
-                className={`max-w-[90%] rounded-xl px-3.5 py-2.5 leading-relaxed text-xs shadow-sm break-words ${
+                className={`max-w-[95%] min-w-0 rounded-xl px-3.5 py-2.5 leading-relaxed text-xs shadow-sm break-words ${
                   isUser
                     ? 'bg-cme-primary text-white whitespace-pre-wrap'
-                    : 'bg-cme-bg-base border border-cme-border-base text-cme-text-base prose prose-xs dark:prose-invert max-w-none'
+                    : 'bg-cme-bg-base border border-cme-border-base text-cme-text-base prose prose-xs dark:prose-invert max-w-none w-full min-w-0'
                 }`}
               >
                 {isUser ? (
                   m.content
                 ) : (
                   <div
-                    className="cme-ai-markdown-content prose prose-xs dark:prose-invert max-w-none text-xs leading-relaxed space-y-1.5 [&_pre]:bg-cme-bg-surface [&_pre]:p-2.5 [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-cme-border-base [&_code]:text-[11px] [&_p]:my-1"
+                    className={`cme-ai-markdown-content prose prose-xs dark:prose-invert max-w-none text-xs leading-relaxed space-y-1.5 min-w-0 [&_pre]:bg-cme-bg-surface [&_pre]:p-2.5 [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-cme-border-base [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_code]:text-[11px] [&_p]:my-1 ${
+                      agentCodeWrap
+                        ? '[&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_code]:break-words'
+                        : '[&_pre]:whitespace-pre'
+                    }`}
                     data-testid="ai-markdown-parsed"
                     dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(m.content || '') }}
                   />
@@ -1057,8 +1087,8 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
 
         {/* Streaming Assistant Response Buffer */}
         {streamingContent && (
-          <div className="flex flex-col space-y-1.5 items-start">
-            <div className="flex items-center gap-1.5 text-[11px] text-cme-primary px-1">
+          <div className="flex flex-col space-y-1.5 items-start w-full min-w-0">
+            <div className="flex items-center gap-1.5 text-[11px] text-cme-primary px-1 max-w-full">
               <Bot className="w-3 h-3 text-cme-primary" />
               <span className="font-medium">
                 {agentStatus.agent_name || 'Agent'} (responding...)
@@ -1070,9 +1100,13 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
                 </span>
               )}
             </div>
-            <div className="max-w-[90%] rounded-xl px-3.5 py-2.5 bg-cme-bg-base border border-cme-border-base text-cme-text-base shadow-sm text-xs leading-relaxed break-words prose prose-xs dark:prose-invert max-w-none">
+            <div className="max-w-[95%] w-full min-w-0 rounded-xl px-3.5 py-2.5 bg-cme-bg-base border border-cme-border-base text-cme-text-base shadow-sm text-xs leading-relaxed break-words prose prose-xs dark:prose-invert max-w-none">
               <div
-                className="cme-ai-markdown-content prose prose-xs dark:prose-invert max-w-none text-xs leading-relaxed space-y-1.5 [&_pre]:bg-cme-bg-surface [&_pre]:p-2.5 [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-cme-border-base [&_code]:text-[11px] [&_p]:my-1 inline"
+                className={`cme-ai-markdown-content prose prose-xs dark:prose-invert max-w-none text-xs leading-relaxed space-y-1.5 min-w-0 [&_pre]:bg-cme-bg-surface [&_pre]:p-2.5 [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-cme-border-base [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_code]:text-[11px] [&_p]:my-1 inline ${
+                  agentCodeWrap
+                    ? '[&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_code]:break-words'
+                    : '[&_pre]:whitespace-pre'
+                }`}
                 data-testid="ai-markdown-streaming"
                 dangerouslySetInnerHTML={{ __html: parseMarkdownToHtml(streamingContent || '') }}
               />

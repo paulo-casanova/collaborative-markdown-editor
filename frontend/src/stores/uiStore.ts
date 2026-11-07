@@ -45,6 +45,9 @@ interface UIState {
   lineNumbers: boolean;
   setLineNumbers: (enabled: boolean) => void;
   toggleLineNumbers: () => void;
+  agentCodeWrap: boolean;
+  setAgentCodeWrap: (wrap: boolean) => void;
+  toggleAgentCodeWrap: () => void;
 }
 
 const getInitialSidebarWidth = (): number => {
@@ -93,6 +96,20 @@ const getInitialLineNumbers = (): boolean => {
   return false;
 };
 
+const getInitialAgentCodeWrap = (): boolean => {
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const saved = window.localStorage.getItem('cme_agent_code_wrap');
+      if (saved !== null) {
+        return saved === 'true';
+      }
+    }
+  } catch {
+    // ignore storage errors
+  }
+  return false;
+};
+
 const uiStore = createStore<UIState>((set) => ({
   sidebarOpen: true,
   sidebarWidth: getInitialSidebarWidth(),
@@ -121,6 +138,7 @@ const uiStore = createStore<UIState>((set) => ({
   goToPermalinkModalOpen: false,
   numberHeaders: getInitialNumberHeaders(),
   lineNumbers: getInitialLineNumbers(),
+  agentCodeWrap: getInitialAgentCodeWrap(),
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSidebarWidth: (width) => {
@@ -194,6 +212,28 @@ const uiStore = createStore<UIState>((set) => ({
         // ignore storage errors
       }
       return { lineNumbers: next };
+    }),
+  setAgentCodeWrap: (enabled) => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('cme_agent_code_wrap', String(enabled));
+      }
+    } catch {
+      // ignore storage errors
+    }
+    set({ agentCodeWrap: enabled });
+  },
+  toggleAgentCodeWrap: () =>
+    set((state) => {
+      const next = !state.agentCodeWrap;
+      try {
+        if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.setItem('cme_agent_code_wrap', String(next));
+        }
+      } catch {
+        // ignore storage errors
+      }
+      return { agentCodeWrap: next };
     }),
 }));
 

@@ -1177,4 +1177,31 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     expect(useDialogStore.getState().agentActions[0].status).toBe('applied');
     expect(useDialogStore.getState().agentActions[0].error).toBeUndefined();
   });
+
+  it('renders toggle-code-wrap-btn and toggles code wrapping mode in DialogSidecar', () => {
+    useUIStore.getState().setAgentCodeWrap(false);
+    expect(useUIStore.getState().agentCodeWrap).toBe(false);
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-wrap-test',
+      dialogs: [{ id: 'dlg-wrap-test', title: 'Test Wrap', document_id: 'doc-1', created_at: '', updated_at: '' }],
+      messages: [{ id: 'm1', dialog_id: 'dlg-wrap-test', user_id: '', role: 'assistant', content: '```js\nconst x = 1;\n```', created_at: new Date().toISOString() }],
+    });
+
+    const html1 = renderToStaticMarkup(React.createElement(DialogSidecar, {}));
+    expect(html1).toContain('data-testid="toggle-code-wrap-btn"');
+    expect(html1).toContain('overflow-x-auto');
+    expect(html1).toContain('overflow-x-hidden');
+    expect(html1).toContain('whitespace-pre');
+
+    useUIStore.getState().toggleAgentCodeWrap();
+    expect(useUIStore.getState().agentCodeWrap).toBe(true);
+
+    const html2 = renderToStaticMarkup(React.createElement(DialogSidecar, {}));
+    expect(html2).toContain('whitespace-pre-wrap');
+    expect(html2).toContain('break-words');
+
+    // Reset back to default false
+    useUIStore.getState().setAgentCodeWrap(false);
+  });
 });
