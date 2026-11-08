@@ -528,7 +528,8 @@ Result<void> Server::start() {
                 user.user_id,
                 config_.authn.session_ttl_hours,
                 ip,
-                user_agent
+                user_agent,
+                "Web Session"
             );
 
             if (!sess_res.has_value()) {
@@ -675,6 +676,7 @@ Result<void> Server::start() {
 
             std::optional<auth::UserIdentity> user;
             int ttl_hours = config_.authn.session_ttl_hours;
+            std::string token_name = "Personal Access Token";
 
             // 1. Try body credentials
             if (!body->empty()) {
@@ -682,6 +684,11 @@ Result<void> Server::start() {
                     auto json = nlohmann::json::parse(*body);
                     if (json.contains("ttl_hours") && json["ttl_hours"].is_number_integer()) {
                         ttl_hours = json["ttl_hours"].get<int>();
+                    }
+                    if (json.contains("name") && json["name"].is_string() && !json["name"].get<std::string>().empty()) {
+                        token_name = json["name"].get<std::string>();
+                    } else if (json.contains("description") && json["description"].is_string() && !json["description"].get<std::string>().empty()) {
+                        token_name = json["description"].get<std::string>();
                     }
                     if (json.contains("username") && json["username"].is_string() &&
                         json.contains("password") && json["password"].is_string()) {
@@ -715,7 +722,8 @@ Result<void> Server::start() {
                 user->user_id,
                 ttl_hours,
                 ip,
-                user_agent
+                user_agent,
+                token_name
             );
 
             if (!sess_res.has_value()) {
@@ -726,6 +734,8 @@ Result<void> Server::start() {
             auto session = sess_res.value();
             nlohmann::json resp;
             resp["token"] = session.raw_token;
+            resp["name"] = session.name;
+            resp["token_prefix"] = session.token_prefix;
             resp["expires_at"] = session.expires_at;
             resp["user"] = user->to_json();
 
@@ -765,6 +775,46 @@ Result<void> Server::start() {
         }
 
         send_json(res, "200 OK", {{"tokens", tokens_json}});
+    });
+
+    // DELETE /api/v1/auth/tokens/:hash
+    app.del("/api/v1/auth/tokens/:hash", [this](auto *res, auto *req) {
+        std::string auth_hdr = std::string(req->getHeader("authorization"));
+        std::string cookie_hdr = std::string(req->getHeader("cookie"));
+
+        std::string del_header_name = config_.authn.delegated_header;
+        std::string del_email_name = config_.authn.delegated_email_header;
+        for (auto& c : del_header_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        for (auto& c : del_email_name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+        std::string remote_user_hdr = std::string(req->getHeader(del_header_name));
+        std::string remote_email_hdr = std::string(req->getHeader(del_email_name));
+
+        auto auth_res = authenticate_request(auth_hdr, cookie_hdr, remote_user_hdr, remote_email_hdr, make_header_lookup(req));
+        if (!auth_res.has_value() || !auth_res.value().has_value()) {
+            send_json(res, "401 Unauthorized", {{"error", "Unauthorized"}});
+            return;
+        }
+
+        std::string token_hash = url_decode(req->getParameter(0));
+        if (token_hash.empty()) {
+            send_json(res, "400 Bad Request", {{"error", "Missing token hash"}});
+            return;
+        }
+
+        auto user = *auth_res.value();
+        auto del_res = session_manager_->revoke_session_by_hash(user.user_id, token_hash);
+        if (!del_res.has_value()) {
+            send_json(res, "500 Internal Server Error", {{"error", "Failed to revoke token"}});
+            return;
+        }
+
+        if (!del_res.value()) {
+            send_json(res, "404 Not Found", {{"error", "Token not found"}});
+            return;
+        }
+
+        send_json(res, "200 OK", {{"status", "revoked"}, {"token_hash", token_hash}});
     });
 
     // =========================================================================

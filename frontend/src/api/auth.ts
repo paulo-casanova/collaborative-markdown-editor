@@ -68,10 +68,16 @@ export async function listTokens(): Promise<PatToken[]> {
   return result.tokens || [];
 }
 
-export async function createToken(name?: string): Promise<{ token: string; name?: string }> {
-  return apiRequest<{ token: string; name?: string }>('/api/v1/auth/tokens', {
+export async function createToken(name?: string): Promise<{ token: string; name?: string; token_prefix?: string }> {
+  return apiRequest<{ token: string; name?: string; token_prefix?: string }>('/api/v1/auth/tokens', {
     method: 'POST',
-    body: JSON.stringify({ name: name || 'API Token' }),
+    body: JSON.stringify({ name: name || 'Personal Access Token' }),
+  });
+}
+
+export async function deleteToken(tokenHash: string): Promise<void> {
+  await apiRequest(`/api/v1/auth/tokens/${encodeURIComponent(tokenHash)}`, {
+    method: 'DELETE',
   });
 }
 

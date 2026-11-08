@@ -26,6 +26,8 @@ struct SessionRecord {
     std::string token_hash;     ///< SHA-256 digest persisted in the sessions table.
     std::string user_id;        ///< UUID of the authenticated user.
     std::string expires_at;     ///< ISO-8601 formatted expiration timestamp.
+    std::string name;           ///< Descriptive label / name of the token.
+    std::string token_prefix;   ///< Truncated prefix for display in UI.
 };
 
 /**
@@ -38,6 +40,9 @@ struct SessionInfo {
     std::string expires_at;
     std::string ip_address;
     std::string user_agent;
+    std::string name;
+    std::string token_prefix;
+    std::string last_used_at;
 
     [[nodiscard]] nlohmann::json to_json() const {
         return {
@@ -45,7 +50,10 @@ struct SessionInfo {
             {"created_at", created_at},
             {"expires_at", expires_at},
             {"ip_address", ip_address},
-            {"user_agent", user_agent}
+            {"user_agent", user_agent},
+            {"name", name},
+            {"token_prefix", token_prefix},
+            {"last_used_at", last_used_at.empty() ? nullptr : nlohmann::json(last_used_at)}
         };
     }
 };
@@ -73,7 +81,8 @@ public:
         const std::string& user_id,
         int ttl_hours = 72,
         const std::string& ip_address = "",
-        const std::string& user_agent = ""
+        const std::string& user_agent = "",
+        const std::string& name = "Personal Access Token"
     );
 
     /**
@@ -89,6 +98,14 @@ public:
      * @return Result<bool> True if deleted, false if not found.
      */
     Result<bool> revoke_session(const std::string& raw_token);
+
+    /**
+     * @brief Revokes a specific session token belonging to a user by its SHA-256 hash.
+     * @param user_id UUID string of the owning user.
+     * @param token_hash SHA-256 hash of the token.
+     * @return Result<bool> True if deleted, false if not found.
+     */
+    Result<bool> revoke_session_by_hash(const std::string& user_id, const std::string& token_hash);
 
     /**
      * @brief Revokes all active sessions for a user from the database.

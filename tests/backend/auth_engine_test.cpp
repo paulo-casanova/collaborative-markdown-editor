@@ -422,27 +422,83 @@ int main() {
         std::cout << "  - GET /api/v1/auth/me without auth returned HTTP 401 Unauthorized.\n";
     }
 
-    // 4.6. POST /api/v1/auth/tokens with challenge credentials (PAT issuance)
+    // 4.6. POST /api/v1/auth/tokens with challenge credentials (PAT issuance with name)
     std::string pat_token;
+    std::string pat_hash;
     {
-        std::string token_body = "{\"username\":\"bob_auth_test\",\"password\":\"password123\",\"ttl_hours\":48}";
+        std::string token_body = "{\"username\":\"bob_auth_test\",\"password\":\"password123\",\"ttl_hours\":48,\"name\":\"CI / CD Automation Bot\"}";
         auto resp = http_curl("POST", base_url + "/api/v1/auth/tokens", {"Content-Type: application/json"}, token_body);
         assert(resp.status_code == 201);
         auto json = nlohmann::json::parse(resp.body);
         assert(json.contains("token"));
         assert(json["user"]["username"] == "bob_auth_test");
+        assert(json["name"] == "CI / CD Automation Bot");
+        assert(json.contains("token_prefix") && !json["token_prefix"].get<std::string>().empty());
         pat_token = json["token"].get<std::string>();
-        std::cout << "  - POST /api/v1/auth/tokens returned HTTP 201 Created and issued PAT.\n";
+        std::cout << "  - POST /api/v1/auth/tokens returned HTTP 201 Created and issued PAT with custom name.\n";
     }
 
-    // 4.7. GET /api/v1/auth/tokens (List active tokens)
+    // 4.7. GET /api/v1/auth/tokens (List active tokens with metadata)
     {
         auto resp = http_curl("GET", base_url + "/api/v1/auth/tokens", {"Authorization: Bearer " + pat_token});
         assert(resp.status_code == 200);
         auto json = nlohmann::json::parse(resp.body);
         assert(json.contains("tokens"));
         assert(json["tokens"].size() >= 2); // login token + pat token
-        std::cout << "  - GET /api/v1/auth/tokens returned HTTP 200 with token list.\n";
+
+        // Find our token in the list
+        bool found = false;
+        for (const auto& item : json["tokens"]) {
+            if (item.contains("name") && item["name"] == "CI / CD Automation Bot") {
+                found = true;
+                pat_hash = item["token_hash"].get<std::string>();
+                assert(item.contains("token_prefix"));
+                assert(!item["token_prefix"].get<std::string>().empty());
+                // Since pat_token was just used to authenticate this GET /api/v1/auth/tokens request,
+                // last_used_at should be recorded
+                assert(!item["last_used_at"].is_null());
+                break;
+            }
+        }
+        assert(found);
+        std::cout << "  - GET /api/v1/auth/tokens returned HTTP 200 with token metadata and last_used_at.\n";
+    }
+
+    // 4.7b. DELETE /api/v1/auth/tokens/:hash (Revoke specific PAT by hash)
+    {
+        // Issue a disposable PAT to delete
+        std::string disp_token;
+        std::string disp_hash;
+        {
+            std::string body = "{\"name\":\"Disposable Bot\",\"ttl_hours\":12}";
+            auto r = http_curl("POST", base_url + "/api/v1/auth/tokens", {"Authorization: Bearer " + pat_token, "Content-Type: application/json"}, body);
+            assert(r.status_code == 201);
+            auto j = nlohmann::json::parse(r.body);
+            disp_token = j["token"].get<std::string>();
+            // Retrieve its hash
+            auto list_r = http_curl("GET", base_url + "/api/v1/auth/tokens", {"Authorization: Bearer " + pat_token});
+            auto list_j = nlohmann::json::parse(list_r.body);
+            for (const auto& t : list_j["tokens"]) {
+                if (t["name"] == "Disposable Bot") {
+                    disp_hash = t["token_hash"].get<std::string>();
+                    break;
+                }
+            }
+            assert(!disp_hash.empty());
+        }
+
+        // Test using disposable token succeeds before deletion
+        auto pre_check = http_curl("GET", base_url + "/api/v1/auth/me", {"Authorization: Bearer " + disp_token});
+        assert(pre_check.status_code == 200);
+
+        // Delete the disposable token by hash
+        auto del_resp = http_curl("DELETE", base_url + "/api/v1/auth/tokens/" + disp_hash, {"Authorization: Bearer " + pat_token});
+        assert(del_resp.status_code == 200);
+
+        // Verify it is now revoked
+        auto post_check = http_curl("GET", base_url + "/api/v1/auth/me", {"Authorization: Bearer " + disp_token});
+        assert(post_check.status_code == 401);
+        std::cout << "  - DELETE /api/v1/auth/tokens/:hash successfully revoked specific PAT.\n";
     }
 
     // 4.8. POST /api/v1/auth/logout (Revoke token)
