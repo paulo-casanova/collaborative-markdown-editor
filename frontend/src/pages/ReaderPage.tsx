@@ -21,6 +21,7 @@ import {
   History,
   Lock,
   FolderTree,
+  Archive,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -47,6 +48,7 @@ import { computeRevisionDiffSuggestions } from '../utils/revisionDiff';
 import {
   acceptSuggestion,
   rejectSuggestion,
+  archiveSuggestion,
   replyComment,
   updateComment,
   updateCommentStatus,
@@ -99,6 +101,135 @@ export function computeCommentsSignature(comments: CommentRecord[] = []): string
     .sort()
     .join('|');
 }
+
+export interface ReaderSuggestionCardProps {
+  suggestion: SuggestionRecord;
+  onAccept?: (id: string) => void;
+  onReject?: (id: string) => void;
+  onArchive?: (id: string) => void;
+}
+
+export const ReaderSuggestionCard: React.FC<ReaderSuggestionCardProps> = ({
+  suggestion: sugg,
+  onAccept,
+  onReject,
+  onArchive,
+}) => {
+  const isRevisionDiff = sugg.status === 'REVISION_DIFF';
+  const statusLower = (sugg.status || '').toLowerCase();
+  const isPending = statusLower === 'pending';
+  const isAccepted = statusLower === 'accepted';
+  const isArchived = statusLower === 'archived';
+  const author = sugg.author || {
+    id: '',
+    username: 'Reviewer',
+    display_name: 'Reviewer',
+    avatar_color: '#10b981',
+  };
+  const authorName = author.display_name || author.username || (isRevisionDiff ? 'Next Revision' : 'Reviewer');
+  const authorColor = author.avatar_color || (isRevisionDiff ? '#8b5cf6' : '#10b981');
+  const initials = authorName.slice(0, 2).toUpperCase();
+
+  return (
+    <div
+      key={sugg.id}
+      className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 my-2.5 not-prose ${
+        isRevisionDiff
+          ? 'border-l-indigo-500'
+          : isAccepted
+          ? 'border-l-emerald-500'
+          : isPending
+          ? 'border-l-amber-500'
+          : 'border-l-rose-500'
+      }`}
+      data-testid="suggestion-item"
+      data-suggestion-id={sugg.id}
+      data-is-revision-diff={isRevisionDiff ? 'true' : 'false'}
+    >
+      {/* Diff Header */}
+      <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span
+            className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0"
+            style={{ backgroundColor: authorColor }}
+          >
+            {initials}
+          </span>
+          <span className="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">{authorName}</span>
+          <span className="text-[10px] text-cme-text-muted whitespace-nowrap">
+            • {new Date(sugg.created_at).toLocaleDateString()}
+          </span>
+          <span
+            className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
+              isRevisionDiff
+                ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'
+                : isAccepted
+                ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
+                : isPending
+                ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
+            }`}
+          >
+            {isRevisionDiff ? 'Next Rev Diff' : sugg.status}
+          </span>
+        </div>
+        {!isRevisionDiff && !isArchived && (
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {isPending && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onAccept?.(sugg.id)}
+                  className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-[11px] leading-tight flex items-center gap-1 transition-all shadow-xs cursor-pointer"
+                  data-testid="accept-suggestion-btn"
+                >
+                  ✓ Accept
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onReject?.(sugg.id)}
+                  className="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-[11px] leading-tight flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer"
+                  data-testid="reject-suggestion-btn"
+                >
+                  ✕ Reject
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => onArchive?.(sugg.id)}
+              className="p-1 text-cme-text-muted hover:text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded transition-colors cursor-pointer"
+              title="Archive suggestion"
+              data-testid="archive-suggestion-btn"
+            >
+              <Archive className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Unified Diff Block */}
+      <div className="font-mono text-xs divide-y divide-cme-border-base/30 bg-cme-bg-surface">
+        {Boolean(sugg.original_text) && (
+          <div className="diff-deletion flex items-start gap-2 px-2.5 py-1 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
+            <span className="select-none font-bold text-rose-500 flex-shrink-0">-</span>
+            <span className="line-through whitespace-pre-wrap break-all leading-relaxed">
+              {sugg.original_text}
+            </span>
+          </div>
+        )}
+        {Boolean(sugg.suggested_text) && (
+          <div className="diff-addition flex items-start gap-2 px-2.5 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
+            <span className="select-none font-bold text-emerald-500 flex-shrink-0">+</span>
+            <span className="whitespace-pre-wrap break-all leading-relaxed">
+              {sugg.suggested_text}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
 
 export const ReaderPage: React.FC = () => {
   const params = useParams();
@@ -848,6 +979,22 @@ export const ReaderPage: React.FC = () => {
     }
   };
 
+  const handleArchiveSuggestion = async (suggId: string) => {
+    try {
+      await archiveSuggestion(suggId);
+      queryClient.setQueryData<SuggestionRecord[]>(['reader-suggestions', docId], (old) => {
+        if (!old) return [];
+        return old.filter((s) => s.id !== suggId);
+      });
+      queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+      useReviewStore.setState((state) => ({
+        suggestions: state.suggestions.filter((s) => s.id !== suggId),
+      }));
+    } catch (err) {
+      console.error('Failed to archive suggestion in reader mode:', err);
+    }
+  };
+
   const handleReplyComment = async (commentId: string) => {
     const text = (replyInputs[commentId] || '').trim();
     if (!text) return;
@@ -1223,108 +1370,16 @@ export const ReaderPage: React.FC = () => {
   );
 
   const renderSuggestionCard = useCallback(
-    (sugg: SuggestionRecord) => {
-      const isRevisionDiff = sugg.status === 'REVISION_DIFF';
-      const isPending = (sugg.status || '').toLowerCase() === 'pending';
-      const isAccepted = (sugg.status || '').toLowerCase() === 'accepted';
-      const author = sugg.author || {
-        id: '',
-        username: 'Reviewer',
-        display_name: 'Reviewer',
-        avatar_color: '#10b981',
-      };
-      const authorName = author.display_name || author.username || (isRevisionDiff ? 'Next Revision' : 'Reviewer');
-      const authorColor = author.avatar_color || (isRevisionDiff ? '#8b5cf6' : '#10b981');
-      const initials = authorName.slice(0, 2).toUpperCase();
-
-      return (
-        <div
-          key={sugg.id}
-          className={`rounded-lg border-y border-r border-cme-border-base bg-cme-bg-surface overflow-hidden shadow-sm border-l-4 my-2.5 not-prose ${
-            isRevisionDiff
-              ? 'border-l-indigo-500'
-              : isAccepted
-              ? 'border-l-emerald-500'
-              : isPending
-              ? 'border-l-amber-500'
-              : 'border-l-rose-500'
-          }`}
-          data-testid="suggestion-item"
-          data-suggestion-id={sugg.id}
-          data-is-revision-diff={isRevisionDiff ? 'true' : 'false'}
-        >
-          {/* Diff Header */}
-          <div className="flex items-center justify-between px-2.5 py-1 bg-cme-bg-subtle/80 border-b border-cme-border-base text-xs min-h-[26px]">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span
-                className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full text-white font-bold text-[8px] flex-shrink-0"
-                style={{ backgroundColor: authorColor }}
-              >
-                {initials}
-              </span>
-              <span className="font-medium text-cme-text-base text-[11px] truncate max-w-[120px]">{authorName}</span>
-              <span className="text-[10px] text-cme-text-muted whitespace-nowrap">
-                • {new Date(sugg.created_at).toLocaleDateString()}
-              </span>
-              <span
-                className={`px-1 py-0.2 rounded text-[9px] font-medium whitespace-nowrap ${
-                  isRevisionDiff
-                    ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20'
-                    : isAccepted
-                    ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20'
-                    : isPending
-                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                    : 'bg-rose-500/10 text-rose-500 border border-rose-500/20'
-                }`}
-              >
-                {isRevisionDiff ? 'Next Rev Diff' : sugg.status}
-              </span>
-            </div>
-            {!isRevisionDiff && isPending && (
-              <div className="flex items-center gap-1 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => handleAcceptSuggestion(sugg.id)}
-                  className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium text-[11px] leading-tight flex items-center gap-1 transition-all shadow-xs cursor-pointer"
-                  data-testid="accept-suggestion-btn"
-                >
-                  ✓ Accept
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRejectSuggestion(sugg.id)}
-                  className="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500/20 active:scale-95 text-rose-600 dark:text-rose-400 font-medium text-[11px] leading-tight flex items-center gap-1 border border-rose-500/30 transition-all cursor-pointer"
-                  data-testid="reject-suggestion-btn"
-                >
-                  ✕ Reject
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Unified Diff Block */}
-          <div className="font-mono text-xs divide-y divide-cme-border-base/30 bg-cme-bg-surface">
-            {Boolean(sugg.original_text) && (
-              <div className="diff-deletion flex items-start gap-2 px-2.5 py-1 bg-rose-500/10 text-rose-700 dark:text-rose-300 border-l-4 border-rose-500">
-                <span className="select-none font-bold text-rose-500 flex-shrink-0">-</span>
-                <span className="line-through whitespace-pre-wrap break-all leading-relaxed">
-                  {sugg.original_text}
-                </span>
-              </div>
-            )}
-            {Boolean(sugg.suggested_text) && (
-              <div className="diff-addition flex items-start gap-2 px-2.5 py-1 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-l-4 border-emerald-500">
-                <span className="select-none font-bold text-emerald-500 flex-shrink-0">+</span>
-                <span className="whitespace-pre-wrap break-all leading-relaxed">
-                  {sugg.suggested_text}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-      );
-    },
-    [handleAcceptSuggestion, handleRejectSuggestion]
+    (sugg: SuggestionRecord) => (
+      <ReaderSuggestionCard
+        key={sugg.id}
+        suggestion={sugg}
+        onAccept={handleAcceptSuggestion}
+        onReject={handleRejectSuggestion}
+        onArchive={handleArchiveSuggestion}
+      />
+    ),
+    [handleAcceptSuggestion, handleRejectSuggestion, handleArchiveSuggestion]
   );
 
   const effectiveSuggestions = useMemo(() => {

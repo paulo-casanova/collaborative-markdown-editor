@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import * as Y from 'yjs';
 import { useUIStore } from '../../src/stores/uiStore';
 import { useReviewStore } from '../../src/stores/reviewStore';
@@ -528,5 +528,170 @@ This is the second paragraph with another discussion.`;
 
     // Second container under paragraph 2 has the suggestion
     expect(containers[1]?.props?.children?.[0]?.props?.['data-suggestion-id']).toBe('sugg-1');
+  });
+});
+
+describe('Reader Mode Suggestion Archiving (Accepted, Rejected, Pending)', () => {
+  it('renders archive button for ACCEPTED suggestions in reader view', async () => {
+    const { ReaderSuggestionCard } = await import('../../src/pages/ReaderPage');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+
+    const acceptedSugg: any = {
+      id: 'sugg-accepted-1',
+      document_id: 'doc-1',
+      original_text: 'old text',
+      suggested_text: 'new text',
+      status: 'ACCEPTED',
+      created_at: new Date().toISOString(),
+      author: {
+        id: 'user-1',
+        username: 'alice',
+        display_name: 'Alice',
+      },
+    };
+
+    const html = renderToStaticMarkup(<ReaderSuggestionCard suggestion={acceptedSugg} />);
+    expect(html).toContain('data-testid="archive-suggestion-btn"');
+    expect(html).toContain('title="Archive suggestion"');
+    expect(html).not.toContain('data-testid="accept-suggestion-btn"');
+    expect(html).not.toContain('data-testid="reject-suggestion-btn"');
+    expect(html).toContain('ACCEPTED');
+  });
+
+  it('renders archive button for REJECTED suggestions in reader view', async () => {
+    const { ReaderSuggestionCard } = await import('../../src/pages/ReaderPage');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+
+    const rejectedSugg: any = {
+      id: 'sugg-rejected-1',
+      document_id: 'doc-1',
+      original_text: 'unwanted text',
+      suggested_text: 'proposals',
+      status: 'REJECTED',
+      created_at: new Date().toISOString(),
+      author: {
+        id: 'user-2',
+        username: 'bob',
+        display_name: 'Bob',
+      },
+    };
+
+    const html = renderToStaticMarkup(<ReaderSuggestionCard suggestion={rejectedSugg} />);
+    expect(html).toContain('data-testid="archive-suggestion-btn"');
+    expect(html).toContain('title="Archive suggestion"');
+    expect(html).not.toContain('data-testid="accept-suggestion-btn"');
+    expect(html).not.toContain('data-testid="reject-suggestion-btn"');
+    expect(html).toContain('REJECTED');
+  });
+
+  it('renders accept, reject, and archive buttons for PENDING suggestions in reader view', async () => {
+    const { ReaderSuggestionCard } = await import('../../src/pages/ReaderPage');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+
+    const pendingSugg: any = {
+      id: 'sugg-pending-1',
+      document_id: 'doc-1',
+      original_text: 'draft paragraph',
+      suggested_text: 'revised paragraph',
+      status: 'PENDING',
+      created_at: new Date().toISOString(),
+      author: {
+        id: 'user-3',
+        username: 'charlie',
+        display_name: 'Charlie',
+      },
+    };
+
+    const html = renderToStaticMarkup(<ReaderSuggestionCard suggestion={pendingSugg} />);
+    expect(html).toContain('data-testid="accept-suggestion-btn"');
+    expect(html).toContain('data-testid="reject-suggestion-btn"');
+    expect(html).toContain('data-testid="archive-suggestion-btn"');
+    expect(html).toContain('PENDING');
+  });
+
+  it('does NOT render archive or action buttons for REVISION_DIFF in reader view', async () => {
+    const { ReaderSuggestionCard } = await import('../../src/pages/ReaderPage');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+
+    const revisionDiffSugg: any = {
+      id: 'rev-diff-1',
+      document_id: 'doc-1',
+      original_text: 'historical line',
+      suggested_text: 'current line',
+      status: 'REVISION_DIFF',
+      created_at: new Date().toISOString(),
+    };
+
+    const html = renderToStaticMarkup(<ReaderSuggestionCard suggestion={revisionDiffSugg} />);
+    expect(html).not.toContain('data-testid="archive-suggestion-btn"');
+    expect(html).not.toContain('data-testid="accept-suggestion-btn"');
+    expect(html).not.toContain('data-testid="reject-suggestion-btn"');
+    expect(html).toContain('Next Rev Diff');
+  });
+
+  it('invokes onArchive callback with suggestion ID when archive button is triggered', async () => {
+    const { ReaderSuggestionCard } = await import('../../src/pages/ReaderPage');
+    const onArchive = vi.fn();
+
+    const acceptedSugg: any = {
+      id: 'sugg-archive-test',
+      document_id: 'doc-1',
+      original_text: 'text',
+      suggested_text: 'replaced',
+      status: 'ACCEPTED',
+      created_at: new Date().toISOString(),
+    };
+
+    const element = ReaderSuggestionCard({
+      suggestion: acceptedSugg,
+      onArchive,
+    });
+
+    const header = (element as any).props.children[0];
+    const actionsContainer = header.props.children[1];
+    const archiveBtn = actionsContainer.props.children[1] || actionsContainer.props.children;
+    expect(archiveBtn.props['data-testid']).toBe('archive-suggestion-btn');
+
+    archiveBtn.props.onClick();
+    expect(onArchive).toHaveBeenCalledTimes(1);
+    expect(onArchive).toHaveBeenCalledWith('sugg-archive-test');
+  });
+
+  it('filters out ARCHIVED suggestions so they immediately disappear from reader view', async () => {
+    const { renderMarkdown } = await import('../../src/pages/ReaderPage');
+
+    const sampleDoc = '# Document\n\nContent here.';
+    const archivedSugg: any = {
+      id: 'sugg-archived',
+      document_id: 'doc-1',
+      original_text: 'Content here.',
+      suggested_text: 'Updated content.',
+      status: 'ARCHIVED',
+      created_at: new Date().toISOString(),
+      anchor: { quote: { exact: 'Content here.' }, offset: 12 },
+    };
+
+    const renderCard = (s: any) => (
+      <div key={s.id} data-testid="test-sugg-card">{s.suggested_text}</div>
+    );
+
+    const elements = renderMarkdown(
+      sampleDoc,
+      () => {},
+      null,
+      '',
+      '',
+      '',
+      false,
+      [],
+      undefined,
+      [archivedSugg],
+      renderCard
+    );
+
+    const containers = elements.filter(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(containers.length).toBe(0);
   });
 });
