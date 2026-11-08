@@ -17,6 +17,7 @@ import {
   Check,
   Sparkles,
   Lock,
+  FolderTree,
 } from 'lucide-react';
 import { fetchDocument, moveDocument, updateDocument, convertDocument } from '../../api/documents';
 import { fetchNodePermissions } from '../../api/permissions';
@@ -60,6 +61,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     setNumberHeaders,
     dialogSidecarOpen,
     toggleDialogSidecar,
+    triggerRevealInFileTree,
   } = useUIStore();
   const { updateTabMetadata, closeTab, closeAllTabs, outlineWidth, setOutlineWidth } = useWorkspaceStore();
   const navigate = useNavigate();
@@ -612,6 +614,12 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     }
   }, [document?.id]);
 
+  const handleSelectInFileTree = useCallback(() => {
+    if (document?.path || document?.id) {
+      triggerRevealInFileTree({ path: document.path, id: document.id });
+    }
+  }, [document?.path, document?.id, triggerRevealInFileTree]);
+
   useEffect(() => {
     if (document?.id) {
       void useDialogStore.getState().syncDocumentDialogPreference(document.id);
@@ -954,6 +962,16 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
                 <Link2 className="w-3.5 h-3.5 text-indigo-500" />
               )}
               <span className="sr-only">{copiedPermalink ? 'Copied!' : 'Permalink'}</span>
+            </button>
+
+            <button
+              onClick={handleSelectInFileTree}
+              className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title="Select Document in File Tree"
+              data-testid="select-in-file-tree-btn"
+            >
+              <FolderTree className="w-3.5 h-3.5" />
+              <span className="sr-only">Select in File Tree</span>
             </button>
 
             <Link

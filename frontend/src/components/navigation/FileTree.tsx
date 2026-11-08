@@ -174,6 +174,9 @@ export const FileTree: React.FC = () => {
   const [inputValue, setInputValue] = useState('');
   const [uploadTargetDir, setUploadTargetDir] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const revealInFileTree = useUIStore((s) => s.revealInFileTree);
+  const [highlightedPath, setHighlightedPath] = useState<string | null>(null);
+  const fileTreeContainerRef = useRef<HTMLDivElement>(null);
 
   const [aclTarget, setAclTarget] = useState<{
     targetType: 'DOCUMENT' | 'DIRECTORY';
@@ -299,6 +302,76 @@ export const FileTree: React.FC = () => {
       }
     }
   }, [rawNodes, updateTabMetadata]);
+
+  // Reveal, expand parent folders, and focus target document in FileTree when requested
+  React.useEffect(() => {
+    if (!revealInFileTree) return;
+    const { path: targetPath, id: targetId } = revealInFileTree;
+
+    let resolvedPath = targetPath;
+    if (!resolvedPath && targetId && rawNodes) {
+      const found = rawNodes.find((n) => n.id === targetId);
+      if (found) {
+        resolvedPath = found.path;
+      }
+    } else if (resolvedPath && rawNodes) {
+      const found = rawNodes.find((n) => n.path === resolvedPath || n.id === targetId);
+      if (found) {
+        resolvedPath = found.path;
+      }
+    }
+
+    if (!resolvedPath) return;
+
+    // Expand all ancestor directories
+    const cleanPath = resolvedPath.replace(/^\/+/, '');
+    const segments = cleanPath.split('/');
+    const ancestors: string[] = [];
+    let current = '';
+    for (let i = 0; i < segments.length - 1; i++) {
+      current = current ? `${current}/${segments[i]}` : segments[i];
+      ancestors.push(current);
+    }
+
+    if (ancestors.length > 0) {
+      setExpandedPaths((prev) => {
+        const next = new Set(prev);
+        for (const a of ancestors) {
+          next.add(a);
+        }
+        return next;
+      });
+    }
+
+    setHighlightedPath(resolvedPath);
+
+    // Scroll into view after rendering expanded children
+    const timer = setTimeout(() => {
+      if (fileTreeContainerRef.current) {
+        const safeEscape = (val: string) => {
+          if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+            return CSS.escape(val);
+          }
+          return val.replace(/["\\]/g, '\\$&');
+        };
+        const el = fileTreeContainerRef.current.querySelector(
+          `[data-node-path="${safeEscape(resolvedPath)}"]`
+        ) as HTMLElement | null;
+        if (el) {
+          el.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    }, 120);
+
+    const clearTimer = setTimeout(() => {
+      setHighlightedPath((curr) => (curr === resolvedPath ? null : curr));
+    }, 2500);
+
+    return () => {
+      clearTimeout(timer);
+      clearTimeout(clearTimer);
+    };
+  }, [revealInFileTree, rawNodes]);
 
   const tree = useMemo(() => {
     if (!rawNodes || !Array.isArray(rawNodes)) return [];
@@ -762,8 +835,13 @@ export const FileTree: React.FC = () => {
             onDragStart={(e) => handleDragStart(e, node)}
             onContextMenu={(e) => handleContextMenu(e, node)}
             style={{ paddingLeft }}
+            data-node-path={node.path}
             data-testid={`filetree-item-${node.name}`}
-            className="group flex items-center justify-between py-1.5 pr-2 text-xs rounded-lg transition-colors cursor-pointer select-none text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover"
+            className={`group flex items-center justify-between py-1.5 pr-2 text-xs rounded-lg transition-colors cursor-pointer select-none ${
+              highlightedPath === node.path
+                ? 'bg-cme-primary/20 ring-2 ring-cme-primary/70 text-cme-primary font-medium animate-pulse'
+                : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+            }`}
           >
             {opensInline ? (
               <a
@@ -865,9 +943,12 @@ export const FileTree: React.FC = () => {
           onDragStart={(e) => handleDragStart(e, node)}
           onContextMenu={(e) => handleContextMenu(e, node)}
           style={{ paddingLeft }}
+          data-node-path={node.path}
           data-testid={`filetree-item-${node.name}`}
           className={`group flex items-center justify-between py-1.5 pr-2 text-xs rounded-lg transition-colors cursor-pointer select-none ${
-            isActive
+            highlightedPath === node.path
+              ? 'bg-cme-primary/20 ring-2 ring-cme-primary/70 text-cme-primary font-medium animate-pulse'
+              : isActive
               ? 'bg-cme-primary/10 text-cme-primary font-medium'
               : 'text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
           }`}
@@ -942,13 +1023,16 @@ export const FileTree: React.FC = () => {
           style={{ paddingLeft }}
           draggable={true}
           onDragStart={(e) => handleDragStart(e, node)}
+          data-node-path={node.path}
           data-testid={`filetree-folder-${node.name}`}
           onContextMenu={(e) => handleContextMenu(e, node)}
           onDragOver={(e) => handleDragOver(e, node)}
           onDragLeave={(e) => handleDragLeave(e, node)}
           onDrop={(e) => handleDrop(e, node)}
           className={`group flex items-center justify-between py-1.5 pr-2 text-xs font-medium rounded-lg cursor-pointer transition-colors select-none ${
-            isDragTarget
+            highlightedPath === node.path
+              ? 'bg-cme-primary/20 ring-2 ring-cme-primary/70 text-cme-primary font-medium animate-pulse'
+              : isDragTarget
               ? 'bg-cme-primary/20 border border-cme-primary text-cme-primary'
               : 'text-cme-text-base hover:bg-cme-bg-hover'
           }`}
@@ -1118,6 +1202,7 @@ export const FileTree: React.FC = () => {
 
       {/* Directory Node Tree */}
       <div
+        ref={fileTreeContainerRef}
         className="flex-1 overflow-y-auto space-y-0.5 pr-1"
         data-testid="file-tree-container"
         onDragOver={(e) => {

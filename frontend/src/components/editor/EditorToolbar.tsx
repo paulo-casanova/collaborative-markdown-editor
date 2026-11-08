@@ -28,6 +28,7 @@ import {
   Tag,
   Sparkles,
   Edit3,
+  FolderTree,
 } from 'lucide-react';
 import { useReviewStore } from '../../stores/reviewStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -52,7 +53,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
   documentTitle,
   documentPath,
 }) => {
-  const { numberHeaders, toggleNumberHeaders, lineNumbers, toggleLineNumbers } = useUIStore();
+  const { numberHeaders, toggleNumberHeaders, lineNumbers, toggleLineNumbers, triggerRevealInFileTree } = useUIStore();
   const {
     comments,
     suggestions,
@@ -531,6 +532,20 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
         )}
         <span className="sr-only">{suggestingMode ? 'Suggesting' : 'Editing'}</span>
       </button>
+
+      {/* Select in File Tree */}
+      {documentPath && (
+        <button
+          type="button"
+          data-testid="toolbar-select-in-file-tree-btn"
+          onClick={() => triggerRevealInFileTree({ path: documentPath, id: documentId })}
+          className={btnClass(false)}
+          title="Select document in file tree"
+        >
+          <FolderTree className="w-3.5 h-3.5 text-cme-text-muted hover:text-cme-text-base" />
+          <span className="sr-only">Select in file tree</span>
+        </button>
+      )}
 
       {/* In-Text Reviews Toggle */}
       <button

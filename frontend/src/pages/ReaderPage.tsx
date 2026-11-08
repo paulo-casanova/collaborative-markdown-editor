@@ -20,6 +20,7 @@ import {
   Sparkles,
   History,
   Lock,
+  FolderTree,
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -108,7 +109,7 @@ export const ReaderPage: React.FC = () => {
   const pathParam = searchParams.get('path');
   const rawTarget = pathParam || wildcard || (idParam !== 'by-path' ? idParam : '') || '';
 
-  const { setBreadcrumbs, setViewMode, dialogSidecarOpen, toggleDialogSidecar } = useUIStore();
+  const { setBreadcrumbs, setViewMode, dialogSidecarOpen, toggleDialogSidecar, triggerRevealInFileTree } = useUIStore();
   const { closeAllTabs } = useWorkspaceStore();
   const [showReviews, setShowReviews] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
@@ -1596,6 +1597,17 @@ export const ReaderPage: React.FC = () => {
                 <Link2 className="w-3.5 h-3.5 text-indigo-500" />
               )}
               <span className="sr-only">{copiedPermalink ? 'Copied!' : 'Permalink'}</span>
+            </button>
+
+            {/* Select in File Tree */}
+            <button
+              onClick={() => triggerRevealInFileTree({ path: document.path, id: document.id })}
+              className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-xs font-medium text-cme-text-muted hover:text-cme-text-base transition-colors"
+              title="Select document in file tree"
+              data-testid="reader-select-in-file-tree-btn"
+            >
+              <FolderTree className="w-3.5 h-3.5" />
+              <span className="sr-only">Select in file tree</span>
             </button>
 
             {/* Revision History */}

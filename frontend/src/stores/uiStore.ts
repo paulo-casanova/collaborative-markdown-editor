@@ -48,6 +48,8 @@ interface UIState {
   agentCodeWrap: boolean;
   setAgentCodeWrap: (wrap: boolean) => void;
   toggleAgentCodeWrap: () => void;
+  revealInFileTree: { path?: string; id?: string; timestamp: number } | null;
+  triggerRevealInFileTree: (target: { path?: string; id?: string }) => void;
 }
 
 const getInitialSidebarWidth = (): number => {
@@ -139,6 +141,7 @@ const uiStore = createStore<UIState>((set) => ({
   numberHeaders: getInitialNumberHeaders(),
   lineNumbers: getInitialLineNumbers(),
   agentCodeWrap: getInitialAgentCodeWrap(),
+  revealInFileTree: null,
   toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
   setSidebarOpen: (open) => set({ sidebarOpen: open }),
   setSidebarWidth: (width) => {
@@ -234,6 +237,11 @@ const uiStore = createStore<UIState>((set) => ({
         // ignore storage errors
       }
       return { agentCodeWrap: next };
+    }),
+  triggerRevealInFileTree: (target) =>
+    set({
+      sidebarOpen: true,
+      revealInFileTree: { ...target, timestamp: Date.now() },
     }),
 }));
 

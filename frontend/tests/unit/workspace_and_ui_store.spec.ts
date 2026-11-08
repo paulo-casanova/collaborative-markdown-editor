@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { useWorkspaceStore } from '../../src/stores/workspaceStore';
 import { useUIStore } from '../../src/stores/uiStore';
 import { useReviewStore } from '../../src/stores/reviewStore';
 import { searchDocuments } from '../../src/api/documents';
+import { EditorToolbar } from '../../src/components/editor/EditorToolbar';
 
 describe('WorkspaceStore & UIStore behavior', () => {
   beforeEach(() => {
@@ -455,6 +458,47 @@ describe('WorkspaceStore & UIStore behavior', () => {
       expect(state.activeTabId).toBeNull();
       expect(state.secondaryTabId).toBeNull();
       expect(state.splitMode).toBe('none');
+    });
+
+    it('triggerRevealInFileTree opens sidebar and sets target path and id', () => {
+      useUIStore.getState().setSidebarOpen(false);
+      expect(useUIStore.getState().sidebarOpen).toBe(false);
+
+      useUIStore.getState().triggerRevealInFileTree({
+        path: 'guides/getting-started.md',
+        id: 'doc-reveal-1',
+      });
+
+      expect(useUIStore.getState().sidebarOpen).toBe(true);
+      const reveal = useUIStore.getState().revealInFileTree;
+      expect(reveal).not.toBeNull();
+      expect(reveal?.path).toBe('guides/getting-started.md');
+      expect(reveal?.id).toBe('doc-reveal-1');
+      expect(typeof reveal?.timestamp).toBe('number');
+    });
+
+    it('renders toolbar-select-in-file-tree-btn in EditorToolbar when documentPath is provided', () => {
+      const mockEditor: any = {
+        chain: () => mockEditor,
+        focus: () => mockEditor,
+        can: () => ({ undo: () => true, redo: () => true }),
+        isActive: () => false,
+        state: { selection: { empty: true, from: 0, to: 0 }, doc: { textBetween: () => '' } },
+        on: () => {},
+        off: () => {},
+      };
+
+      const html = renderToStaticMarkup(
+        React.createElement(EditorToolbar, {
+          editor: mockEditor,
+          documentId: 'doc-tree-test',
+          documentPath: 'guides/test.md',
+          documentTitle: 'Test Document',
+        })
+      );
+
+      expect(html).toContain('data-testid="toolbar-select-in-file-tree-btn"');
+      expect(html).toContain('Select document in file tree');
     });
   });
 });
