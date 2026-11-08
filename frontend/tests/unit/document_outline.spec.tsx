@@ -9,6 +9,7 @@ import {
   getAncestorIds,
   getHeadingIcon,
   getHeadingFontClass,
+  extractHeadingsFromMarkdown,
   OutlineItem,
 } from '../../src/components/navigation/DocumentOutline';
 import { useUIStore } from '../../src/stores/uiStore';
@@ -189,6 +190,55 @@ Deployment guide.
       const html = renderToStaticMarkup(<DocumentOutline markdown="Just plain text with no headings." />);
       expect(html).toContain('data-testid="table-of-contents"');
       expect(html).toContain('No headings in this document.');
+    });
+  });
+
+  describe('extractHeadingsFromMarkdown with display math blocks', () => {
+    it('does not skip headings when single-line display math is present', () => {
+      const doc = [
+        '# Title',
+        '## 1. Intro',
+        '$$E = mc^2$$',
+        '## 2. Next Section',
+        '$$a^2 + b^2 = c^2$$',
+        '## 3. Final Section',
+      ].join('\n');
+
+      const headings = extractHeadingsFromMarkdown(doc);
+      expect(headings.map((h) => h.text)).toEqual([
+        'Title',
+        '1. Intro',
+        '2. Next Section',
+        '3. Final Section',
+      ]);
+    });
+
+    it('handles multiline display math and matrices without skipping subsequent headings', () => {
+      const doc = [
+        '# Document',
+        '## 4. Hierarchical Shapes',
+        '### 4.1 Transform',
+        '$$\\begin{bmatrix}',
+        'x \\\\',
+        'y',
+        '\\end{bmatrix}$$',
+        '## 5. Shape Item Definitions',
+        '## 6. Snapping & Connector Bindings',
+        '### 6.4 Dynamic Endpoint Resolution',
+        '   $$\\text{Endpoint} = \\text{TargetSideVertex} + \\text{ratio}$$',
+        '## 7. Rendering & Tree Traversal',
+      ].join('\n');
+
+      const headings = extractHeadingsFromMarkdown(doc);
+      expect(headings.map((h) => h.text)).toEqual([
+        'Document',
+        '4. Hierarchical Shapes',
+        '4.1 Transform',
+        '5. Shape Item Definitions',
+        '6. Snapping & Connector Bindings',
+        '6.4 Dynamic Endpoint Resolution',
+        '7. Rendering & Tree Traversal',
+      ]);
     });
   });
 });

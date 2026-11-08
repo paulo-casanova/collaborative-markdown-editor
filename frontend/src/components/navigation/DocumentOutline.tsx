@@ -59,11 +59,24 @@ export function extractHeadingsFromMarkdown(
     }
     if (inCodeFence) continue;
 
-    if (/^\s*\$\$/.test(rawLine)) {
-      inMathBlock = !inMathBlock;
+    if (!inMathBlock) {
+      const trimmed = rawLine.trim();
+      if (trimmed.startsWith('$$')) {
+        const afterOpen = trimmed.slice(2);
+        if (afterOpen.includes('$$')) {
+          // Single-line display math $$...$$ does not open a multi-line math block
+          continue;
+        }
+        inMathBlock = true;
+        continue;
+      }
+    } else {
+      if (rawLine.includes('$$')) {
+        inMathBlock = false;
+        continue;
+      }
       continue;
     }
-    if (inMathBlock) continue;
 
     const match = rawLine.match(/^\s{0,3}(#{1,6})\s+(.+)$/);
     if (match) {
@@ -133,6 +146,7 @@ export function findHeadingPosition(
   const targetStrippedSlug = slugify(stripHeadingNumberPrefix(cleanTarget) || cleanTarget);
   const slugCounts: Record<string, number> = {};
   let inCodeFence = false;
+  let inMathBlock = false;
 
   for (let i = 1; i <= doc.lines; i++) {
     const line = doc.line(i);
@@ -142,6 +156,24 @@ export function findHeadingPosition(
       continue;
     }
     if (inCodeFence) continue;
+
+    if (!inMathBlock) {
+      const trimmed = lineText.trim();
+      if (trimmed.startsWith('$$')) {
+        const afterOpen = trimmed.slice(2);
+        if (afterOpen.includes('$$')) {
+          continue;
+        }
+        inMathBlock = true;
+        continue;
+      }
+    } else {
+      if (lineText.includes('$$')) {
+        inMathBlock = false;
+        continue;
+      }
+      continue;
+    }
 
     const match = lineText.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
     if (match) {

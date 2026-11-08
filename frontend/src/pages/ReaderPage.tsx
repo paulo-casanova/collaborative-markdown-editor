@@ -1386,7 +1386,9 @@ export const ReaderPage: React.FC = () => {
     if (isHistorical) {
       return showNextRevDiff ? revisionDiffSuggestions : [];
     }
-    return showReviews ? suggestions : [];
+    return showReviews
+      ? suggestions.filter((s) => s.status === 'PENDING' || s.status === 'REVISION_DIFF')
+      : [];
   }, [isHistorical, showNextRevDiff, revisionDiffSuggestions, showReviews, suggestions]);
 
   const effectiveComments = useMemo(() => {
@@ -1981,7 +1983,7 @@ export function renderMarkdown(
     });
 
   const activeSuggestions = suggestions
-    .filter((s) => s.status !== 'ARCHIVED')
+    .filter((s) => s.status === 'PENDING' || s.status === 'REVISION_DIFF')
     .map((s) => {
       let targetPos = -1;
       const reconciled = reconcileAnchor(s.anchor, content);
@@ -2186,16 +2188,38 @@ export function renderMarkdown(
     if (line.trim().startsWith('$$')) {
       const startBlockLine = i;
       const mathLines: string[] = [];
-      if (line.trim() === '$$') {
-        i++;
-        while (i < lines.length && !lines[i].trim().endsWith('$$')) {
-          mathLines.push(lines[i]);
-          i++;
+      const trimmedLine = line.trim();
+      const afterOpen = trimmedLine.slice(2);
+      const singleLineEndIdx = afterOpen.indexOf('$$');
+
+      if (singleLineEndIdx !== -1) {
+        // Single-line display math: $$...$$ (handles indentation like 3 spaces in lists)
+        const formula = afterOpen.slice(0, singleLineEndIdx).trim();
+        if (formula.length > 0) {
+          mathLines.push(formula);
         }
-        i++; // skip ending $$
-      } else {
-        mathLines.push(line.replace(/^\$\$/, '').replace(/\$\$$/, ''));
         i++;
+      } else {
+        // Multi-line display math block
+        if (afterOpen.trim().length > 0) {
+          mathLines.push(afterOpen.trim());
+        }
+        i++;
+        while (i < lines.length) {
+          const curLine = lines[i];
+          const closeIdx = curLine.indexOf('$$');
+          if (closeIdx !== -1) {
+            const beforeClose = curLine.slice(0, closeIdx).trim();
+            if (beforeClose.length > 0) {
+              mathLines.push(beforeClose);
+            }
+            i++;
+            break;
+          } else {
+            mathLines.push(curLine);
+            i++;
+          }
+        }
       }
       const endBlockLine = i - 1;
       const formula = mathLines.join('\n');

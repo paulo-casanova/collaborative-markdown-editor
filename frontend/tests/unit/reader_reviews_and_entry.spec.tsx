@@ -657,25 +657,46 @@ describe('Reader Mode Suggestion Archiving (Accepted, Rejected, Pending)', () =>
     expect(onArchive).toHaveBeenCalledWith('sugg-archive-test');
   });
 
-  it('filters out ARCHIVED suggestions so they immediately disappear from reader view', async () => {
+  it('only shows PENDING suggestions inline in reader view, omitting ACCEPTED and REJECTED (matching editor view)', async () => {
     const { renderMarkdown } = await import('../../src/pages/ReaderPage');
 
     const sampleDoc = '# Document\n\nContent here.';
-    const archivedSugg: any = {
-      id: 'sugg-archived',
+    const acceptedSugg: any = {
+      id: 'sugg-accepted',
       document_id: 'doc-1',
       original_text: 'Content here.',
       suggested_text: 'Updated content.',
-      status: 'ARCHIVED',
+      status: 'ACCEPTED',
+      created_at: new Date().toISOString(),
+      anchor: { quote: { exact: 'Content here.' }, offset: 12 },
+    };
+
+    const rejectedSugg: any = {
+      id: 'sugg-rejected',
+      document_id: 'doc-1',
+      original_text: 'Content here.',
+      suggested_text: 'Discarded content.',
+      status: 'REJECTED',
+      created_at: new Date().toISOString(),
+      anchor: { quote: { exact: 'Content here.' }, offset: 12 },
+    };
+
+    const pendingSugg: any = {
+      id: 'sugg-pending',
+      document_id: 'doc-1',
+      original_text: 'Content here.',
+      suggested_text: 'Pending content.',
+      status: 'PENDING',
       created_at: new Date().toISOString(),
       anchor: { quote: { exact: 'Content here.' }, offset: 12 },
     };
 
     const renderCard = (s: any) => (
-      <div key={s.id} data-testid="test-sugg-card">{s.suggested_text}</div>
+      <div key={s.id} data-testid="test-sugg-card" data-sugg-id={s.id}>{s.suggested_text}</div>
     );
 
-    const elements = renderMarkdown(
+    // Test with ACCEPTED and REJECTED suggestions: neither should be rendered inline
+    const elementsResolved = renderMarkdown(
       sampleDoc,
       () => {},
       null,
@@ -685,13 +706,68 @@ describe('Reader Mode Suggestion Archiving (Accepted, Rejected, Pending)', () =>
       false,
       [],
       undefined,
-      [archivedSugg],
+      [acceptedSugg, rejectedSugg],
       renderCard
     );
 
-    const containers = elements.filter(
+    const containersResolved = elementsResolved.filter(
       (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
     );
-    expect(containers.length).toBe(0);
+    expect(containersResolved.length).toBe(0);
+
+    // Test with PENDING suggestion: should be rendered inline
+    const elementsPending = renderMarkdown(
+      sampleDoc,
+      () => {},
+      null,
+      '',
+      '',
+      '',
+      false,
+      [],
+      undefined,
+      [pendingSugg],
+      renderCard
+    );
+
+    const containersPending = elementsPending.filter(
+      (el: any) => el?.props?.['data-testid'] === 'inline-comments-container'
+    );
+    expect(containersPending.length).toBe(1);
+    expect(containersPending[0]?.props?.children?.[0]?.props?.['data-sugg-id']).toBe('sugg-pending');
+  });
+
+  it('renders indented display math (e.g. in list items like 6.4) and multiline matrices without KaTeX errors', async () => {
+    const { renderMarkdown } = await import('../../src/pages/ReaderPage');
+    const { renderToStaticMarkup } = await import('react-dom/server');
+
+    const sampleDoc = [
+      '1. Dynamic Endpoint Resolution:',
+      '   $$\\text{Endpoint} = \\text{TargetSideVertex}_{\\text{start}} + \\text{ratio} \\times (\\text{TargetSideVertex}_{\\text{end}} - \\text{TargetSideVertex}_{\\text{start}})$$',
+      '',
+      'Matrix transform:',
+      '$$\\begin{bmatrix}',
+      'x \\\\',
+      'y',
+      '\\end{bmatrix}$$',
+    ].join('\n');
+
+    const elements = renderMarkdown(
+      sampleDoc,
+      () => {},
+      null,
+      '',
+      '',
+      '',
+      false
+    );
+
+    const fullHtml = elements.map((el) => renderToStaticMarkup(el as any)).join('');
+    // Must NOT contain KaTeX error in red
+    expect(fullHtml).not.toContain('katex-error');
+    expect(fullHtml).not.toContain('#cc0000');
+    // Must contain KaTeX rendered display math
+    expect(fullHtml).toContain('katex-display');
+    expect(fullHtml).toContain('Endpoint');
   });
 });

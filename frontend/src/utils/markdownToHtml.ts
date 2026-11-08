@@ -175,14 +175,34 @@ export function parseMarkdownToHtml(markdown: string): string {
       closeBlockquote();
 
       const mathLines: string[] = [];
-      if (line.trim() === '$$') {
-        i++;
-        while (i < lines.length && !lines[i].trim().endsWith('$$')) {
-          mathLines.push(lines[i]);
-          i++;
+      const trimmedLine = line.trim();
+      const afterOpen = trimmedLine.slice(2);
+      const singleLineEndIdx = afterOpen.indexOf('$$');
+
+      if (singleLineEndIdx !== -1) {
+        const formula = afterOpen.slice(0, singleLineEndIdx).trim();
+        if (formula.length > 0) {
+          mathLines.push(formula);
         }
       } else {
-        mathLines.push(line.replace(/^\$\$/, '').replace(/\$\$$/, ''));
+        if (afterOpen.trim().length > 0) {
+          mathLines.push(afterOpen.trim());
+        }
+        i++;
+        while (i < lines.length) {
+          const curLine = lines[i];
+          const closeIdx = curLine.indexOf('$$');
+          if (closeIdx !== -1) {
+            const beforeClose = curLine.slice(0, closeIdx).trim();
+            if (beforeClose.length > 0) {
+              mathLines.push(beforeClose);
+            }
+            break;
+          } else {
+            mathLines.push(curLine);
+            i++;
+          }
+        }
       }
       const formula = mathLines.join('\n');
       output.push(`<div class="katex-display-block" data-latex="${formula.replace(/"/g, '&quot;')}"></div>`);
