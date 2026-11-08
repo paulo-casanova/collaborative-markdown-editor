@@ -1204,4 +1204,112 @@ describe('Dialogs & Local Agent Subsystem (Phase 3)', () => {
     // Reset back to default false
     useUIStore.getState().setAgentCodeWrap(false);
   });
+
+  it('sets hasMoreEarlierMessages in selectDialog when 50 messages are returned', async () => {
+    const mock50: DialogMessage[] = Array.from({ length: 50 }, (_, i) => ({
+      id: `msg-${i + 1}`,
+      dialog_id: 'dlg-pagination',
+      role: (i % 2 === 0 ? 'user' : 'assistant') as 'user' | 'assistant',
+      content: `Message ${i + 1}`,
+      created_at: new Date(Date.now() + i * 1000).toISOString(),
+    }));
+
+    const fetchSpy = vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue(mock50);
+
+    await useDialogStore.getState().selectDialog('dlg-pagination');
+
+    expect(fetchSpy).toHaveBeenCalledWith('dlg-pagination', 50);
+    expect(useDialogStore.getState().messages.length).toBe(50);
+    expect(useDialogStore.getState().hasMoreEarlierMessages).toBe(true);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('loadEarlierMessages fetches messages before oldest message id and prepends them', async () => {
+    const existingMessages: DialogMessage[] = [
+      { id: 'msg-51', dialog_id: 'dlg-p2', role: 'user', content: 'Message 51', created_at: '2026-01-01T10:00:00Z' },
+      { id: 'msg-52', dialog_id: 'dlg-p2', role: 'assistant', content: 'Message 52', created_at: '2026-01-01T10:01:00Z' },
+    ];
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-p2',
+      messages: existingMessages,
+      hasMoreEarlierMessages: true,
+      isLoadingEarlier: false,
+    });
+
+    const earlierMessages: DialogMessage[] = [
+      { id: 'msg-49', dialog_id: 'dlg-p2', role: 'user', content: 'Message 49', created_at: '2026-01-01T09:58:00Z' },
+      { id: 'msg-50', dialog_id: 'dlg-p2', role: 'assistant', content: 'Message 50', created_at: '2026-01-01T09:59:00Z' },
+    ];
+
+    const fetchSpy = vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue(earlierMessages);
+
+    await useDialogStore.getState().loadEarlierMessages();
+
+    expect(fetchSpy).toHaveBeenCalledWith('dlg-p2', 50, 'msg-51');
+    const storeMsgs = useDialogStore.getState().messages;
+    expect(storeMsgs.length).toBe(4);
+    expect(storeMsgs[0].id).toBe('msg-49');
+    expect(storeMsgs[1].id).toBe('msg-50');
+    expect(storeMsgs[2].id).toBe('msg-51');
+    expect(storeMsgs[3].id).toBe('msg-52');
+    // Returned 2 (< 50), so hasMoreEarlierMessages should be false
+    expect(useDialogStore.getState().hasMoreEarlierMessages).toBe(false);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('reconcileMessages preserves earlier messages loaded through pagination instead of discarding them', async () => {
+    const pagedMessages: DialogMessage[] = [
+      { id: 'msg-1', dialog_id: 'dlg-p3', role: 'user', content: 'Old message 1', created_at: '2026-01-01T08:00:00Z' },
+      { id: 'msg-2', dialog_id: 'dlg-p3', role: 'assistant', content: 'Old message 2', created_at: '2026-01-01T08:01:00Z' },
+      { id: 'msg-51', dialog_id: 'dlg-p3', role: 'user', content: 'Recent prompt', created_at: '2026-01-01T12:00:00Z' },
+    ];
+
+    useDialogStore.setState({
+      activeDialogId: 'dlg-p3',
+      messages: pagedMessages,
+      isGenerating: true,
+    });
+
+    // Backend returns the latest 50 messages, which does not contain msg-1 or msg-2, but contains new msg-52
+    const latestBatch: DialogMessage[] = [
+      { id: 'msg-51', dialog_id: 'dlg-p3', role: 'user', content: 'Recent prompt', created_at: '2026-01-01T12:00:00Z' },
+      { id: 'msg-52', dialog_id: 'dlg-p3', role: 'assistant', content: 'Recent answer', created_at: '2026-01-01T12:01:00Z' },
+    ];
+
+    const fetchSpy = vi.spyOn(dialogApi, 'fetchMessages').mockResolvedValue(latestBatch);
+
+    await useDialogStore.getState().reconcileMessages('dlg-p3');
+
+    const updated = useDialogStore.getState().messages;
+    // msg-1 and msg-2 must still exist!
+    expect(updated.some((m) => m.id === 'msg-1')).toBe(true);
+    expect(updated.some((m) => m.id === 'msg-2')).toBe(true);
+    expect(updated.some((m) => m.id === 'msg-51')).toBe(true);
+    expect(updated.some((m) => m.id === 'msg-52')).toBe(true);
+    expect(useDialogStore.getState().isGenerating).toBe(false);
+
+    fetchSpy.mockRestore();
+  });
+
+  it('renders earlier-messages-banner and load buttons in DialogSidecar when hasMoreEarlierMessages is true', () => {
+    useDialogStore.setState({
+      activeDialogId: 'dlg-render-test',
+      dialogs: [{ id: 'dlg-render-test', title: 'Render Test', document_id: 'doc-1', created_at: '', updated_at: '' }],
+      messages: [
+        { id: 'm51', dialog_id: 'dlg-render-test', user_id: '', role: 'user', content: 'Latest prompt', created_at: new Date().toISOString() },
+      ],
+      hasMoreEarlierMessages: true,
+      isLoadingEarlier: false,
+    });
+
+    const html = renderToStaticMarkup(React.createElement(DialogSidecar, {}));
+    expect(html).toContain('data-testid="earlier-messages-banner"');
+    expect(html).toContain('data-testid="load-earlier-messages-btn"');
+    expect(html).toContain('data-testid="load-all-messages-btn"');
+    expect(html).toContain('Load earlier');
+    expect(html).toContain('Load all');
+  });
 });

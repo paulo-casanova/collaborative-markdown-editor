@@ -53,9 +53,17 @@ export async function deleteDialog(dialogId: string): Promise<void> {
 // Dialog Messages API
 // =============================================================================
 
-export async function fetchMessages(dialogId: string, limit: number = 50): Promise<DialogMessage[]> {
+export async function fetchMessages(
+  dialogId: string,
+  limit: number = 50,
+  beforeId?: string
+): Promise<DialogMessage[]> {
   try {
-    return await apiRequest<DialogMessage[]>(`/api/v1/dialogs/${dialogId}/messages?limit=${limit}`);
+    const params = new URLSearchParams();
+    if (limit) params.set('limit', String(limit));
+    if (beforeId) params.set('before_id', beforeId);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return await apiRequest<DialogMessage[]>(`/api/v1/dialogs/${dialogId}/messages${qs}`);
   } catch (err) {
     console.warn(`[DialogAPI] fetchMessages failed for ${dialogId}:`, err);
     return [];

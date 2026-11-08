@@ -158,8 +158,18 @@ public:
 
     /**
      * @brief Lists chronological messages for a dialog thread.
+     * @param user_id Owner of the dialog.
+     * @param dialog_id Dialog ID to retrieve messages for.
+     * @param limit Maximum number of messages to return (defaults to 200).
+     * @param before_id If specified, returns messages prior to this message ID for pagination.
+     * @return Chronologically ascending list of messages (oldest to newest among the selected window).
      */
-    Result<std::vector<DialogMessageRecord>> list_messages(const std::string& user_id, const std::string& dialog_id, size_t limit = 200);
+    Result<std::vector<DialogMessageRecord>> list_messages(
+        const std::string& user_id,
+        const std::string& dialog_id,
+        size_t limit = 200,
+        const std::string& before_id = ""
+    );
 
     /**
      * @brief Adds a message to a dialog thread, verifying dialog ownership and updating dialog updated_at.

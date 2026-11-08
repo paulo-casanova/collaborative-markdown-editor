@@ -211,11 +211,37 @@ int main() {
     assert((*msgs_res)[0].role == "user");
     assert((*msgs_res)[1].role == "assistant");
 
+    // Add more messages to test last-N interactions and pagination with before_id
+    auto msg3_res = dialog_service.add_message(alice_id, dialog_id, "user", "Message 3");
+    auto msg4_res = dialog_service.add_message(alice_id, dialog_id, "assistant", "Message 4");
+    auto msg5_res = dialog_service.add_message(alice_id, dialog_id, "user", "Message 5");
+    assert(msg3_res.has_value() && msg4_res.has_value() && msg5_res.has_value());
+
+    // list_messages with limit=2 should return the LAST 2 interactions (messages 4 and 5), in chronological ASC order
+    auto last2_res = dialog_service.list_messages(alice_id, dialog_id, 2);
+    assert(last2_res.has_value());
+    assert(last2_res->size() == 2);
+    assert((*last2_res)[0].content == "Message 4");
+    assert((*last2_res)[1].content == "Message 5");
+
+    // list_messages with before_id=msg4.id and limit=2 should return messages 2 and 3
+    auto page_prev = dialog_service.list_messages(alice_id, dialog_id, 2, msg4_res->id);
+    assert(page_prev.has_value());
+    assert(page_prev->size() == 2);
+    assert((*page_prev)[0].id == msg2_res->id);
+    assert((*page_prev)[1].id == msg3_res->id);
+
+    // list_messages with before_id=msg2.id and limit=2 should return message 1
+    auto page_earliest = dialog_service.list_messages(alice_id, dialog_id, 2, msg2_res->id);
+    assert(page_earliest.has_value());
+    assert(page_earliest->size() == 1);
+    assert((*page_earliest)[0].id == msg1_res->id);
+
     // Bob cannot list Alice's messages
     auto bob_msgs = dialog_service.list_messages(bob_id, dialog_id);
     assert(!bob_msgs.has_value());
     assert(bob_msgs.error() == ErrorCode::NotFound);
-    std::cout << "  [PASS] Dialog messages and context snapshots verified.\n";
+    std::cout << "  [PASS] Dialog messages, last-N ordering, and pagination verified.\n";
 
     // 1.6 Document Association Preferences
     auto pref_initial = dialog_service.get_document_dialog(alice_id, doc_id);
@@ -441,6 +467,24 @@ int main() {
         auto list_json = nlohmann::json::parse(list_resp.body);
         assert(list_json.is_array());
         assert(list_json.size() == 3);
+
+        // Verify limit=2 returns the last 2 messages (msg2 and msg3)
+        auto list_last2 = http_curl("GET", base_url + "/api/v1/dialogs/" + api_dialog_id + "/messages?limit=2",
+                                    {"Authorization: Bearer " + alice_token});
+        assert(list_last2.status_code == 200);
+        auto last2_json = nlohmann::json::parse(list_last2.body);
+        assert(last2_json.size() == 2);
+        assert(last2_json[0]["id"] == msg2_id);
+        assert(last2_json[1]["content"] == "What about websockets?");
+
+        // Verify pagination before_id returns earlier messages
+        auto list_before = http_curl("GET", base_url + "/api/v1/dialogs/" + api_dialog_id + "/messages?limit=2&before_id=" + msg2_id,
+                                     {"Authorization: Bearer " + alice_token});
+        assert(list_before.status_code == 200);
+        auto before_json = nlohmann::json::parse(list_before.body);
+        assert(before_json.size() == 1);
+        assert(before_json[0]["id"] == msg1_id);
+
         std::cout << "  [PASS] POST and GET /api/v1/dialogs/:id/messages verified.\n";
 
         // Fork dialog up to msg2

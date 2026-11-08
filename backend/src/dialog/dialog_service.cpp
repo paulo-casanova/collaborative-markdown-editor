@@ -295,7 +295,12 @@ Result<void> DialogService::set_document_dialog(const std::string& user_id, cons
     }
 }
 
-Result<std::vector<DialogMessageRecord>> DialogService::list_messages(const std::string& user_id, const std::string& dialog_id, size_t limit) {
+Result<std::vector<DialogMessageRecord>> DialogService::list_messages(
+    const std::string& user_id,
+    const std::string& dialog_id,
+    size_t limit,
+    const std::string& before_id
+) {
     if (!db_pool_) return std::unexpected(ErrorCode::DatabaseError);
     if (!is_valid_uuid(user_id) || !is_valid_uuid(dialog_id)) return std::unexpected(ErrorCode::InvalidArgument);
 
@@ -314,14 +319,54 @@ Result<std::vector<DialogMessageRecord>> DialogService::list_messages(const std:
             return std::unexpected(ErrorCode::NotFound);
         }
 
-        auto rows = tx.exec_params(
-            "SELECT id, dialog_id, role, content, context_snapshot::text, created_at::text "
-            "FROM dialog_messages "
-            "WHERE dialog_id = $1::uuid "
-            "ORDER BY created_at ASC, CASE WHEN role = 'user' THEN 0 ELSE 1 END ASC, id ASC "
-            "LIMIT $2;",
-            dialog_id, limit
-        );
+        pqxx::result rows;
+        if (!before_id.empty()) {
+            if (!is_valid_uuid(before_id)) {
+                return std::unexpected(ErrorCode::InvalidArgument);
+            }
+            auto ref_row = tx.exec_params(
+                "SELECT created_at::text, CASE WHEN role = 'user' THEN 0 ELSE 1 END, id::text "
+                "FROM dialog_messages WHERE id = $1::uuid AND dialog_id = $2::uuid;",
+                before_id, dialog_id
+            );
+            if (ref_row.empty()) {
+                return std::unexpected(ErrorCode::NotFound);
+            }
+            std::string ref_created_at = ref_row[0][0].as<std::string>();
+            int ref_rank = ref_row[0][1].as<int>();
+            std::string ref_id = ref_row[0][2].as<std::string>();
+
+            rows = tx.exec_params(
+                "SELECT id, dialog_id, role, content, context_snapshot::text, created_at::text "
+                "FROM ("
+                "    SELECT id, dialog_id, role, content, context_snapshot, created_at "
+                "    FROM dialog_messages "
+                "    WHERE dialog_id = $1::uuid "
+                "      AND ("
+                "          created_at < $3::timestamptz "
+                "          OR (created_at = $3::timestamptz AND (CASE WHEN role = 'user' THEN 0 ELSE 1 END) < $4::int) "
+                "          OR (created_at = $3::timestamptz AND (CASE WHEN role = 'user' THEN 0 ELSE 1 END) = $4::int AND id < $5::uuid)"
+                "      ) "
+                "    ORDER BY created_at DESC, CASE WHEN role = 'user' THEN 0 ELSE 1 END DESC, id DESC "
+                "    LIMIT $2"
+                ") sub "
+                "ORDER BY created_at ASC, CASE WHEN role = 'user' THEN 0 ELSE 1 END ASC, id ASC;",
+                dialog_id, limit, ref_created_at, ref_rank, ref_id
+            );
+        } else {
+            rows = tx.exec_params(
+                "SELECT id, dialog_id, role, content, context_snapshot::text, created_at::text "
+                "FROM ("
+                "    SELECT id, dialog_id, role, content, context_snapshot, created_at "
+                "    FROM dialog_messages "
+                "    WHERE dialog_id = $1::uuid "
+                "    ORDER BY created_at DESC, CASE WHEN role = 'user' THEN 0 ELSE 1 END DESC, id DESC "
+                "    LIMIT $2"
+                ") sub "
+                "ORDER BY created_at ASC, CASE WHEN role = 'user' THEN 0 ELSE 1 END ASC, id ASC;",
+                dialog_id, limit
+            );
+        }
 
         std::vector<DialogMessageRecord> messages;
         messages.reserve(rows.size());

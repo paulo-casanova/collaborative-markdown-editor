@@ -5273,10 +5273,16 @@ Result<void> Server::start() {
                 limit = std::stoul(limit_str);
             } catch (...) {}
         }
-        auto list_res = dialog_service_->list_messages(user->user_id, dialog_id, limit);
+        std::string before_id = url_decode(std::string(req->getQuery("before_id")));
+        if (before_id.empty()) {
+            before_id = url_decode(std::string(req->getQuery("before")));
+        }
+        auto list_res = dialog_service_->list_messages(user->user_id, dialog_id, limit, before_id);
         if (!list_res.has_value()) {
             if (list_res.error() == ErrorCode::NotFound) {
-                send_json(res, "404 Not Found", {{"error", "Dialog not found"}});
+                send_json(res, "404 Not Found", {{"error", "Dialog or message not found"}});
+            } else if (list_res.error() == ErrorCode::InvalidArgument) {
+                send_json(res, "400 Bad Request", {{"error", "Invalid dialog or message ID"}});
             } else {
                 send_json(res, "500 Internal Server Error", {{"error", "Failed to list messages"}});
             }
@@ -5339,7 +5345,7 @@ Result<void> Server::start() {
             bool agent_online = agent_manager_ && agent_manager_->is_agent_online(user.user_id);
             if (role == "user" && agent_online) {
                 agent_manager_->track_prompt_started(user.user_id, dialog_id);
-                auto hist_res = dialog_service_->list_messages(user.user_id, dialog_id, 20);
+                auto hist_res = dialog_service_->list_messages(user.user_id, dialog_id, 21);
                 nlohmann::json hist_arr = nlohmann::json::array();
                 if (hist_res.has_value()) {
                     for (const auto& m : hist_res.value()) {

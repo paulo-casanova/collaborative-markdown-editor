@@ -21,6 +21,7 @@ import {
   Square,
   WifiOff,
   WrapText,
+  ArrowUp,
 } from 'lucide-react';
 import { useDialogStore } from '../../stores/dialogStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -104,6 +105,10 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
   const refreshAgentStatus = effectiveStore.refreshAgentStatus;
   const stopGeneration = effectiveStore.stopGeneration;
   const wsStatus = effectiveStore.wsStatus;
+  const hasMoreEarlierMessages = effectiveStore.hasMoreEarlierMessages;
+  const isLoadingEarlier = effectiveStore.isLoadingEarlier;
+  const loadEarlierMessages = effectiveStore.loadEarlierMessages;
+  const loadAllEarlierMessages = effectiveStore.loadAllEarlierMessages;
 
   const [inputPrompt, setInputPrompt] = useState('');
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -117,6 +122,9 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     return 0;
   });
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const isPrependingRef = useRef(false);
+  const scrollSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number }>({ scrollHeight: 0, scrollTop: 0 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [isResizing, setIsResizing] = useState(false);
 
@@ -210,8 +218,37 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-scroll to bottom of conversation
+  const handleLoadEarlier = async () => {
+    if (messagesContainerRef.current) {
+      scrollSnapshotRef.current = {
+        scrollHeight: messagesContainerRef.current.scrollHeight,
+        scrollTop: messagesContainerRef.current.scrollTop,
+      };
+      isPrependingRef.current = true;
+    }
+    await loadEarlierMessages();
+  };
+
+  const handleLoadAll = async () => {
+    if (messagesContainerRef.current) {
+      scrollSnapshotRef.current = {
+        scrollHeight: messagesContainerRef.current.scrollHeight,
+        scrollTop: messagesContainerRef.current.scrollTop,
+      };
+      isPrependingRef.current = true;
+    }
+    await loadAllEarlierMessages();
+  };
+
+  // Auto-scroll to bottom of conversation or preserve scroll offset on prepend
   useEffect(() => {
+    if (isPrependingRef.current && messagesContainerRef.current) {
+      const newScrollHeight = messagesContainerRef.current.scrollHeight;
+      const heightDiff = newScrollHeight - scrollSnapshotRef.current.scrollHeight;
+      messagesContainerRef.current.scrollTop = scrollSnapshotRef.current.scrollTop + heightDiff;
+      isPrependingRef.current = false;
+      return;
+    }
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent, activeToolActivity, isGenerating]);
 
@@ -789,7 +826,10 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
       </div>
 
       {/* Messages Thread Container */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 text-xs min-w-0">
+      <div
+        ref={messagesContainerRef}
+        className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4 text-xs min-w-0"
+      >
         {!activeDialogId || !currentDialog ? (
           <div
             className="h-full flex flex-col items-center justify-center text-center p-6 text-cme-text-muted space-y-3"
@@ -853,6 +893,49 @@ export const DialogSidecar: React.FC<DialogSidecarProps> = ({
             )}
           </div>
         ) : null}
+
+        {/* Earlier Messages Pagination Banner */}
+        {activeDialogId && currentDialog && hasMoreEarlierMessages && (
+          <div
+            className="flex items-center justify-between gap-2 p-2 bg-cme-bg-subtle/80 border border-cme-border-base rounded-lg text-xs"
+            data-testid="earlier-messages-banner"
+          >
+            <div className="text-[11px] text-cme-text-muted truncate">
+              Showing latest interactions
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => void handleLoadEarlier()}
+                disabled={isLoadingEarlier}
+                className="px-2.5 py-1 text-[11px] font-medium rounded bg-cme-bg-base hover:bg-cme-bg-hover text-cme-text-base border border-cme-border-base transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                data-testid="load-earlier-messages-btn"
+              >
+                {isLoadingEarlier ? (
+                  <>
+                    <Loader2 className="w-3 h-3 animate-spin text-cme-primary" />
+                    <span>Loading...</span>
+                  </>
+                ) : (
+                  <>
+                    <ArrowUp className="w-3 h-3" />
+                    <span>Load earlier</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleLoadAll()}
+                disabled={isLoadingEarlier}
+                className="px-2 py-1 text-[11px] rounded text-cme-text-subtle hover:text-cme-text-base hover:bg-cme-bg-hover transition-colors cursor-pointer disabled:opacity-50"
+                title="Load entire conversation from start"
+                data-testid="load-all-messages-btn"
+              >
+                <span>Load all</span>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Render Conversation Timeline (Messages, Actions, and Diffs in Chronological Order) */}
         {activeDialogId &&

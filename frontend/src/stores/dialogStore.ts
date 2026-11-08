@@ -123,6 +123,8 @@ interface DialogState {
   pairingModalOpen: boolean;
   ws: WebSocket | null;
   wsStatus: DialogWsStatus;
+  hasMoreEarlierMessages: boolean;
+  isLoadingEarlier: boolean;
 
   // Actions
   loadDialogs: () => Promise<void>;
@@ -132,6 +134,8 @@ interface DialogState {
   deleteDialog: (dialogId: string) => Promise<void>;
   sendMessage: (content: string, overrideSnapshot?: ContextSnapshot) => Promise<void>;
   reconcileMessages: (dialogId: string) => Promise<void>;
+  loadEarlierMessages: () => Promise<void>;
+  loadAllEarlierMessages: () => Promise<void>;
   resetDialogToMessage: (messageId: string, inclusive?: boolean) => Promise<void>;
   forkDialog: (upToMessageId?: string, customTitle?: string) => Promise<Dialog | null>;
   setContextSnapshot: (snapshot: ContextSnapshot | null) => void;
@@ -168,6 +172,8 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   pairingModalOpen: false,
   ws: null,
   wsStatus: 'disconnected',
+  hasMoreEarlierMessages: false,
+  isLoadingEarlier: false,
 
   loadDialogs: async () => {
     try {
@@ -201,11 +207,17 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       isGenerating: false,
       generatingStartTime: null,
       lastActivityTime: null,
+      hasMoreEarlierMessages: false,
+      isLoadingEarlier: false,
     });
 
     try {
-      const messages = await dialogApi.fetchMessages(dialogId);
-      set({ messages: sortDialogMessages(messages), isLoading: false });
+      const messages = await dialogApi.fetchMessages(dialogId, 50);
+      set({
+        messages: sortDialogMessages(messages),
+        isLoading: false,
+        hasMoreEarlierMessages: messages.length >= 50,
+      });
 
       // Connect real-time WebSocket stream for this dialog
       get().connectDialogWs(dialogId);
@@ -338,7 +350,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
 
   reconcileMessages: async (dialogId: string) => {
     try {
-      const messages = await dialogApi.fetchMessages(dialogId);
+      const messages = await dialogApi.fetchMessages(dialogId, 50);
       if (get().activeDialogId !== dialogId) return;
 
       const sorted = sortDialogMessages(messages);
@@ -367,13 +379,24 @@ export const useDialogStore = create<DialogState>((set, get) => ({
         }
       }
 
+      // Preserve any older messages already loaded into state via pagination
+      const messageMap = new Map<string, DialogMessage>();
+      for (const m of currentState.messages) {
+        if (!m.id.startsWith('temp-user-')) {
+          messageMap.set(m.id, m);
+        }
+      }
+      for (const m of sorted) {
+        messageMap.set(m.id, m);
+      }
+
       // Preserve any pending optimistic user message that has not arrived from backend yet
       const optimistic = currentState.messages.filter(
         (m) => m.id.startsWith('temp-user-') && !sorted.some((s) => s.content === m.content)
       );
 
       set({
-        messages: sortDialogMessages([...sorted, ...optimistic]),
+        messages: sortDialogMessages([...Array.from(messageMap.values()), ...optimistic]),
         ...(shouldClearGenerating
           ? {
               isGenerating: false,
@@ -390,6 +413,82 @@ export const useDialogStore = create<DialogState>((set, get) => ({
       }
     } catch (err) {
       console.warn(`[DialogStore] Failed to reconcile messages for ${dialogId}:`, err);
+    }
+  },
+
+  loadEarlierMessages: async () => {
+    const state = get();
+    const dialogId = state.activeDialogId;
+    if (!dialogId || state.isLoadingEarlier || !state.hasMoreEarlierMessages) return;
+
+    const oldest = state.messages[0];
+    if (!oldest) return;
+
+    set({ isLoadingEarlier: true });
+    try {
+      const older = await dialogApi.fetchMessages(dialogId, 50, oldest.id);
+      const stateNow = get();
+      if (stateNow.activeDialogId !== dialogId) return;
+
+      if (older.length === 0) {
+        set({ hasMoreEarlierMessages: false, isLoadingEarlier: false });
+        return;
+      }
+
+      const existingIds = new Set(stateNow.messages.map((m) => m.id));
+      const newUniqueOlder = older.filter((m) => !existingIds.has(m.id));
+
+      set({
+        messages: sortDialogMessages([...newUniqueOlder, ...stateNow.messages]),
+        hasMoreEarlierMessages: older.length >= 50,
+        isLoadingEarlier: false,
+      });
+    } catch (err) {
+      console.warn(`[DialogStore] Failed to load earlier messages:`, err);
+      set({ isLoadingEarlier: false });
+    }
+  },
+
+  loadAllEarlierMessages: async () => {
+    const state = get();
+    const dialogId = state.activeDialogId;
+    if (!dialogId || state.isLoadingEarlier) return;
+
+    set({ isLoadingEarlier: true });
+    try {
+      let hasMore = true;
+      while (hasMore) {
+        const stateNow = get();
+        if (stateNow.activeDialogId !== dialogId) break;
+        const oldest = stateNow.messages[0];
+        if (!oldest) break;
+
+        const older = await dialogApi.fetchMessages(dialogId, 100, oldest.id);
+        if (older.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        const existingIds = new Set(stateNow.messages.map((m) => m.id));
+        const newUniqueOlder = older.filter((m) => !existingIds.has(m.id));
+        if (newUniqueOlder.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        set({
+          messages: sortDialogMessages([...newUniqueOlder, ...stateNow.messages]),
+          hasMoreEarlierMessages: older.length >= 100,
+        });
+
+        if (older.length < 100) {
+          hasMore = false;
+        }
+      }
+      set({ hasMoreEarlierMessages: false, isLoadingEarlier: false });
+    } catch (err) {
+      console.warn(`[DialogStore] Failed to load all earlier messages:`, err);
+      set({ isLoadingEarlier: false });
     }
   },
 
@@ -584,7 +683,7 @@ export const useDialogStore = create<DialogState>((set, get) => ({
           } else if (type === 'dialog_truncated') {
             if (data.dialog_id === get().activeDialogId) {
               void (async () => {
-                const msgs = await dialogApi.fetchMessages(dialogId);
+                const msgs = await dialogApi.fetchMessages(dialogId, 50);
                 set({ messages: sortDialogMessages(msgs), streamingContent: '', activeToolActivity: null });
               })();
             }
@@ -610,8 +709,20 @@ export const useDialogStore = create<DialogState>((set, get) => ({
                 };
               });
               void (async () => {
-                const msgs = await dialogApi.fetchMessages(dialogId);
-                set({ messages: sortDialogMessages(msgs) });
+                const msgs = await dialogApi.fetchMessages(dialogId, 50);
+                if (get().activeDialogId === dialogId) {
+                  const stateNow = get();
+                  const messageMap = new Map<string, DialogMessage>();
+                  for (const m of stateNow.messages) {
+                    if (!m.id.startsWith('temp-user-')) {
+                      messageMap.set(m.id, m);
+                    }
+                  }
+                  for (const m of msgs) {
+                    messageMap.set(m.id, m);
+                  }
+                  set({ messages: sortDialogMessages(Array.from(messageMap.values())) });
+                }
               })();
             }
           }
