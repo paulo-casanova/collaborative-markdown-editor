@@ -916,20 +916,27 @@ export class TaskCheckboxWidget extends WidgetType {
     const input = document.createElement('input');
     input.type = 'checkbox';
     input.checked = this.checked;
-    input.className =
-      'mr-1.5 align-middle rounded border-cme-border-base text-cme-primary focus:ring-0 cursor-pointer';
-    input.addEventListener('click', (e) => {
-      e.stopPropagation();
-      let clickPos = this.pos;
-      try {
-        const domPos = view.posAtDOM(input);
-        if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos;
-      } catch {}
-      const newBox = input.checked ? '[x]' : '[ ]';
-      view.dispatch({
-        changes: { from: clickPos, to: clickPos + 3, insert: newBox },
+    const isEditable = view.state.facet(EditorView.editable);
+    if (!isEditable) {
+      input.disabled = true;
+      input.className =
+        'mr-1.5 align-middle rounded border-cme-border-base text-cme-primary focus:ring-0 cursor-not-allowed opacity-70';
+    } else {
+      input.className =
+        'mr-1.5 align-middle rounded border-cme-border-base text-cme-primary focus:ring-0 cursor-pointer';
+      input.addEventListener('click', (e) => {
+        e.stopPropagation();
+        let clickPos = this.pos;
+        try {
+          const domPos = view.posAtDOM(input);
+          if (typeof domPos === 'number' && domPos >= 0) clickPos = domPos;
+        } catch {}
+        const newBox = input.checked ? '[x]' : '[ ]';
+        view.dispatch({
+          changes: { from: clickPos, to: clickPos + 3, insert: newBox },
+        });
       });
-    });
+    }
     return input;
   }
 }
@@ -1342,7 +1349,8 @@ export class TableBlockWidget extends WidgetType {
     public rawText: string,
     public from: number,
     public to: number,
-    public docPath?: string
+    public docPath?: string,
+    public isEditable: boolean = true
   ) {
     super();
   }
@@ -1354,7 +1362,8 @@ export class TableBlockWidget extends WidgetType {
   eq(other: TableBlockWidget): boolean {
     return (
       this.rawText === other.rawText &&
-      this.docPath === other.docPath
+      this.docPath === other.docPath &&
+      this.isEditable === other.isEditable
     );
   }
 
@@ -1386,33 +1395,35 @@ export class TableBlockWidget extends WidgetType {
     const rightActions = document.createElement('div');
     rightActions.className = 'flex items-center gap-1.5';
 
-    // Button: + Add Row
-    const addRowBtn = document.createElement('button');
-    addRowBtn.type = 'button';
-    addRowBtn.className =
-      'px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover flex items-center gap-1 transition-colors';
-    addRowBtn.innerHTML = `${TABLE_ICONS.plus}<span>Row</span>`;
-    addRowBtn.title = 'Add row at bottom';
-    addRowBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const updated = addRow(tableData);
-      dispatchTableChange(updated, { row: tableData.rows.length, col: 0 });
-    });
-    rightActions.appendChild(addRowBtn);
+    if (this.isEditable) {
+      // Button: + Add Row
+      const addRowBtn = document.createElement('button');
+      addRowBtn.type = 'button';
+      addRowBtn.className =
+        'px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover flex items-center gap-1 transition-colors';
+      addRowBtn.innerHTML = `${TABLE_ICONS.plus}<span>Row</span>`;
+      addRowBtn.title = 'Add row at bottom';
+      addRowBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const updated = addRow(tableData);
+        dispatchTableChange(updated, { row: tableData.rows.length, col: 0 });
+      });
+      rightActions.appendChild(addRowBtn);
 
-    // Button: + Add Col
-    const addColBtn = document.createElement('button');
-    addColBtn.type = 'button';
-    addColBtn.className =
-      'px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover flex items-center gap-1 transition-colors';
-    addColBtn.innerHTML = `${TABLE_ICONS.plus}<span>Column</span>`;
-    addColBtn.title = 'Add column to the right';
-    addColBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const updated = addColumn(tableData);
-      dispatchTableChange(updated, { row: -1, col: tableData.headers.length });
-    });
-    rightActions.appendChild(addColBtn);
+      // Button: + Add Col
+      const addColBtn = document.createElement('button');
+      addColBtn.type = 'button';
+      addColBtn.className =
+        'px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover flex items-center gap-1 transition-colors';
+      addColBtn.innerHTML = `${TABLE_ICONS.plus}<span>Column</span>`;
+      addColBtn.title = 'Add column to the right';
+      addColBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const updated = addColumn(tableData);
+        dispatchTableChange(updated, { row: -1, col: tableData.headers.length });
+      });
+      rightActions.appendChild(addColBtn);
+    }
 
     // Button: </> Raw
     const rawBtn = document.createElement('button');
@@ -1596,107 +1607,113 @@ export class TableBlockWidget extends WidgetType {
 
       // Header text container (interactive cell)
       const contentSpan = document.createElement('div');
-      contentSpan.className = 'flex-1 min-h-[1.25rem] cursor-text';
+      contentSpan.className = this.isEditable
+        ? 'flex-1 min-h-[1.25rem] cursor-text'
+        : 'flex-1 min-h-[1.25rem] select-text';
       contentSpan.dataset.raw = header;
       renderCellContent(contentSpan, header, view, this.docPath);
-      bindCellListeners(contentSpan, -1, colIdx);
+      if (this.isEditable) {
+        bindCellListeners(contentSpan, -1, colIdx);
+      }
       colWrapper.appendChild(contentSpan);
 
-      // Column controls (hover visible)
-      const colControls = document.createElement('div');
-      colControls.className =
-        'opacity-0 group-hover/col:opacity-100 flex items-center gap-0.5 transition-opacity ml-1';
+      if (this.isEditable) {
+        // Column controls (hover visible)
+        const colControls = document.createElement('div');
+        colControls.className =
+          'opacity-0 group-hover/col:opacity-100 flex items-center gap-0.5 transition-opacity ml-1';
 
-      // Move column left button
-      const moveLeftBtn = document.createElement('button');
-      moveLeftBtn.type = 'button';
-      moveLeftBtn.className =
-        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
-        (colIdx === 0 ? ' opacity-20 cursor-not-allowed' : '');
-      moveLeftBtn.title = 'Move column left';
-      moveLeftBtn.innerHTML = TABLE_ICONS.chevronLeft;
-      if (colIdx === 0) {
-        moveLeftBtn.disabled = true;
-      } else {
-        moveLeftBtn.addEventListener('click', (e) => {
+        // Move column left button
+        const moveLeftBtn = document.createElement('button');
+        moveLeftBtn.type = 'button';
+        moveLeftBtn.className =
+          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
+          (colIdx === 0 ? ' opacity-20 cursor-not-allowed' : '');
+        moveLeftBtn.title = 'Move column left';
+        moveLeftBtn.innerHTML = TABLE_ICONS.chevronLeft;
+        if (colIdx === 0) {
+          moveLeftBtn.disabled = true;
+        } else {
+          moveLeftBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const updated = moveColumn(tableData, colIdx, 'left');
+            dispatchTableChange(updated, { row: -1, col: colIdx - 1 });
+          });
+        }
+        colControls.appendChild(moveLeftBtn);
+
+        // Move column right button
+        const moveRightBtn = document.createElement('button');
+        moveRightBtn.type = 'button';
+        moveRightBtn.className =
+          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
+          (colIdx === colCount - 1 ? ' opacity-20 cursor-not-allowed' : '');
+        moveRightBtn.title = 'Move column right';
+        moveRightBtn.innerHTML = TABLE_ICONS.chevronRight;
+        if (colIdx === colCount - 1) {
+          moveRightBtn.disabled = true;
+        } else {
+          moveRightBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const updated = moveColumn(tableData, colIdx, 'right');
+            dispatchTableChange(updated, { row: -1, col: colIdx + 1 });
+          });
+        }
+        colControls.appendChild(moveRightBtn);
+
+        // Alignment cycle button
+        const alignBtn = document.createElement('button');
+        alignBtn.type = 'button';
+        alignBtn.className =
+          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
+        alignBtn.title = `Alignment: ${align} (click to cycle)`;
+        alignBtn.innerHTML =
+          align === 'center'
+            ? TABLE_ICONS.alignCenter
+            : align === 'right'
+            ? TABLE_ICONS.alignRight
+            : TABLE_ICONS.alignLeft;
+        alignBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          const updated = moveColumn(tableData, colIdx, 'left');
-          dispatchTableChange(updated, { row: -1, col: colIdx - 1 });
-        });
-      }
-      colControls.appendChild(moveLeftBtn);
-
-      // Move column right button
-      const moveRightBtn = document.createElement('button');
-      moveRightBtn.type = 'button';
-      moveRightBtn.className =
-        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
-        (colIdx === colCount - 1 ? ' opacity-20 cursor-not-allowed' : '');
-      moveRightBtn.title = 'Move column right';
-      moveRightBtn.innerHTML = TABLE_ICONS.chevronRight;
-      if (colIdx === colCount - 1) {
-        moveRightBtn.disabled = true;
-      } else {
-        moveRightBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const updated = moveColumn(tableData, colIdx, 'right');
-          dispatchTableChange(updated, { row: -1, col: colIdx + 1 });
-        });
-      }
-      colControls.appendChild(moveRightBtn);
-
-      // Alignment cycle button
-      const alignBtn = document.createElement('button');
-      alignBtn.type = 'button';
-      alignBtn.className =
-        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
-      alignBtn.title = `Alignment: ${align} (click to cycle)`;
-      alignBtn.innerHTML =
-        align === 'center'
-          ? TABLE_ICONS.alignCenter
-          : align === 'right'
-          ? TABLE_ICONS.alignRight
-          : TABLE_ICONS.alignLeft;
-      alignBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const nextAlign: 'left' | 'center' | 'right' =
-          align === 'left' ? 'center' : align === 'center' ? 'right' : 'left';
-        const updated = setColumnAlignment(tableData, colIdx, nextAlign);
-        dispatchTableChange(updated);
-      });
-      colControls.appendChild(alignBtn);
-
-      // Insert column left button (+)
-      const insertColBtn = document.createElement('button');
-      insertColBtn.type = 'button';
-      insertColBtn.className =
-        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
-      insertColBtn.title = 'Insert column left';
-      insertColBtn.innerHTML = TABLE_ICONS.plus;
-      insertColBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const updated = addColumn(tableData, colIdx);
-        dispatchTableChange(updated, { row: -1, col: colIdx });
-      });
-      colControls.appendChild(insertColBtn);
-
-      // Delete column button (✕)
-      if (colCount > 1) {
-        const delColBtn = document.createElement('button');
-        delColBtn.type = 'button';
-        delColBtn.className =
-          'p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors';
-        delColBtn.title = 'Delete column';
-        delColBtn.innerHTML = TABLE_ICONS.trash;
-        delColBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const updated = deleteColumn(tableData, colIdx);
+          const nextAlign: 'left' | 'center' | 'right' =
+            align === 'left' ? 'center' : align === 'center' ? 'right' : 'left';
+          const updated = setColumnAlignment(tableData, colIdx, nextAlign);
           dispatchTableChange(updated);
         });
-        colControls.appendChild(delColBtn);
-      }
+        colControls.appendChild(alignBtn);
 
-      colWrapper.appendChild(colControls);
+        // Insert column left button (+)
+        const insertColBtn = document.createElement('button');
+        insertColBtn.type = 'button';
+        insertColBtn.className =
+          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
+        insertColBtn.title = 'Insert column left';
+        insertColBtn.innerHTML = TABLE_ICONS.plus;
+        insertColBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const updated = addColumn(tableData, colIdx);
+          dispatchTableChange(updated, { row: -1, col: colIdx });
+        });
+        colControls.appendChild(insertColBtn);
+
+        // Delete column button (✕)
+        if (colCount > 1) {
+          const delColBtn = document.createElement('button');
+          delColBtn.type = 'button';
+          delColBtn.className =
+            'p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors';
+          delColBtn.title = 'Delete column';
+          delColBtn.innerHTML = TABLE_ICONS.trash;
+          delColBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const updated = deleteColumn(tableData, colIdx);
+            dispatchTableChange(updated);
+          });
+          colControls.appendChild(delColBtn);
+        }
+
+        colWrapper.appendChild(colControls);
+      }
       th.appendChild(colWrapper);
       trHead.appendChild(th);
     });
@@ -1721,82 +1738,86 @@ export class TableBlockWidget extends WidgetType {
 
       // Default non-hovered view: row index number
       const rowNumSpan = document.createElement('span');
-      rowNumSpan.className = 'group-hover/row:hidden text-[10px] text-cme-text-muted/60 font-mono';
+      rowNumSpan.className = this.isEditable
+        ? 'group-hover/row:hidden text-[10px] text-cme-text-muted/60 font-mono'
+        : 'text-[10px] text-cme-text-muted/60 font-mono';
       rowNumSpan.textContent = String(r + 1);
       tdRowGrip.appendChild(rowNumSpan);
 
-      // Hovered controls container
-      const rowControls = document.createElement('div');
-      rowControls.className =
-        'hidden group-hover/row:flex items-center justify-center gap-0.5 transition-opacity';
+      if (this.isEditable) {
+        // Hovered controls container
+        const rowControls = document.createElement('div');
+        rowControls.className =
+          'hidden group-hover/row:flex items-center justify-center gap-0.5 transition-opacity';
 
-      // Move row up button
-      const moveUpBtn = document.createElement('button');
-      moveUpBtn.type = 'button';
-      moveUpBtn.className =
-        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
-        (r === 0 ? ' opacity-20 cursor-not-allowed' : '');
-      moveUpBtn.title = 'Move row up';
-      moveUpBtn.innerHTML = TABLE_ICONS.chevronUp;
-      if (r === 0) {
-        moveUpBtn.disabled = true;
-      } else {
-        moveUpBtn.addEventListener('click', (e) => {
+        // Move row up button
+        const moveUpBtn = document.createElement('button');
+        moveUpBtn.type = 'button';
+        moveUpBtn.className =
+          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
+          (r === 0 ? ' opacity-20 cursor-not-allowed' : '');
+        moveUpBtn.title = 'Move row up';
+        moveUpBtn.innerHTML = TABLE_ICONS.chevronUp;
+        if (r === 0) {
+          moveUpBtn.disabled = true;
+        } else {
+          moveUpBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const updated = moveRow(tableData, r, 'up');
+            dispatchTableChange(updated, { row: r - 1, col: 0 });
+          });
+        }
+        rowControls.appendChild(moveUpBtn);
+
+        // Move row down button
+        const moveDownBtn = document.createElement('button');
+        moveDownBtn.type = 'button';
+        moveDownBtn.className =
+          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
+          (r === rowCount - 1 ? ' opacity-20 cursor-not-allowed' : '');
+        moveDownBtn.title = 'Move row down';
+        moveDownBtn.innerHTML = TABLE_ICONS.chevronDown;
+        if (r === rowCount - 1) {
+          moveDownBtn.disabled = true;
+        } else {
+          moveDownBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const updated = moveRow(tableData, r, 'down');
+            dispatchTableChange(updated, { row: r + 1, col: 0 });
+          });
+        }
+        rowControls.appendChild(moveDownBtn);
+
+        // Insert row above button (+)
+        const insertRowBtn = document.createElement('button');
+        insertRowBtn.type = 'button';
+        insertRowBtn.className =
+          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
+        insertRowBtn.title = 'Insert row above';
+        insertRowBtn.innerHTML = TABLE_ICONS.plus;
+        insertRowBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          const updated = moveRow(tableData, r, 'up');
-          dispatchTableChange(updated, { row: r - 1, col: 0 });
+          const updated = addRow(tableData, r);
+          dispatchTableChange(updated, { row: r, col: 0 });
         });
-      }
-      rowControls.appendChild(moveUpBtn);
+        rowControls.appendChild(insertRowBtn);
 
-      // Move row down button
-      const moveDownBtn = document.createElement('button');
-      moveDownBtn.type = 'button';
-      moveDownBtn.className =
-        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
-        (r === rowCount - 1 ? ' opacity-20 cursor-not-allowed' : '');
-      moveDownBtn.title = 'Move row down';
-      moveDownBtn.innerHTML = TABLE_ICONS.chevronDown;
-      if (r === rowCount - 1) {
-        moveDownBtn.disabled = true;
-      } else {
-        moveDownBtn.addEventListener('click', (e) => {
+        // Delete row button (✕)
+        const delRowBtn = document.createElement('button');
+        delRowBtn.type = 'button';
+        delRowBtn.className =
+          'p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors';
+        delRowBtn.title = 'Delete row';
+        delRowBtn.innerHTML = TABLE_ICONS.trash;
+        delRowBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          const updated = moveRow(tableData, r, 'down');
-          dispatchTableChange(updated, { row: r + 1, col: 0 });
+          const updated = deleteRow(tableData, r);
+          dispatchTableChange(updated);
         });
+        rowControls.appendChild(delRowBtn);
+
+        tdRowGrip.appendChild(rowControls);
       }
-      rowControls.appendChild(moveDownBtn);
-
-      // Insert row above button (+)
-      const insertRowBtn = document.createElement('button');
-      insertRowBtn.type = 'button';
-      insertRowBtn.className =
-        'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
-      insertRowBtn.title = 'Insert row above';
-      insertRowBtn.innerHTML = TABLE_ICONS.plus;
-      insertRowBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const updated = addRow(tableData, r);
-        dispatchTableChange(updated, { row: r, col: 0 });
-      });
-      rowControls.appendChild(insertRowBtn);
-
-      // Delete row button (✕)
-      const delRowBtn = document.createElement('button');
-      delRowBtn.type = 'button';
-      delRowBtn.className =
-        'p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors';
-      delRowBtn.title = 'Delete row';
-      delRowBtn.innerHTML = TABLE_ICONS.trash;
-      delRowBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const updated = deleteRow(tableData, r);
-        dispatchTableChange(updated);
-      });
-      rowControls.appendChild(delRowBtn);
-
-      tdRowGrip.appendChild(rowControls);
       tr.appendChild(tdRowGrip);
 
       // Data cells
@@ -1804,12 +1825,15 @@ export class TableBlockWidget extends WidgetType {
         const td = document.createElement('td');
         const align = tableData.alignments[colIdx] || 'left';
         td.className =
-          'px-3 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0 cursor-text min-h-[1.5rem]';
+          'px-3 py-2 text-xs border-r border-cme-border-base/40 last:border-r-0 min-h-[1.5rem]' +
+          (this.isEditable ? ' cursor-text' : ' select-text');
         td.style.textAlign = align;
         const cellValue = rowCells[colIdx] || '';
         td.dataset.raw = cellValue;
         renderCellContent(td, cellValue, view, this.docPath);
-        bindCellListeners(td, r, colIdx);
+        if (this.isEditable) {
+          bindCellListeners(td, r, colIdx);
+        }
         tr.appendChild(td);
       });
       tbody.appendChild(tr);
@@ -1819,23 +1843,25 @@ export class TableBlockWidget extends WidgetType {
     card.appendChild(tableWrapper);
 
     // 5. Bottom Add Row Bar
-    const bottomBar = document.createElement('div');
-    bottomBar.className =
-      'w-full py-1.5 text-center text-xs text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-subtle/60 border-t border-cme-border-base transition-colors flex items-center justify-center gap-1.5 cursor-pointer select-none';
-    bottomBar.innerHTML = `${TABLE_ICONS.plus}<span class="text-[11px] font-medium">Add Row</span>`;
-    bottomBar.title = 'Add new row at the bottom';
-    bottomBar.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const updated = addRow(tableData);
-      dispatchTableChange(updated, { row: rowCount, col: 0 });
-    });
-    card.appendChild(bottomBar);
+    if (this.isEditable) {
+      const bottomBar = document.createElement('div');
+      bottomBar.className =
+        'w-full py-1.5 text-center text-xs text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-subtle/60 border-t border-cme-border-base transition-colors flex items-center justify-center gap-1.5 cursor-pointer select-none';
+      bottomBar.innerHTML = `${TABLE_ICONS.plus}<span class="text-[11px] font-medium">Add Row</span>`;
+      bottomBar.title = 'Add new row at the bottom';
+      bottomBar.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const updated = addRow(tableData);
+        dispatchTableChange(updated, { row: rowCount, col: 0 });
+      });
+      card.appendChild(bottomBar);
+    }
 
     container.appendChild(card);
 
     // 6. Handle pending focus on mount
     const currentRange = getTableBlockRange(view, container, this.from, this.to);
-    if (pendingTableFocus && (pendingTableFocus.pos === this.from || pendingTableFocus.pos === currentRange.from)) {
+    if (this.isEditable && pendingTableFocus && (pendingTableFocus.pos === this.from || pendingTableFocus.pos === currentRange.from)) {
       const target = pendingTableFocus;
       pendingTableFocus = null;
       requestAnimationFrame(() => {

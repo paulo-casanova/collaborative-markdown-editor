@@ -675,12 +675,76 @@ Deep details.`;
         const state = EditorState.create({ doc: raw });
         const parent = document.createElement('div');
         const view = new EditorView({ state, parent });
+
+        // Editable mode (default)
         const dom = widget1.toDOM(view);
         expect(dom.className).toContain('cme-table-block-node');
         const headerBar = dom.querySelector('.cme-table-header');
         expect(headerBar).not.toBeNull();
         expect(headerBar?.textContent).toContain('Table (1 rows × 2 cols)');
+        expect(headerBar?.textContent).toContain('Row');
+        expect(headerBar?.textContent).toContain('Column');
+        expect(dom.querySelector('button[title="Move column right"]')).not.toBeNull();
+        expect(dom.querySelector('button[title="Move row up"]')).not.toBeNull();
+        expect(dom.querySelector('[title="Add new row at the bottom"]')).not.toBeNull();
+
+        // Read-only / Review mode (isEditable: false)
+        const roWidget = new TableBlockWidget(raw, 0, raw.length, '/test/doc.md', false);
+        expect(roWidget.isEditable).toBe(false);
+        expect(widget1.eq(roWidget)).toBe(false);
+
+        const roDom = roWidget.toDOM(view);
+        const roHeaderBar = roDom.querySelector('.cme-table-header');
+        expect(roHeaderBar?.textContent).toContain('Table (1 rows × 2 cols)');
+        // Edit mutation controls are hidden
+        expect(roHeaderBar?.textContent).not.toContain('Row');
+        expect(roHeaderBar?.textContent).not.toContain('Column');
+        expect(roDom.querySelector('button[title="Move column right"]')).toBeNull();
+        expect(roDom.querySelector('button[title="Move row up"]')).toBeNull();
+        expect(roDom.querySelector('[title="Add new row at the bottom"]')).toBeNull();
+
+        // Data cells have select-text for review highlighting instead of cursor-text
+        const cells = roDom.querySelectorAll('tbody td');
+        expect(cells.length).toBeGreaterThan(0);
+        expect(cells[1].className).toContain('select-text');
+        expect(cells[1].className).not.toContain('cursor-text');
+
         view.destroy();
+      }
+    });
+
+    it('TaskCheckboxWidget disables checkbox when editor is not editable', async () => {
+      const { TaskCheckboxWidget } = await import(
+        '../../src/components/editor/codemirror/livePreviewWidgets'
+      );
+
+      const widget = new TaskCheckboxWidget(false, 0);
+      expect(widget.checked).toBe(false);
+      expect(widget.eq(new TaskCheckboxWidget(false, 10))).toBe(true);
+      expect(widget.eq(new TaskCheckboxWidget(true, 0))).toBe(false);
+
+      if (typeof document !== 'undefined') {
+        const { EditorState } = await import('@codemirror/state');
+        const { EditorView } = await import('@codemirror/view');
+
+        // Editable view
+        const stateEdit = EditorState.create({ doc: '- [ ] Task 1' });
+        const viewEdit = new EditorView({ state: stateEdit, parent: document.createElement('div') });
+        const domEdit = widget.toDOM(viewEdit) as HTMLInputElement;
+        expect(domEdit.disabled).toBe(false);
+        expect(domEdit.className).toContain('cursor-pointer');
+        viewEdit.destroy();
+
+        // Non-editable view
+        const stateRo = EditorState.create({
+          doc: '- [ ] Task 1',
+          extensions: [EditorView.editable.of(false)],
+        });
+        const viewRo = new EditorView({ state: stateRo, parent: document.createElement('div') });
+        const domRo = widget.toDOM(viewRo) as HTMLInputElement;
+        expect(domRo.disabled).toBe(true);
+        expect(domRo.className).toContain('cursor-not-allowed');
+        viewRo.destroy();
       }
     });
   });

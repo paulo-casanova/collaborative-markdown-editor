@@ -384,7 +384,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       lineNumbersCompartmentRef.current.of(showLineNumbers ? lineNumbers() : []),
       markdown(),
       createMentionAutocompleteExtension(),
-      createLivePreviewPlugin(isDark, documentPath),
+      createLivePreviewPlugin(isDark, documentPath, editable),
       createInlineReviewPlugin(provider, isDark, canComment),
       cmeEditorTheme,
       remoteCursorClassPlugin,

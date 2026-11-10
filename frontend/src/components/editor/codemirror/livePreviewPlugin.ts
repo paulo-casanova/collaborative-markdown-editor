@@ -75,20 +75,21 @@ interface DecoItem {
 
 export function createLivePreviewPlugin(
   isDark: boolean = false,
-  documentPath?: string
+  documentPath?: string,
+  editable: boolean = true
 ): Extension {
   return [
     rawTableField,
     StateField.define<DecorationSet>({
       create(state) {
-        return buildLivePreviewDecorations(state, isDark, documentPath);
+        return buildLivePreviewDecorations(state, isDark, documentPath, editable);
       },
       update(decorations, tr) {
         const forced = tr.effects.some(
           (e) => e.is(forceLivePreviewRebuild) || e.is(setRawTablePos)
         );
         if (tr.docChanged || tr.selection || forced) {
-          return buildLivePreviewDecorations(tr.state, isDark, documentPath);
+          return buildLivePreviewDecorations(tr.state, isDark, documentPath, editable);
         }
         return decorations.map(tr.changes);
       },
@@ -100,8 +101,10 @@ export function createLivePreviewPlugin(
 export function buildLivePreviewDecorations(
   state: EditorState,
   isDark: boolean = false,
-  documentPath?: string
+  documentPath?: string,
+  editable?: boolean
 ): DecorationSet {
+  const isEditable = editable !== undefined ? editable : state.facet(EditorView.editable);
   const builder = new RangeSetBuilder<Decoration>();
   const doc = state.doc;
   const sel = state.selection.main;
@@ -379,7 +382,7 @@ export function buildLivePreviewDecorations(
             tFrom,
             tTo,
             Decoration.replace({
-              widget: new TableBlockWidget(tableRaw, tFrom, tTo, documentPath),
+              widget: new TableBlockWidget(tableRaw, tFrom, tTo, documentPath, isEditable),
               block: true,
             })
           );
