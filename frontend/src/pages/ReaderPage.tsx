@@ -940,7 +940,8 @@ export const ReaderPage: React.FC = () => {
   const handleCopyPermalink = useCallback(() => {
     if (document?.id) {
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      navigator.clipboard?.writeText(`${origin}/documents/${document.id}`);
+      const hash = typeof window !== 'undefined' ? window.location.hash : '';
+      navigator.clipboard?.writeText(`${origin}/docs/${document.id}${hash}`);
       setCopiedPermalink(true);
       setTimeout(() => setCopiedPermalink(false), 2000);
     }
@@ -1071,14 +1072,13 @@ export const ReaderPage: React.FC = () => {
       return false;
     };
 
-    if (!tryScroll()) {
-      const delays = [60, 120, 240, 480];
-      delays.forEach((delay) => {
-        setTimeout(() => {
-          tryScroll();
-        }, delay);
-      });
-    }
+    // Staggered attempts to account for asynchronous KaTeX, Mermaid, and image rendering
+    const delays = [30, 100, 250, 500, 900, 1500];
+    delays.forEach((delay) => {
+      setTimeout(() => {
+        tryScroll();
+      }, delay);
+    });
   }, []);
 
   // Auto-scroll to heading anchor if present in URL on load

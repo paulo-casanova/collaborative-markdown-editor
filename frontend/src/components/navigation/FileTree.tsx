@@ -1299,7 +1299,8 @@ export const FileTree: React.FC = () => {
                   data-testid="filetree-copy-permalink-btn"
                   onClick={() => {
                     const origin = typeof window !== 'undefined' ? window.location.origin : '';
-                    navigator.clipboard?.writeText(`${origin}/documents/${contextMenu.node.id}`);
+                    const baseRoute = isReadMode ? '/docs' : '/documents';
+                    navigator.clipboard?.writeText(`${origin}${baseRoute}/${contextMenu.node.id}`);
                     setContextMenu(null);
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"

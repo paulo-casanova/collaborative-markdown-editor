@@ -319,7 +319,9 @@ export const TabBar: React.FC = () => {
             <button
               onClick={() => {
                 const origin = typeof window !== 'undefined' ? window.location.origin : '';
-                navigator.clipboard?.writeText(`${origin}/documents/${contextMenu.tab.id}`);
+                const hash = typeof window !== 'undefined' && contextMenu.tab.id === activeTabId ? window.location.hash : '';
+                const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
+                navigator.clipboard?.writeText(`${origin}${baseDocRoute}/${contextMenu.tab.id}${hash}`);
                 setContextMenu(null);
               }}
               className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-cme-bg-hover text-cme-text-base text-left"

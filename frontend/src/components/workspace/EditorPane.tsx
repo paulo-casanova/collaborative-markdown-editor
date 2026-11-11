@@ -117,8 +117,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   }, []);
 
   const scrollToHeading = useCallback(
-    (headingTarget: string) => {
-      if (!headingTarget) return;
+    (headingTarget: string): boolean => {
+      if (!headingTarget) return false;
       let decoded = headingTarget;
       try {
         decoded = decodeURIComponent(headingTarget);
@@ -126,11 +126,11 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
         // ignore
       }
       const clean = decoded.replace(/^#+/, '').trim();
-      if (!clean) return;
+      if (!clean) return false;
 
       if (editorInstance && !editorInstance.isDestroyed) {
         const view = editorInstance.getView?.() || (editorInstance as any).view;
-        if (view?.state?.doc) {
+        if (view?.state?.doc && view.state.doc.length > 0) {
           const pos = findHeadingPosition(view.state.doc, clean);
           if (pos) {
             view.dispatch({
@@ -145,7 +145,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
                 });
               }
             });
-            return;
+            return true;
           }
         }
       }
@@ -153,29 +153,12 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
       const domEl = findHeadingElement(clean);
       if (domEl) {
         domEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return true;
       }
+      return false;
     },
     [editorInstance]
   );
-
-  useEffect(() => {
-    if (editorInstance && window.location.hash) {
-      const timer = setTimeout(() => {
-        scrollToHeading(window.location.hash);
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [editorInstance, scrollToHeading]);
-
-  useEffect(() => {
-    const handleHash = () => {
-      if (window.location.hash) {
-        scrollToHeading(window.location.hash);
-      }
-    };
-    window.addEventListener('hashchange', handleHash);
-    return () => window.removeEventListener('hashchange', handleHash);
-  }, [scrollToHeading]);
 
   const provider = useMemo(() => {
     if (!documentId || documentId === 'by-path') return null;
@@ -214,6 +197,41 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
       clearTimeout(timer);
     };
   }, [provider]);
+
+  useEffect(() => {
+    if (!editorInstance || typeof window === 'undefined' || !window.location.hash) return;
+    const target = window.location.hash;
+
+    // Retry schedule: immediate and staggered to handle async Yjs sync and Live Preview layout shifts
+    const delays = [50, 150, 300, 600, 1000, 1600];
+    const timers: NodeJS.Timeout[] = [];
+    let settled = false;
+
+    delays.forEach((delay, idx) => {
+      const t = setTimeout(() => {
+        if (settled && idx > 2) return;
+        const found = scrollToHeading(target);
+        if (found) {
+          settled = true;
+        }
+      }, delay);
+      timers.push(t);
+    });
+
+    return () => {
+      timers.forEach(clearTimeout);
+    };
+  }, [editorInstance, scrollToHeading, isCollabSynced, liveContent]);
+
+  useEffect(() => {
+    const handleHash = () => {
+      if (window.location.hash) {
+        scrollToHeading(window.location.hash);
+      }
+    };
+    window.addEventListener('hashchange', handleHash);
+    return () => window.removeEventListener('hashchange', handleHash);
+  }, [scrollToHeading]);
 
   const {
     initDocument,
@@ -608,7 +626,8 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const handleCopyPermalink = useCallback(() => {
     if (document?.id) {
       const origin = typeof window !== 'undefined' ? window.location.origin : '';
-      navigator.clipboard?.writeText(`${origin}/documents/${document.id}`);
+      const hash = typeof window !== 'undefined' ? window.location.hash : '';
+      navigator.clipboard?.writeText(`${origin}/documents/${document.id}${hash}`);
       setCopiedPermalink(true);
       setTimeout(() => setCopiedPermalink(false), 2000);
     }
