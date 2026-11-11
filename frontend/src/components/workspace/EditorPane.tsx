@@ -137,7 +137,6 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               selection: { anchor: pos.from },
               effects: EditorView.scrollIntoView(pos.from, { y: 'start', yMargin: 40 }),
             });
-            view.focus();
             requestAnimationFrame(() => {
               if (!editorInstance.isDestroyed && view?.dom?.isConnected) {
                 view.dispatch({
@@ -198,9 +197,12 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     };
   }, [provider]);
 
+  const userInteractedRef = useRef<boolean>(false);
+
   useEffect(() => {
     if (!editorInstance || typeof window === 'undefined' || !window.location.hash) return;
     const target = window.location.hash;
+    userInteractedRef.current = false;
 
     // Retry schedule: immediate and staggered to handle async Yjs sync and Live Preview layout shifts
     const delays = [50, 150, 300, 600, 1000, 1600];
@@ -209,6 +211,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
 
     delays.forEach((delay, idx) => {
       const t = setTimeout(() => {
+        if (userInteractedRef.current) return;
         if (settled && idx > 2) return;
         const found = scrollToHeading(target);
         if (found) {
@@ -218,10 +221,18 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
       timers.push(t);
     });
 
+    const handleUserScroll = () => {
+      userInteractedRef.current = true;
+    };
+    window.addEventListener('wheel', handleUserScroll, { passive: true });
+    window.addEventListener('touchmove', handleUserScroll, { passive: true });
+
     return () => {
       timers.forEach(clearTimeout);
+      window.removeEventListener('wheel', handleUserScroll);
+      window.removeEventListener('touchmove', handleUserScroll);
     };
-  }, [editorInstance, scrollToHeading, isCollabSynced, liveContent]);
+  }, [editorInstance, scrollToHeading, isCollabSynced]);
 
   useEffect(() => {
     const handleHash = () => {

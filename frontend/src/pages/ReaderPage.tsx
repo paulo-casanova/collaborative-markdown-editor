@@ -793,6 +793,8 @@ export const ReaderPage: React.FC = () => {
     []
   );
   const floatingMenuRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const userInteractedRef = useRef<boolean>(false);
   const [floatingMenuPos, setFloatingMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [readerSelectedText, setReaderSelectedText] = useState('');
 
@@ -1063,10 +1065,21 @@ export const ReaderPage: React.FC = () => {
     const clean = decoded.replace(/^#+/, '').trim();
     if (!clean) return;
 
+    userInteractedRef.current = false;
+
     const tryScroll = () => {
+      if (userInteractedRef.current) return false;
       const el = findHeadingElement(clean);
       if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (scrollContainerRef.current) {
+          const container = scrollContainerRef.current;
+          const containerRect = container.getBoundingClientRect();
+          const elRect = el.getBoundingClientRect();
+          const targetTop = container.scrollTop + (elRect.top - containerRect.top) - 70;
+          container.scrollTo({ top: Math.max(0, targetTop), behavior: 'smooth' });
+        } else {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
         return true;
       }
       return false;
@@ -1079,6 +1092,18 @@ export const ReaderPage: React.FC = () => {
         tryScroll();
       }, delay);
     });
+  }, []);
+
+  useEffect(() => {
+    const handleUserScroll = () => {
+      userInteractedRef.current = true;
+    };
+    window.addEventListener('wheel', handleUserScroll, { passive: true });
+    window.addEventListener('touchmove', handleUserScroll, { passive: true });
+    return () => {
+      window.removeEventListener('wheel', handleUserScroll);
+      window.removeEventListener('touchmove', handleUserScroll);
+    };
   }, []);
 
   // Auto-scroll to heading anchor if present in URL on load
@@ -1473,7 +1498,7 @@ export const ReaderPage: React.FC = () => {
 
   return (
     <div className="h-full flex overflow-hidden bg-cme-bg-base text-cme-text-base">
-      <div className="flex-1 overflow-y-auto min-w-0 pb-24">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-w-0 pb-24">
         {/* Top Reader Controls Header */}
       <header className="sticky top-0 z-20 bg-cme-bg-base/95 backdrop-blur-md border-b border-cme-border-base px-4 md:px-8 py-2.5 shadow-xs">
         <div className={`${containerWidthClass} flex items-center justify-between gap-4`}>

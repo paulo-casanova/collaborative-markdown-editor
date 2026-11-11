@@ -236,7 +236,16 @@ export const AppShell: React.FC = () => {
       )}
       <div className="flex-1 flex overflow-hidden min-h-0">
         <Sidebar />
-        <main className="flex-1 overflow-y-auto bg-cme-bg-base min-h-0 relative">
+        <main
+          className={`flex-1 bg-cme-bg-base min-h-0 relative ${
+            location.pathname.startsWith('/documents') ||
+            location.pathname.startsWith('/docs') ||
+            location.pathname.startsWith('/doc/') ||
+            location.pathname.startsWith('/d/')
+              ? 'overflow-hidden'
+              : 'overflow-y-auto'
+          }`}
+        >
           <ErrorBoundary key={location.pathname}>
             <Outlet />
           </ErrorBoundary>
