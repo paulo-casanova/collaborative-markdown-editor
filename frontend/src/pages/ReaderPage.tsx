@@ -110,6 +110,14 @@ export function computeCommentsSignature(comments: CommentRecord[] = []): string
     .join('|');
 }
 
+export function computeSuggestionsSignature(suggestions: SuggestionRecord[] = []): string {
+  if (!suggestions || suggestions.length === 0) return '';
+  return suggestions
+    .map((s) => `${s.id}:${s.status || 'PENDING'}:${s.resolved_at || s.created_at || ''}:${s.suggested_text || ''}`)
+    .sort()
+    .join('|');
+}
+
 export interface ReaderSuggestionCardProps {
   suggestion: SuggestionRecord;
   onAccept?: (id: string) => void;
@@ -496,35 +504,39 @@ export const ReaderPage: React.FC = () => {
 
   const queryClient = useQueryClient();
 
-  // Poll server every 5 seconds to check if a new version or comments exist (Issue #19)
+  // Poll server every 5 seconds to check if a new version or comments/suggestions exist (Issue #19)
   useEffect(() => {
     if (!document?.id) return;
 
     let isMounted = true;
     const currentId = document.id;
-    const currentContent = document.content ?? '';
     const displayedCommentsSig = computeCommentsSignature(comments);
+    const displayedSuggestionsSig = computeSuggestionsSignature(suggestions);
 
     const checkServerVersion = async () => {
       try {
-        const [latestDoc, latestComments] = await Promise.all([
+        const [latestDoc, latestComments, latestSuggestions] = await Promise.all([
           fetchDocument(currentId),
           fetchDocumentComments(currentId),
+          fetchDocumentSuggestions(currentId),
         ]);
         if (!isMounted) return;
 
         const latestContent = latestDoc.content ?? '';
-        const contentChanged = latestContent !== currentContent;
+        const effectiveContent = latestContentRef.current || (document.content ?? '');
+        const contentChanged = latestContent !== effectiveContent;
         const latestCommentsSig = computeCommentsSignature(latestComments);
         const commentsChanged = latestCommentsSig !== displayedCommentsSig;
+        const latestSuggestionsSig = computeSuggestionsSignature(latestSuggestions);
+        const suggestionsChanged = latestSuggestionsSig !== displayedSuggestionsSig;
 
-        if (contentChanged && commentsChanged) {
+        if (contentChanged && (commentsChanged || suggestionsChanged)) {
           setHasNewVersion(true);
           setRefreshReason('all');
         } else if (contentChanged) {
           setHasNewVersion(true);
           setRefreshReason('content');
-        } else if (commentsChanged) {
+        } else if (commentsChanged || suggestionsChanged) {
           setHasNewVersion(true);
           setRefreshReason('comments');
         } else {
@@ -541,7 +553,7 @@ export const ReaderPage: React.FC = () => {
       isMounted = false;
       clearInterval(intervalId);
     };
-  }, [document?.id, document?.content, comments]);
+  }, [document?.id, document?.content, comments, suggestions]);
 
   // Also listen for reviewStore mutations (e.g. AI agent actions or WebSocket events)
   useEffect(() => {
@@ -550,13 +562,19 @@ export const ReaderPage: React.FC = () => {
       if (state.documentId && state.documentId !== docId) return;
       const prevSig = computeCommentsSignature(prevState.comments);
       const currSig = computeCommentsSignature(state.comments);
-      if (currSig && currSig !== prevSig && currSig !== computeCommentsSignature(comments)) {
+      const prevSuggSig = computeSuggestionsSignature(prevState.suggestions);
+      const currSuggSig = computeSuggestionsSignature(state.suggestions);
+
+      const commentsMutated = currSig && currSig !== prevSig && currSig !== computeCommentsSignature(comments);
+      const suggestionsMutated = currSuggSig && currSuggSig !== prevSuggSig && currSuggSig !== computeSuggestionsSignature(suggestions);
+
+      if (commentsMutated || suggestionsMutated) {
         setHasNewVersion(true);
         setRefreshReason('comments');
       }
     });
     return () => unsub();
-  }, [docId, comments]);
+  }, [docId, comments, suggestions]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -1054,35 +1072,174 @@ export const ReaderPage: React.FC = () => {
 
   const handleAcceptSuggestion = async (suggId: string) => {
     try {
-      await acceptSuggestion(suggId);
-      queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
-      queryClient.invalidateQueries({ queryKey: ['document', docId] });
+      const targetSugg = suggestions.find((s) => s.id === suggId);
+      const effectiveDocId = docId || targetSugg?.document_id || '';
+      const currentContent = latestContentRef.current || document?.content || '';
+
+      // 1. Optimistically calculate and apply the replacement to the reader document
+      let anticipatedContent = currentContent;
+      if (targetSugg) {
+        const change = computeReplacementChange(
+          currentContent,
+          targetSugg.original_text,
+          targetSugg.suggested_text
+        );
+        if (change) {
+          anticipatedContent =
+            currentContent.slice(0, change.from) +
+            change.insert +
+            currentContent.slice(change.to);
+        } else if (
+          targetSugg.original_text &&
+          currentContent.includes(targetSugg.original_text)
+        ) {
+          anticipatedContent = currentContent.replace(
+            targetSugg.original_text,
+            targetSugg.suggested_text
+          );
+        } else if (
+          targetSugg.anchor?.quote?.exact &&
+          currentContent.includes(targetSugg.anchor.quote.exact)
+        ) {
+          anticipatedContent = currentContent.replace(
+            targetSugg.anchor.quote.exact,
+            targetSugg.suggested_text
+          );
+        }
+
+        if (anticipatedContent !== currentContent) {
+          latestContentRef.current = anticipatedContent;
+          queryClient.setQueryData(['doc-reader', rawTarget], (old: any) => {
+            if (!old) return old;
+            return { ...old, content: anticipatedContent };
+          });
+          if (effectiveDocId) {
+            queryClient.setQueryData(['document', effectiveDocId], (old: any) => {
+              if (!old) return old;
+              return { ...old, content: anticipatedContent };
+            });
+          }
+        }
+      }
+
+      // 2. Optimistically update suggestion state so card transitions to ACCEPTED immediately
+      if (effectiveDocId) {
+        queryClient.setQueryData<SuggestionRecord[]>(['reader-suggestions', effectiveDocId], (old) => {
+          if (!old) return [];
+          return old.map((s) =>
+            s.id === suggId
+              ? { ...s, status: 'ACCEPTED', resolved_at: new Date().toISOString() }
+              : s
+          );
+        });
+      }
+      useReviewStore.setState((state) => ({
+        suggestions: state.suggestions.map((s) =>
+          s.id === suggId ? { ...s, status: 'ACCEPTED', resolved_at: new Date().toISOString() } : s
+        ),
+      }));
+
+      // 3. Send accept API request to server (updates backend CRDT room and DB)
+      const updatedSugg = await acceptSuggestion(suggId);
+      if (updatedSugg?.resolved_at) {
+        useReviewStore.setState((state) => ({
+          suggestions: state.suggestions.map((s) =>
+            s.id === suggId ? { ...s, resolved_at: updatedSugg.resolved_at } : s
+          ),
+        }));
+      }
+
+      // 4. Fetch the authoritative document from server to guarantee CRDT synchronization
+      if (effectiveDocId) {
+        try {
+          const freshDoc = await fetchDocument(effectiveDocId);
+          if (freshDoc?.content !== undefined) {
+            latestContentRef.current = freshDoc.content;
+            queryClient.setQueryData(['doc-reader', rawTarget], (old: any) => {
+              if (!old) return freshDoc;
+              return { ...old, ...freshDoc };
+            });
+            queryClient.setQueryData(['document', effectiveDocId], (old: any) => {
+              if (!old) return freshDoc;
+              return { ...old, ...freshDoc };
+            });
+          }
+        } catch (fetchErr) {
+          console.warn('[ReaderPage] Could not fetch fresh document after accept:', fetchErr);
+        }
+      }
+
+      // 5. Invalidate and refetch queries
+      await refetch();
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+      if (effectiveDocId) {
+        queryClient.invalidateQueries({ queryKey: ['reader-suggestions', effectiveDocId] });
+        queryClient.invalidateQueries({ queryKey: ['document', effectiveDocId] });
+      }
       queryClient.invalidateQueries({ queryKey: ['document-by-path'] });
+
+      // 6. Clear any stale new version banner
+      setHasNewVersion(false);
+      setRefreshReason(null);
     } catch (err) {
       console.error('Failed to accept suggestion in reader mode:', err);
+      // In case of error, refetch to restore true state
+      refetch();
+      queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+      if (docId) {
+        queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+      }
     }
   };
 
   const handleRejectSuggestion = async (suggId: string) => {
     try {
+      const effectiveDocId = docId || '';
+      if (effectiveDocId) {
+        queryClient.setQueryData<SuggestionRecord[]>(['reader-suggestions', effectiveDocId], (old) => {
+          if (!old) return [];
+          return old.map((s) =>
+            s.id === suggId
+              ? { ...s, status: 'REJECTED', resolved_at: new Date().toISOString() }
+              : s
+          );
+        });
+      }
+      useReviewStore.setState((state) => ({
+        suggestions: state.suggestions.map((s) =>
+          s.id === suggId ? { ...s, status: 'REJECTED', resolved_at: new Date().toISOString() } : s
+        ),
+      }));
+
       await rejectSuggestion(suggId);
-      queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+      if (effectiveDocId) {
+        queryClient.invalidateQueries({ queryKey: ['reader-suggestions', effectiveDocId] });
+      }
     } catch (err) {
       console.error('Failed to reject suggestion in reader mode:', err);
+      if (docId) {
+        queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+      }
     }
   };
 
   const handleArchiveSuggestion = async (suggId: string) => {
     try {
-      await archiveSuggestion(suggId);
-      queryClient.setQueryData<SuggestionRecord[]>(['reader-suggestions', docId], (old) => {
-        if (!old) return [];
-        return old.filter((s) => s.id !== suggId);
-      });
-      queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+      const effectiveDocId = docId || '';
+      if (effectiveDocId) {
+        queryClient.setQueryData<SuggestionRecord[]>(['reader-suggestions', effectiveDocId], (old) => {
+          if (!old) return [];
+          return old.filter((s) => s.id !== suggId);
+        });
+      }
       useReviewStore.setState((state) => ({
         suggestions: state.suggestions.filter((s) => s.id !== suggId),
       }));
+
+      await archiveSuggestion(suggId);
+      if (effectiveDocId) {
+        queryClient.invalidateQueries({ queryKey: ['reader-suggestions', effectiveDocId] });
+      }
     } catch (err) {
       console.error('Failed to archive suggestion in reader mode:', err);
     }
@@ -2100,8 +2257,15 @@ export const ReaderPage: React.FC = () => {
           onApplyReplacement={handleApplyReplacementInReader}
           onJumpToEdit={handleJumpToEditInReader}
           onReviewAction={(actionType) => {
-            setHasNewVersion(true);
-            setRefreshReason(actionType.includes('comment') ? 'comments' : 'all');
+            if (actionType === 'accept_suggestion') {
+              if (docId) {
+                queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
+              }
+              queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
+            } else {
+              setHasNewVersion(true);
+              setRefreshReason(actionType.includes('comment') ? 'comments' : 'all');
+            }
           }}
         />
       )}
