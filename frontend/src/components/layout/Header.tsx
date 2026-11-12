@@ -1,7 +1,9 @@
 import React from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   PanelLeft,
+  ArrowLeft,
+  ArrowRight,
   CheckCircle,
   RefreshCw,
   WifiOff,
@@ -11,13 +13,51 @@ import {
   Link2,
 } from 'lucide-react';
 import { useUIStore, SyncStatus } from '../../stores/uiStore';
+import { useNavigationStore } from '../../stores/navigationStore';
 import { HealthPopover } from './HealthPopover';
 import { ThemeToggle } from '../common/ThemeToggle';
 import { UserProfilePill } from '../auth/UserProfilePill';
 
 export const Header: React.FC = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const { sidebarOpen, toggleSidebar, breadcrumbs, syncStatus, setSearchModalOpen, setGoToPermalinkModalOpen } = useUIStore();
+  const { lastLinkJump, clearLastLinkJump } = useNavigationStore();
+
+  const handleGoBack = () => {
+    if (lastLinkJump) {
+      const from = lastLinkJump.fromLocation;
+      clearLastLinkJump();
+      const currentFull = window.location.pathname + window.location.search;
+      const fromFull = from.pathname + (from.search || '');
+      if (currentFull === fromFull && from.scrollTop !== undefined) {
+        window.dispatchEvent(
+          new CustomEvent('cme-restore-scroll', { detail: { scrollTop: from.scrollTop, hash: from.hash } })
+        );
+        try {
+          window.history.pushState(null, '', fromFull + (from.hash || ''));
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      if (from.pathname) {
+        navigate(`${fromFull}${from.hash || ''}`);
+        return;
+      }
+    }
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      window.history.back();
+    } else {
+      navigate(-1);
+    }
+  };
+
+  const handleGoForward = () => {
+    if (typeof window !== 'undefined') {
+      window.history.forward();
+    }
+  };
 
   const isEditorMode = location.pathname.startsWith('/documents/');
   const isReaderMode = location.pathname.startsWith('/docs/');
@@ -79,6 +119,30 @@ export const Header: React.FC = () => {
         >
           <PanelLeft className="w-4 h-4" />
         </button>
+
+        {/* Back and Forward navigation buttons */}
+        <div className="flex items-center gap-1 border-r border-cme-border-base/60 pr-2">
+          <button
+            type="button"
+            onClick={handleGoBack}
+            className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+            title="Go back (Alt+Left)"
+            data-testid="header-back-btn"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span className="sr-only">Go back</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleGoForward}
+            className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+            title="Go forward (Alt+Right)"
+            data-testid="header-forward-btn"
+          >
+            <ArrowRight className="w-3.5 h-3.5" />
+            <span className="sr-only">Go forward</span>
+          </button>
+        </div>
 
         {/* CME Brand */}
         <Link to="/" className="flex items-center gap-2 flex-shrink-0 group" title="Collaborative Markdown Editor">

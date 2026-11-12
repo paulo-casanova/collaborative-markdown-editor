@@ -12,6 +12,8 @@ import {
   Copy,
   Link2,
   ChevronRight,
+  ArrowLeft,
+  ArrowRight,
 } from 'lucide-react';
 import { useWorkspaceStore, WorkspaceTab } from '../../stores/workspaceStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -134,6 +136,30 @@ export const TabBar: React.FC = () => {
       className="h-10 border-b border-cme-border-base bg-cme-bg-surface flex items-center justify-between px-2 select-none z-30"
       data-testid="workspace-tabbar"
     >
+      {/* Navigation History Buttons */}
+      <div className="flex items-center gap-0.5 pr-1.5 mr-1 border-r border-cme-border-base flex-shrink-0">
+        <button
+          type="button"
+          onClick={() => window.history.back()}
+          className="p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+          title="Go back (Alt+Left)"
+          data-testid="editor-tab-back-btn"
+        >
+          <ArrowLeft className="w-3.5 h-3.5" />
+          <span className="sr-only">Go back</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => window.history.forward()}
+          className="p-1 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
+          title="Go forward (Alt+Right)"
+          data-testid="editor-tab-forward-btn"
+        >
+          <ArrowRight className="w-3.5 h-3.5" />
+          <span className="sr-only">Go forward</span>
+        </button>
+      </div>
+
       {/* Scrollable Tab Strip */}
       <div className="flex items-center gap-1 overflow-x-auto no-scrollbar flex-1 h-full py-1 pr-2">
         {displayTabs.map((tab, idx) => {

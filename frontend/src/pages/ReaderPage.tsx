@@ -22,7 +22,9 @@ import {
   Lock,
   FolderTree,
   Archive,
+  X,
 } from 'lucide-react';
+import { useNavigationStore } from '../stores/navigationStore';
 import katex from 'katex';
 import hljs from 'highlight.js';
 
@@ -248,7 +250,45 @@ export const ReaderPage: React.FC = () => {
 
   const { setBreadcrumbs, setViewMode, dialogSidecarOpen, toggleDialogSidecar, triggerRevealInFileTree } = useUIStore();
   const { closeAllTabs, outlineWidth, setOutlineWidth } = useWorkspaceStore();
+  const { lastLinkJump, clearLastLinkJump, saveScrollPosition, getScrollPosition } = useNavigationStore();
   const [isResizingOutline, setIsResizingOutline] = useState<boolean>(false);
+
+  const handleReturnToPreviousLocation = useCallback(() => {
+    if (!lastLinkJump) {
+      if (typeof window !== 'undefined' && window.history.length > 1) {
+        window.history.back();
+      } else {
+        navigate(-1);
+      }
+      return;
+    }
+
+    const from = lastLinkJump.fromLocation;
+    clearLastLinkJump();
+
+    const currentFull = typeof window !== 'undefined' ? window.location.pathname + window.location.search : '';
+    const fromFull = from.pathname + (from.search || '');
+
+    if (currentFull === fromFull && from.scrollTop !== undefined) {
+      // Same-document return: smoothly scroll back
+      if (scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTo({ top: from.scrollTop, behavior: 'smooth' });
+      }
+      try {
+        window.history.pushState(null, '', fromFull + (from.hash || ''));
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    // Cross-document return
+    if (from.pathname) {
+      navigate(`${fromFull}${from.hash || ''}`);
+    } else {
+      navigate(-1);
+    }
+  }, [lastLinkJump, clearLastLinkJump, navigate]);
 
   const handleOutlineResizeStart = useCallback(
     (e: React.MouseEvent) => {
@@ -1156,14 +1196,20 @@ export const ReaderPage: React.FC = () => {
     };
   }, []);
 
-  // Auto-scroll to heading anchor if present in URL on load
+  // Auto-scroll to heading anchor or restore scroll position on load
   useEffect(() => {
     if (!document?.content || isLoading) return;
     const targetHash = window.location.hash || (rawTarget.includes('#') ? `#${rawTarget.split('#')[1].trim()}` : '');
     if (targetHash) {
       scrollTarget(targetHash);
+    } else {
+      const currentKey = document.id || document.path || window.location.pathname;
+      const savedScroll = getScrollPosition(currentKey);
+      if (savedScroll !== undefined && scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTo({ top: savedScroll, behavior: 'instant' });
+      }
     }
-  }, [document?.id, document?.content, isLoading, scrollTarget, rawTarget]);
+  }, [document?.id, document?.content, document?.path, isLoading, scrollTarget, rawTarget, getScrollPosition]);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -1174,6 +1220,60 @@ export const ReaderPage: React.FC = () => {
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, [scrollTarget]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const hash = window.location.hash;
+      if (hash) {
+        scrollTarget(hash);
+      } else if (lastLinkJump && lastLinkJump.fromLocation.scrollTop !== undefined) {
+        const fromScroll = lastLinkJump.fromLocation.scrollTop;
+        clearLastLinkJump();
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTo({ top: fromScroll, behavior: 'smooth' });
+        }
+      } else if (document) {
+        const currentKey = document.id || document.path || window.location.pathname;
+        const savedScroll = getScrollPosition(currentKey);
+        if (savedScroll !== undefined && scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTo({ top: savedScroll, behavior: 'smooth' });
+        }
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [document, lastLinkJump, clearLastLinkJump, scrollTarget, getScrollPosition]);
+
+  useEffect(() => {
+    const handleRestoreScroll = (e: Event) => {
+      const customEvent = e as CustomEvent<{ scrollTop: number; hash?: string }>;
+      if (customEvent.detail?.scrollTop !== undefined && scrollContainerRef.current) {
+        scrollContainerRef.current.scrollTo({ top: customEvent.detail.scrollTop, behavior: 'smooth' });
+      }
+    };
+    window.addEventListener('cme-restore-scroll', handleRestoreScroll as EventListener);
+    return () => window.removeEventListener('cme-restore-scroll', handleRestoreScroll as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    let timeoutId: any = null;
+    const onScroll = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        if (document) {
+          const currentKey = document.id || document.path || window.location.pathname;
+          saveScrollPosition(currentKey, container.scrollTop);
+        }
+      }, 200);
+    };
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      container.removeEventListener('scroll', onScroll);
+    };
+  }, [document, saveScrollPosition]);
 
   // Document-level header numbering setting
   const numberHeaders = Boolean(document?.number_headers);
@@ -1524,7 +1624,16 @@ export const ReaderPage: React.FC = () => {
         <p className="text-xs text-cme-text-muted">
           {(error as any)?.message || `Could not find document at "${rawTarget}".`}
         </p>
-        <div className="pt-2">
+        <div className="pt-2 flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={handleReturnToPreviousLocation}
+            className="px-4 py-2 border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-base rounded-lg text-xs font-medium inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+            data-testid="not-found-back-btn"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Go Back</span>
+          </button>
           <Link
             to="/"
             className="px-4 py-2 bg-cme-primary text-white rounded-lg text-xs font-medium hover:bg-cme-primary-hover inline-block"
@@ -1548,7 +1657,12 @@ export const ReaderPage: React.FC = () => {
 
   return (
     <div className="h-full flex overflow-hidden bg-cme-bg-base text-cme-text-base">
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-w-0 pb-24">
+      <div
+        ref={scrollContainerRef}
+        id="reader-scroll-container"
+        data-testid="reader-scroll-container"
+        className="flex-1 overflow-y-auto min-w-0 pb-24"
+      >
         {/* Top Reader Controls Header */}
       <header className="sticky top-0 z-20 bg-cme-bg-base/95 backdrop-blur-md border-b border-cme-border-base px-4 md:px-8 py-2.5 shadow-xs">
         <div className={`${containerWidthClass} flex items-center justify-between gap-4`}>
@@ -1558,9 +1672,9 @@ export const ReaderPage: React.FC = () => {
             <div className="flex items-center gap-1 flex-shrink-0">
               <button
                 type="button"
-                onClick={() => navigate(-1)}
+                onClick={handleReturnToPreviousLocation}
                 className="p-1.5 rounded-lg border border-cme-border-base bg-cme-bg-surface hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors"
-                title="Go back to previous page (Alt+Left)"
+                title="Go back to previous location or page (Alt+Left)"
                 data-testid="reader-back-btn"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
@@ -1923,12 +2037,57 @@ export const ReaderPage: React.FC = () => {
             <DocumentOutline
               headings={headings}
               markdown={activeContent}
-              onSelectHeading={(id) => scrollTarget(id)}
+              onSelectHeading={(id) => {
+                const container = scrollContainerRef.current;
+                const currentScroll = container ? container.scrollTop : 0;
+                useNavigationStore.getState().recordLinkJump(
+                  {
+                    pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+                    search: typeof window !== 'undefined' ? window.location.search : '',
+                    hash: typeof window !== 'undefined' ? window.location.hash : '',
+                    scrollTop: currentScroll,
+                    docId: document?.id,
+                    title: document?.title || document?.path,
+                  },
+                  id
+                );
+                scrollTarget(id);
+              }}
             />
           </div>
         </aside>
       </div>
       </div>
+
+      {/* Floating Back to Previous Location Button (appears after following a link) */}
+      {lastLinkJump && (
+        <div
+          className="fixed bottom-6 right-8 z-30 animate-in fade-in slide-in-from-bottom-2 duration-200"
+          data-testid="reader-link-back-container"
+        >
+          <button
+            type="button"
+            onClick={handleReturnToPreviousLocation}
+            className="flex items-center gap-2 px-3.5 py-2 rounded-full bg-cme-bg-surface/95 backdrop-blur-md border border-cme-border-base shadow-lg hover:shadow-xl text-xs font-medium text-cme-text-base hover:text-cme-primary hover:border-cme-primary/40 transition-all cursor-pointer group"
+            title="Go back to where you were before following the link"
+            data-testid="reader-link-back-floating-btn"
+          >
+            <ArrowLeft className="w-3.5 h-3.5 text-cme-primary group-hover:-translate-x-0.5 transition-transform" />
+            <span>Back to previous location</span>
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                clearLastLinkJump();
+              }}
+              className="ml-1 p-0.5 rounded-full hover:bg-cme-bg-hover text-cme-text-subtle hover:text-cme-text-muted transition-colors cursor-pointer"
+              title="Dismiss"
+              data-testid="reader-link-back-floating-dismiss"
+            >
+              <X className="w-3 h-3" />
+            </span>
+          </button>
+        </div>
+      )}
 
       {/* AI Agent Dialog Sidecar */}
       {dialogSidecarOpen && (
@@ -3010,6 +3169,19 @@ function renderInlineFormatted(
             title={`${displayAlt} (Click to jump to #${anchorSlug})`}
             onClick={(e) => {
               e.preventDefault();
+              const container = typeof document !== 'undefined' ? document.getElementById('reader-scroll-container') : null;
+              const currentScroll = container ? container.scrollTop : 0;
+              useNavigationStore.getState().recordLinkJump(
+                {
+                  pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+                  search: typeof window !== 'undefined' ? window.location.search : '',
+                  hash: typeof window !== 'undefined' ? window.location.hash : '',
+                  scrollTop: currentScroll,
+                  docId: currentDocTarget,
+                  title: currentDocPath,
+                },
+                anchor || anchorSlug
+              );
               const el = findHeadingElement(anchor || anchorSlug);
               if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }}
@@ -3027,6 +3199,21 @@ function renderInlineFormatted(
           className="inline-block my-0.5 mx-0.5 rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full"
           title={`${displayAlt} (Click to view ${cleanHref}, Ctrl+Click to edit)`}
           onClick={(e) => {
+            const container = typeof document !== 'undefined' ? document.getElementById('reader-scroll-container') : null;
+            const currentScroll = container ? container.scrollTop : 0;
+            if (currentDocTarget) useNavigationStore.getState().saveScrollPosition(currentDocTarget, currentScroll);
+            if (currentDocPath) useNavigationStore.getState().saveScrollPosition(currentDocPath, currentScroll);
+            useNavigationStore.getState().recordLinkJump(
+              {
+                pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+                search: typeof window !== 'undefined' ? window.location.search : '',
+                hash: typeof window !== 'undefined' ? window.location.hash : '',
+                scrollTop: currentScroll,
+                docId: currentDocTarget,
+                title: currentDocPath,
+              },
+              resolvedDoc
+            );
             if (e.ctrlKey || e.metaKey) {
               e.preventDefault();
               window.dispatchEvent(
@@ -3113,6 +3300,19 @@ function renderInlineFormatted(
             title={`${displayAlt} (Click to jump to #${anchorSlug})`}
             onClick={(e) => {
               e.preventDefault();
+              const container = typeof document !== 'undefined' ? document.getElementById('reader-scroll-container') : null;
+              const currentScroll = container ? container.scrollTop : 0;
+              useNavigationStore.getState().recordLinkJump(
+                {
+                  pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+                  search: typeof window !== 'undefined' ? window.location.search : '',
+                  hash: typeof window !== 'undefined' ? window.location.hash : '',
+                  scrollTop: currentScroll,
+                  docId: currentDocTarget,
+                  title: currentDocPath,
+                },
+                anchor || anchorSlug
+              );
               const el = findHeadingElement(anchor || anchorSlug);
               if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }}
@@ -3130,6 +3330,21 @@ function renderInlineFormatted(
           className="inline-block my-0.5 mx-0.5 rounded overflow-hidden align-middle hover:opacity-80 transition-opacity max-w-full"
           title={`${displayAlt} (Click to view ${cleanHref}, Ctrl+Click to edit)`}
           onClick={(e) => {
+            const container = typeof document !== 'undefined' ? document.getElementById('reader-scroll-container') : null;
+            const currentScroll = container ? container.scrollTop : 0;
+            if (currentDocTarget) useNavigationStore.getState().saveScrollPosition(currentDocTarget, currentScroll);
+            if (currentDocPath) useNavigationStore.getState().saveScrollPosition(currentDocPath, currentScroll);
+            useNavigationStore.getState().recordLinkJump(
+              {
+                pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+                search: typeof window !== 'undefined' ? window.location.search : '',
+                hash: typeof window !== 'undefined' ? window.location.hash : '',
+                scrollTop: currentScroll,
+                docId: currentDocTarget,
+                title: currentDocPath,
+              },
+              resolvedDoc
+            );
             if (e.ctrlKey || e.metaKey) {
               e.preventDefault();
               window.dispatchEvent(
@@ -3368,6 +3583,19 @@ function renderInlineFormatted(
                 return;
               }
               e.preventDefault();
+              const container = typeof document !== 'undefined' ? document.getElementById('reader-scroll-container') : null;
+              const currentScroll = container ? container.scrollTop : 0;
+              useNavigationStore.getState().recordLinkJump(
+                {
+                  pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+                  search: typeof window !== 'undefined' ? window.location.search : '',
+                  hash: typeof window !== 'undefined' ? window.location.hash : '',
+                  scrollTop: currentScroll,
+                  docId: currentDocTarget,
+                  title: currentDocPath,
+                },
+                anchorSlug
+              );
               const targetCandidate = effectiveAnchor || anchorSlug;
               const tryScroll = () => {
                 const el = findHeadingElement(targetCandidate);
@@ -3418,6 +3646,21 @@ function renderInlineFormatted(
           className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
           title={`Link: ${cleanTarget} (Click to view, Ctrl+Click to edit)`}
           onClick={(e) => {
+            const container = typeof document !== 'undefined' ? document.getElementById('reader-scroll-container') : null;
+            const currentScroll = container ? container.scrollTop : 0;
+            if (currentDocTarget) useNavigationStore.getState().saveScrollPosition(currentDocTarget, currentScroll);
+            if (currentDocPath) useNavigationStore.getState().saveScrollPosition(currentDocPath, currentScroll);
+            useNavigationStore.getState().recordLinkJump(
+              {
+                pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+                search: typeof window !== 'undefined' ? window.location.search : '',
+                hash: typeof window !== 'undefined' ? window.location.hash : '',
+                scrollTop: currentScroll,
+                docId: currentDocTarget,
+                title: currentDocPath,
+              },
+              effectiveTargetDoc
+            );
             if (e.ctrlKey || e.metaKey) {
               e.preventDefault();
               window.dispatchEvent(

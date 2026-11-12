@@ -3,6 +3,7 @@ import { Node, mergeAttributes, InputRule } from '@tiptap/core';
 import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewProps } from '@tiptap/react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, ExternalLink, X, Check } from 'lucide-react';
+import { useNavigationStore } from '../../../stores/navigationStore';
 
 export const WikiLinkComponent: React.FC<NodeViewProps> = ({
   node,
@@ -21,6 +22,14 @@ export const WikiLinkComponent: React.FC<NodeViewProps> = ({
     e.stopPropagation();
     if (e.metaKey || e.ctrlKey) {
       // Direct navigation on Ctrl/Cmd + click
+      useNavigationStore.getState().recordLinkJump(
+        {
+          pathname: typeof window !== 'undefined' ? window.location.pathname : '',
+          search: typeof window !== 'undefined' ? window.location.search : '',
+          hash: typeof window !== 'undefined' ? window.location.hash : '',
+        },
+        target
+      );
       navigate(`/documents/by-path?path=${encodeURIComponent(target)}`);
     } else {
       setShowPopup(true);

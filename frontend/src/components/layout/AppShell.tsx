@@ -13,6 +13,7 @@ import { ErrorBoundary } from '../common/ErrorBoundary';
 import { useThemeStore } from '../../stores/themeStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useWorkspaceStore } from '../../stores/workspaceStore';
+import { useNavigationStore } from '../../stores/navigationStore';
 import { RELOAD_KEY } from '../../api/client';
 import { fetchCurrentUser, getStoredAuthnProvider } from '../../api/auth';
 import { fetchHealthStatus } from '../../api/health';
@@ -149,6 +150,14 @@ export const AppShell: React.FC = () => {
       const target = customEvent.detail?.target;
       const anchor = customEvent.detail?.anchor;
       if (target) {
+        useNavigationStore.getState().recordLinkJump(
+          {
+            pathname: window.location.pathname,
+            search: window.location.search,
+            hash: window.location.hash,
+          },
+          target
+        );
         window.dispatchEvent(new Event('cme-wikilink-handled'));
         let cleanTarget = target.trim();
         let effectiveAnchor = anchor || '';
@@ -171,6 +180,14 @@ export const AppShell: React.FC = () => {
           navigate(`${baseRoute}/by-path?path=${encodeURIComponent(cleanTarget)}${hash}`);
         }
       } else if (anchor) {
+        useNavigationStore.getState().recordLinkJump(
+          {
+            pathname: window.location.pathname,
+            search: window.location.search,
+            hash: window.location.hash,
+          },
+          `#${anchor}`
+        );
         window.dispatchEvent(new Event('cme-wikilink-handled'));
         window.location.hash = anchor;
       }
@@ -180,6 +197,37 @@ export const AppShell: React.FC = () => {
       window.removeEventListener('cme-open-wikilink', handleOpenWikiLink as EventListener);
     };
   }, [navigate]);
+
+  // Global history navigation shortcut: Alt+Left / Alt+Right
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.altKey && e.key === 'ArrowLeft') {
+        const active = document.activeElement;
+        const isInput =
+          active &&
+          (active.tagName === 'INPUT' ||
+            active.tagName === 'TEXTAREA' ||
+            active.getAttribute('contenteditable') === 'true');
+        if (!isInput) {
+          e.preventDefault();
+          window.history.back();
+        }
+      } else if (e.altKey && e.key === 'ArrowRight') {
+        const active = document.activeElement;
+        const isInput =
+          active &&
+          (active.tagName === 'INPUT' ||
+            active.tagName === 'TEXTAREA' ||
+            active.getAttribute('contenteditable') === 'true');
+        if (!isInput) {
+          e.preventDefault();
+          window.history.forward();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   return (
     <div className="h-screen flex flex-col bg-cme-bg-base text-cme-text-base overflow-hidden">
