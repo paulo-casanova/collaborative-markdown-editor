@@ -2592,7 +2592,7 @@ Result<renderer::ReviewBundle> DocumentService::get_document_reviews(
             "       u.username, u.display_name "
             "FROM comments c "
             "JOIN users u ON c.author_id = u.id "
-            "WHERE c.document_id = $1::uuid "
+            "WHERE c.document_id = $1::uuid AND c.status NOT IN ('ARCHIVED', 'DELETED') "
             "ORDER BY c.created_at ASC;",
             doc_id
         );

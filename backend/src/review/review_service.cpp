@@ -138,7 +138,7 @@ Result<std::vector<CommentRecord>> ReviewService::list_comments(
             "       u.username, u.display_name, u.avatar_color "
             "FROM comments c "
             "JOIN users u ON c.author_id = u.id "
-            "WHERE c.document_id = $1::uuid AND c.status != 'ARCHIVED' "
+            "WHERE c.document_id = $1::uuid AND c.status NOT IN ('ARCHIVED', 'DELETED') "
             "ORDER BY c.created_at ASC;",
             document_id
         );
@@ -198,9 +198,11 @@ Result<CommentRecord> ReviewService::get_comment(
         auto rows = tx.exec_params(
             "SELECT c.id::text, c.document_id::text, c.parent_id::text, c.author_id::text, "
             "       c.content, c.status, c.anchor::text, c.created_at::text, c.updated_at::text, "
-            "       u.username, u.display_name, u.avatar_color "
+            "       u.username, u.display_name, u.avatar_color, "
+            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, '') "
             "FROM comments c "
             "JOIN users u ON c.author_id = u.id "
+            "JOIN documents d ON c.document_id = d.id "
             "WHERE c.id = $1::uuid;",
             comment_id
         );
@@ -208,10 +210,15 @@ Result<CommentRecord> ReviewService::get_comment(
             return std::unexpected(ErrorCode::NotFound);
         }
         const auto& row = rows[0];
+        if (row[5].as<std::string>() == "DELETED") {
+            return std::unexpected(ErrorCode::NotFound);
+        }
         doc_id = row[1].as<std::string>();
         rec = CommentRecord{
             .id = row[0].as<std::string>(),
             .document_id = doc_id,
+            .document_title = row[12].as<std::string>(),
+            .document_path = row[13].as<std::string>(),
             .parent_id = row[2].is_null() ? std::nullopt : std::optional<std::string>(row[2].as<std::string>()),
             .author = AuthorInfo{
                 .id = row[3].as<std::string>(),
@@ -235,7 +242,7 @@ Result<CommentRecord> ReviewService::get_comment(
                 "       u.username, u.display_name, u.avatar_color "
                 "FROM comments c "
                 "JOIN users u ON c.author_id = u.id "
-                "WHERE c.parent_id = $1::uuid "
+                "WHERE c.parent_id = $1::uuid AND c.status NOT IN ('ARCHIVED', 'DELETED') "
                 "ORDER BY c.created_at ASC;",
                 comment_id
             );
@@ -342,10 +349,10 @@ Result<CommentRecord> ReviewService::reply_comment(
     try {
         pqxx::work tx(conn_res->get());
         auto parent_rows = tx.exec_params(
-            "SELECT document_id::text FROM comments WHERE id = $1::uuid;",
+            "SELECT document_id::text, status FROM comments WHERE id = $1::uuid;",
             comment_id
         );
-        if (parent_rows.empty()) {
+        if (parent_rows.empty() || parent_rows[0][1].as<std::string>() == "DELETED") {
             return std::unexpected(ErrorCode::NotFound);
         }
         doc_id = parent_rows[0][0].as<std::string>();
@@ -412,10 +419,10 @@ Result<CommentRecord> ReviewService::update_comment_content(
     try {
         pqxx::work tx(conn_res->get());
         auto rows = tx.exec_params(
-            "SELECT document_id::text, author_id::text FROM comments WHERE id = $1::uuid;",
+            "SELECT document_id::text, author_id::text, status FROM comments WHERE id = $1::uuid;",
             comment_id
         );
-        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
+        if (rows.empty() || rows[0][2].as<std::string>() == "DELETED") return std::unexpected(ErrorCode::NotFound);
         doc_id = rows[0][0].as<std::string>();
         author_id = rows[0][1].as<std::string>();
     } catch (...) {
@@ -469,10 +476,10 @@ Result<CommentRecord> ReviewService::update_comment_status(
     try {
         pqxx::work tx(conn_res->get());
         auto rows = tx.exec_params(
-            "SELECT document_id::text, author_id::text FROM comments WHERE id = $1::uuid;",
+            "SELECT document_id::text, author_id::text, status FROM comments WHERE id = $1::uuid;",
             comment_id
         );
-        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
+        if (rows.empty() || rows[0][2].as<std::string>() == "DELETED") return std::unexpected(ErrorCode::NotFound);
         doc_id = rows[0][0].as<std::string>();
         author_id = rows[0][1].as<std::string>();
     } catch (...) {
@@ -518,10 +525,10 @@ Result<CommentRecord> ReviewService::archive_comment(
     try {
         pqxx::work tx(conn_res->get());
         auto rows = tx.exec_params(
-            "SELECT document_id::text, author_id::text FROM comments WHERE id = $1::uuid;",
+            "SELECT document_id::text, author_id::text, status FROM comments WHERE id = $1::uuid;",
             comment_id
         );
-        if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
+        if (rows.empty() || rows[0][2].as<std::string>() == "DELETED") return std::unexpected(ErrorCode::NotFound);
         doc_id = rows[0][0].as<std::string>();
         author_id = rows[0][1].as<std::string>();
     } catch (...) {
@@ -554,7 +561,7 @@ Result<CommentRecord> ReviewService::archive_comment(
     }
 }
 
-Result<void> ReviewService::delete_comment(
+Result<CommentRecord> ReviewService::delete_comment(
     const std::string& comment_id,
     const auth::UserIdentity& user
 ) {
@@ -562,32 +569,62 @@ Result<void> ReviewService::delete_comment(
     auto conn_res = db_pool_->acquire();
     if (!conn_res.has_value()) return std::unexpected(conn_res.error());
 
-    std::string doc_id;
-    std::string author_id;
     try {
         pqxx::work tx(conn_res->get());
         auto rows = tx.exec_params(
-            "SELECT document_id::text, author_id::text FROM comments WHERE id = $1::uuid;",
+            "SELECT c.id::text, c.document_id::text, c.parent_id::text, c.author_id::text, "
+            "       c.content, c.status, c.anchor::text, c.created_at::text, c.updated_at::text, "
+            "       u.username, u.display_name, u.avatar_color, "
+            "       COALESCE(d.title, 'Untitled Document'), COALESCE(d.fs_path, '') "
+            "FROM comments c "
+            "JOIN users u ON c.author_id = u.id "
+            "JOIN documents d ON c.document_id = d.id "
+            "WHERE c.id = $1::uuid;",
             comment_id
         );
         if (rows.empty()) return std::unexpected(ErrorCode::NotFound);
-        doc_id = rows[0][0].as<std::string>();
-        author_id = rows[0][1].as<std::string>();
-    } catch (...) {
-        return std::unexpected(ErrorCode::DatabaseError);
-    }
 
-    auto access_res = check_doc_access(doc_id, user);
-    if (!access_res.has_value()) return std::unexpected(access_res.error());
-    if (access_res.value() < db::AccessLevel::Edit && user.user_id != author_id && !user.is_system_admin) {
-        return std::unexpected(ErrorCode::PermissionDenied);
-    }
+        const auto& row = rows[0];
+        std::string current_status = row[5].as<std::string>();
+        if (current_status == "DELETED") {
+            return std::unexpected(ErrorCode::NotFound);
+        }
 
-    try {
-        pqxx::work tx(conn_res->get());
-        tx.exec_params("DELETE FROM comments WHERE id = $1::uuid;", comment_id);
+        std::string doc_id = row[1].as<std::string>();
+        std::string author_id = row[3].as<std::string>();
+
+        auto access_res = check_doc_access(doc_id, user);
+        if (!access_res.has_value()) return std::unexpected(access_res.error());
+        if (access_res.value() < db::AccessLevel::Edit && user.user_id != author_id && !user.is_system_admin) {
+            return std::unexpected(ErrorCode::PermissionDenied);
+        }
+
+        tx.exec_params(
+            "UPDATE comments SET status = 'DELETED', updated_at = NOW() "
+            "WHERE id = $1::uuid OR parent_id = $1::uuid;",
+            comment_id
+        );
         tx.commit();
-        return {};
+
+        return CommentRecord{
+            .id = row[0].as<std::string>(),
+            .document_id = doc_id,
+            .document_title = row[12].as<std::string>(),
+            .document_path = row[13].as<std::string>(),
+            .parent_id = row[2].is_null() ? std::nullopt : std::optional<std::string>(row[2].as<std::string>()),
+            .author = AuthorInfo{
+                .id = author_id,
+                .username = row[9].as<std::string>(),
+                .display_name = row[10].as<std::string>(),
+                .avatar_color = row[11].as<std::string>()
+            },
+            .content = row[4].as<std::string>(),
+            .status = "DELETED",
+            .anchor = parse_json_safe(row[6].as<std::string>()),
+            .created_at = row[7].as<std::string>(),
+            .updated_at = row[8].as<std::string>(),
+            .replies = {}
+        };
     } catch (const std::exception& e) {
         std::cerr << "[ERROR] ReviewService::delete_comment failed: " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
@@ -618,7 +655,7 @@ Result<std::vector<CommentRecord>> ReviewService::list_participated_comments(
             "JOIN users u ON c.author_id = u.id "
             "LEFT JOIN comment_user_acks ack ON ack.comment_id = c.id AND ack.user_id = " + tx.quote(user.user_id) + "::uuid "
             "WHERE c.parent_id IS NULL "
-            "  AND c.status != 'ARCHIVED' "
+            "  AND c.status NOT IN ('ARCHIVED', 'DELETED') "
             "  AND ( "
             "      c.author_id = " + tx.quote(user.user_id) + "::uuid "
             "      OR EXISTS (SELECT 1 FROM comments r WHERE r.parent_id = c.id AND r.author_id = " + tx.quote(user.user_id) + "::uuid) "
@@ -682,7 +719,7 @@ Result<std::vector<CommentRecord>> ReviewService::list_participated_comments(
                 "FROM comments r "
                 "JOIN users u ON r.author_id = u.id "
                 "WHERE r.parent_id IN (" + parent_in + ") "
-                "  AND r.status != 'ARCHIVED' "
+                "  AND r.status NOT IN ('ARCHIVED', 'DELETED') "
                 "ORDER BY r.created_at ASC;"
             );
 
@@ -738,8 +775,8 @@ Result<void> ReviewService::acknowledge_comment(
 
     try {
         pqxx::work tx(conn_res->get());
-        auto chk = tx.exec_params("SELECT id FROM comments WHERE id = $1::uuid;", comment_id);
-        if (chk.empty()) {
+        auto chk = tx.exec_params("SELECT id, status FROM comments WHERE id = $1::uuid;", comment_id);
+        if (chk.empty() || chk[0][1].as<std::string>() == "DELETED") {
             return std::unexpected(ErrorCode::NotFound);
         }
 

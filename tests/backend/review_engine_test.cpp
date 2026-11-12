@@ -547,6 +547,46 @@ int main() {
     assert(events.back()["comment_id"] == comment_id);
     std::cout << "  [PASS] WebSocket Opcode 0x02 received COMMENT_DELETED notification!\n";
 
+    // Verify comment is soft-deleted in database (retained with status 'DELETED')
+    {
+        pqxx::connection conn("postgresql://cme:secret@localhost:5432/cme_test");
+        pqxx::work tx(conn);
+        auto chk_rows = tx.exec_params(
+            "SELECT status, content FROM comments WHERE id = $1::uuid;",
+            comment_id
+        );
+        assert(!chk_rows.empty());
+        assert(chk_rows[0][0].as<std::string>() == "DELETED");
+        std::cout << "  [PASS] Database retains soft-deleted comment row with status 'DELETED'!\n";
+
+        // Verify audit log has DELETE_COMMENT entry
+        auto audit_rows = tx.exec_params(
+            "SELECT action, result, details::text FROM audit_logs WHERE action = 'DELETE_COMMENT' AND document_id = $1::uuid ORDER BY id DESC LIMIT 1;",
+            doc_id
+        );
+        assert(!audit_rows.empty());
+        assert(audit_rows[0][0].as<std::string>() == "DELETE_COMMENT");
+        assert(audit_rows[0][1].as<std::string>() == "SUCCESS");
+        auto details = nlohmann::json::parse(audit_rows[0][2].as<std::string>());
+        assert(details["comment_id"] == comment_id);
+        std::cout << "  [PASS] Audit log contains DELETE_COMMENT entry with comment details!\n";
+    }
+
+    // Verify soft-deleted comment is excluded from document comments list
+    {
+        auto resp_list = http_curl(
+            "GET",
+            base_url + "/api/v1/documents/" + doc_id + "/comments",
+            {"Authorization: Bearer " + alice_token}
+        );
+        assert(resp_list.status_code == 200);
+        auto comm_list = nlohmann::json::parse(resp_list.body);
+        for (const auto& c : comm_list) {
+            assert(c["id"] != comment_id);
+        }
+        std::cout << "  [PASS] Soft-deleted comment is excluded from document comments list!\n";
+    }
+
     // =========================================================================
     // 8.5 Explicit Archival of Comments and Suggestions
     // =========================================================================

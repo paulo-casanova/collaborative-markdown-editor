@@ -236,7 +236,7 @@ public:
     Result<CommentRecord> update_comment_content(const std::string& comment_id, const auth::UserIdentity& user, const std::string& content);
     Result<CommentRecord> update_comment_status(const std::string& comment_id, const auth::UserIdentity& user, const std::string& status);
     Result<CommentRecord> archive_comment(const std::string& comment_id, const auth::UserIdentity& user);
-    Result<void> delete_comment(const std::string& comment_id, const auth::UserIdentity& user);
+    Result<CommentRecord> delete_comment(const std::string& comment_id, const auth::UserIdentity& user);
     Result<std::vector<CommentRecord>> list_participated_comments(
         const auth::UserIdentity& user,
         const std::string& status_filter = "active"

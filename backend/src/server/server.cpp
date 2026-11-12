@@ -4485,29 +4485,46 @@ Result<void> Server::start() {
         auto user = authenticate_user(req, res);
         if (!user) return;
         std::string comment_id = url_decode(req->getParameter(0));
-        auto comm_res = review_service_->get_comment(comment_id, *user);
-        std::string doc_id;
-        if (comm_res.has_value()) {
-            doc_id = comm_res.value().document_id;
-        }
+        std::string user_agent = std::string(req->getHeader("user-agent"));
+
         auto del_res = review_service_->delete_comment(comment_id, *user);
         if (!del_res.has_value()) {
             if (del_res.error() == ErrorCode::NotFound) {
+                audit_change(user_agent, "DELETE_COMMENT", "", "NOT_FOUND", *user, std::nullopt, {{"comment_id", comment_id}});
                 send_json(res, "404 Not Found", {{"error", "Comment not found"}});
             } else if (del_res.error() == ErrorCode::PermissionDenied) {
+                audit_change(user_agent, "DELETE_COMMENT", "", "DENIED", *user, std::nullopt, {{"comment_id", comment_id}});
                 send_json(res, "403 Forbidden", {{"error", "Forbidden: Edit access or author required"}});
             } else {
+                audit_change(user_agent, "DELETE_COMMENT", "", "ERROR", *user, std::nullopt, {{"comment_id", comment_id}});
                 send_json(res, "500 Internal Server Error", {{"error", "Failed to delete comment"}});
             }
             return;
         }
-        if (!doc_id.empty()) {
-            broadcast_review_event(doc_id, {
-                {"event", "COMMENT_DELETED"},
-                {"document_id", doc_id},
-                {"comment_id", comment_id}
-            });
-        }
+
+        const auto& deleted_comment = del_res.value();
+        audit_change(
+            user_agent,
+            "DELETE_COMMENT",
+            deleted_comment.document_path,
+            "SUCCESS",
+            *user,
+            deleted_comment.document_id,
+            {
+                {"comment_id", comment_id},
+                {"author_id", deleted_comment.author.id},
+                {"author_username", deleted_comment.author.username},
+                {"author_display_name", deleted_comment.author.display_name},
+                {"content", deleted_comment.content},
+                {"parent_id", deleted_comment.parent_id.has_value() ? nlohmann::json(*deleted_comment.parent_id) : nlohmann::json(nullptr)}
+            }
+        );
+
+        broadcast_review_event(deleted_comment.document_id, {
+            {"event", "COMMENT_DELETED"},
+            {"document_id", deleted_comment.document_id},
+            {"comment_id", comment_id}
+        });
         send_json(res, "200 OK", {{"status", "deleted"}});
     });
 
