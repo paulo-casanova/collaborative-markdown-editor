@@ -71,6 +71,7 @@ import { useUIStore } from '../stores/uiStore';
 import { useWorkspaceStore } from '../stores/workspaceStore';
 import { useThemeStore } from '../stores/themeStore';
 import { DialogSidecar } from '../components/dialog/DialogSidecar';
+import { ReviewSidebar } from '../components/review/ReviewSidebar';
 import { useDialogStore } from '../stores/dialogStore';
 import {
   DocumentOutline,
@@ -602,7 +603,41 @@ export const ReaderPage: React.FC = () => {
     pendingCommentSelection,
     pendingSuggestionSelection,
     initDocument,
+    isSidebarOpen,
+    setSidebarOpen,
+    showInTextReviews,
   } = useReviewStore();
+
+  // Sync React Query comments and suggestions to useReviewStore so ReviewSidebar has full data
+  useEffect(() => {
+    if (comments) {
+      useReviewStore.setState({ comments });
+    }
+  }, [comments]);
+
+  useEffect(() => {
+    if (suggestions) {
+      useReviewStore.setState({ suggestions });
+    }
+  }, [suggestions]);
+
+  const openReviewsCount = useMemo(() => {
+    const openComments = comments.filter((c) => c.status === 'OPEN').length;
+    const pendingSuggs = suggestions.filter((s) => s.status === 'PENDING').length;
+    return openComments + pendingSuggs;
+  }, [comments, suggestions]);
+
+  const handleToggleReviews = useCallback(() => {
+    if (!showReviews) {
+      setShowReviews(true);
+      setSidebarOpen(true);
+    } else if (!isSidebarOpen) {
+      setSidebarOpen(true);
+    } else {
+      setShowReviews(false);
+      setSidebarOpen(false);
+    }
+  }, [showReviews, isSidebarOpen, setSidebarOpen]);
 
   const { data: currentUser } = useQuery({
     queryKey: ['auth-me'],
@@ -774,8 +809,9 @@ export const ReaderPage: React.FC = () => {
 
           queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
           queryClient.invalidateQueries({ queryKey: ['document'] });
-          setHasNewVersion(true);
-          setRefreshReason('content');
+          queryClient.invalidateQueries({ queryKey: ['reader-suggestions', targetDocId] });
+          setHasNewVersion(false);
+          setRefreshReason(null);
           return true;
         } catch (err) {
           console.warn('[ReaderPage] Failed to apply replacement in reader mode:', err);
@@ -797,17 +833,19 @@ export const ReaderPage: React.FC = () => {
     if (prevPendingComment.current && !pendingCommentSelection) {
       queryClient.invalidateQueries({ queryKey: ['reader-comments', docId] });
       setShowReviews(true);
+      setSidebarOpen(true);
     }
     prevPendingComment.current = pendingCommentSelection;
-  }, [pendingCommentSelection, docId, queryClient]);
+  }, [pendingCommentSelection, docId, queryClient, setSidebarOpen]);
 
   useEffect(() => {
     if (prevPendingSuggestion.current && !pendingSuggestionSelection) {
       queryClient.invalidateQueries({ queryKey: ['reader-suggestions', docId] });
       setShowReviews(true);
+      setSidebarOpen(true);
     }
     prevPendingSuggestion.current = pendingSuggestionSelection;
-  }, [pendingSuggestionSelection, docId, queryClient]);
+  }, [pendingSuggestionSelection, docId, queryClient, setSidebarOpen]);
 
   const articleRef = useRef<HTMLElement>(null);
 
@@ -896,6 +934,100 @@ export const ReaderPage: React.FC = () => {
         }, 2600);
       } else {
         console.warn('[ReaderPage] Could not find edit text in rendered document to jump to:', targetText);
+      }
+    },
+    []
+  );
+
+  const handleScrollToAnchorInReader = useCallback(
+    (anchor: any) => {
+      if (!anchor) return;
+      const container = articleRef.current;
+      if (!container) return;
+
+      // 1. If anchor has comment_id or suggestion_id, check for direct DOM elements
+      if (anchor.comment_id) {
+        const commentEl = container.querySelector(`[data-comment-id="${anchor.comment_id}"]`);
+        if (commentEl) {
+          commentEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+      }
+      if (anchor.suggestion_id) {
+        const suggEl = container.querySelector(`[data-suggestion-id="${anchor.suggestion_id}"]`);
+        if (suggEl) {
+          suggEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+      }
+
+      // 2. Extract search target text from anchor quote or exact text
+      const exact = anchor.quote?.exact || anchor.exact || anchor.target_text || anchor.original_text || '';
+      const targetText = typeof exact === 'string' ? exact.trim() : '';
+
+      if (!targetText) return;
+
+      const primarySearch = targetText.split('\n')[0].trim().toLowerCase();
+      if (!primarySearch) return;
+
+      // Check for text node match using TreeWalker
+      if (typeof window !== 'undefined' && window.document) {
+        const walker = window.document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+        let node: Node | null;
+        while ((node = walker.nextNode())) {
+          const val = (node.nodeValue || '').toLowerCase();
+          if (val.includes(primarySearch)) {
+            const el = node.parentElement as HTMLElement;
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.remove('cme-edit-highlight');
+              void el.offsetWidth;
+              el.classList.add('cme-edit-highlight');
+              setTimeout(() => {
+                el.classList.remove('cme-edit-highlight');
+              }, 2600);
+              return;
+            }
+          }
+        }
+      }
+
+      // Check block elements textContent
+      const blocks = container.querySelectorAll(
+        'p, li, blockquote, pre, tr, h1, h2, h3, h4, h5, h6, .callout, div'
+      );
+      for (const block of Array.from(blocks)) {
+        const text = (block.textContent || '').toLowerCase();
+        if (text.includes(primarySearch)) {
+          const el = block as HTMLElement;
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          el.classList.remove('cme-edit-highlight');
+          void el.offsetWidth;
+          el.classList.add('cme-edit-highlight');
+          setTimeout(() => {
+            el.classList.remove('cme-edit-highlight');
+          }, 2600);
+          return;
+        }
+      }
+
+      // Fallback: first 3 words
+      const words = primarySearch.split(/\s+/).filter(Boolean);
+      if (words.length >= 3) {
+        const phrase = words.slice(0, 3).join(' ');
+        for (const block of Array.from(blocks)) {
+          if ((block.textContent || '').toLowerCase().includes(phrase)) {
+            const el = block as HTMLElement;
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.remove('cme-edit-highlight');
+            void el.offsetWidth;
+            el.classList.add('cme-edit-highlight');
+            setTimeout(() => {
+              el.classList.remove('cme-edit-highlight');
+            }, 2600);
+            return;
+          }
+        }
       }
     },
     []
@@ -1718,15 +1850,15 @@ export const ReaderPage: React.FC = () => {
     if (isHistorical) {
       return showNextRevDiff ? revisionDiffSuggestions : [];
     }
-    return showReviews
+    return showReviews && showInTextReviews
       ? suggestions.filter((s) => s.status === 'PENDING' || s.status === 'REVISION_DIFF')
       : [];
-  }, [isHistorical, showNextRevDiff, revisionDiffSuggestions, showReviews, suggestions]);
+  }, [isHistorical, showNextRevDiff, revisionDiffSuggestions, showReviews, showInTextReviews, suggestions]);
 
   const effectiveComments = useMemo(() => {
     if (isHistorical) return [];
-    return showReviews ? comments : [];
-  }, [isHistorical, showReviews, comments]);
+    return showReviews && showInTextReviews ? comments : [];
+  }, [isHistorical, showReviews, showInTextReviews, comments]);
 
   // Render markdown content into rich blocks with IDs on headings
   const renderedContent = useMemo(() => {
@@ -1915,17 +2047,29 @@ export const ReaderPage: React.FC = () => {
 
             {/* Review Overlay Toggle */}
             <button
-              onClick={() => setShowReviews(!showReviews)}
-              className={`p-1.5 rounded-lg border transition-colors ${
+              onClick={handleToggleReviews}
+              className={`relative p-1.5 rounded-lg border transition-colors ${
                 showReviews
                   ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
                   : 'border-cme-border-base bg-cme-bg-surface text-cme-text-base hover:bg-cme-bg-hover'
               }`}
               data-testid="review-overlay-toggle"
-              title={showReviews ? 'Reviews: ON (Click to hide review annotations)' : 'Reviews: OFF (Click to show review annotations)'}
+              title={
+                showReviews
+                  ? 'Reviews: ON (Click to toggle review sidebar & annotations)'
+                  : 'Reviews: OFF (Click to show review sidebar & annotations)'
+              }
             >
               <MessageSquare className="w-3.5 h-3.5" />
               <span className="sr-only">Reviews: {showReviews ? 'ON' : 'OFF'}</span>
+              {openReviewsCount > 0 && (
+                <span
+                  data-testid="reader-reviews-count"
+                  className="absolute -top-1 -right-1 px-1 min-w-[14px] h-3.5 flex items-center justify-center rounded-full text-[9px] font-bold bg-amber-500 text-white"
+                >
+                  {openReviewsCount}
+                </span>
+              )}
             </button>
 
             {/* AI Dialog Sidecar Toggle */}
@@ -2244,6 +2388,14 @@ export const ReaderPage: React.FC = () => {
             </span>
           </button>
         </div>
+      )}
+
+      {/* Review Sidebar */}
+      {showReviews && isSidebarOpen && (
+        <ReviewSidebar
+          onScrollToAnchor={handleScrollToAnchorInReader}
+          onApplyReplacement={handleApplyReplacementInReader}
+        />
       )}
 
       {/* AI Agent Dialog Sidecar */}
