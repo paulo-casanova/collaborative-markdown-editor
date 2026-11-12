@@ -5,6 +5,7 @@ import { Check, Copy, Code2 } from 'lucide-react';
 
 const LANGUAGES = [
   { value: 'plaintext', label: 'Plain Text' },
+  { value: 'diff', label: 'Diff / Patch' },
   { value: 'typescript', label: 'TypeScript' },
   { value: 'javascript', label: 'JavaScript' },
   { value: 'python', label: 'Python' },

@@ -25,6 +25,12 @@ import {
 } from 'lucide-react';
 import katex from 'katex';
 import hljs from 'highlight.js';
+
+try {
+  hljs.registerAliases(['udiff'], { languageName: 'diff' });
+} catch {
+  // ignore
+}
 import * as Y from 'yjs';
 import { fetchCurrentUser } from '../api/auth';
 import { fetchNodePermissions } from '../api/permissions';

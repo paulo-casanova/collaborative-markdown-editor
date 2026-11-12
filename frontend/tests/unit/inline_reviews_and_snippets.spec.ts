@@ -93,8 +93,8 @@ class MockDOMElement {
       const cls = clean.slice(1);
       return this._find((el) => el.className.split(' ').includes(cls));
     }
-    if (clean === 'input') {
-      return this._find((el) => el.tagName === 'INPUT');
+    if (/^[a-zA-Z0-9]+$/.test(clean)) {
+      return this._find((el) => el.tagName === clean.toUpperCase());
     }
     return null;
   }
@@ -251,6 +251,35 @@ const a = 1;
     expect(header.className).toContain('min-w-0');
     // Header must explicitly render the actual error message
     expect(header.innerHTML).toContain("⚠ Expected exactly 2 lines matching '[compute_tax]', found 1");
+  });
+
+  it('renders diff code blocks with syntax highlighting in CodeBlockWidget', () => {
+    const diffCode = [
+      '--- a/src/index.ts',
+      '+++ b/src/index.ts',
+      '@@ -10,3 +10,3 @@',
+      '-const x = 1;',
+      '+const x = 2;',
+    ].join('\n');
+
+    const widget = new CodeBlockWidget('diff', diffCode, 0, diffCode.length, 'file.md');
+    const mockView = { dispatch: vi.fn(), focus: vi.fn(), state: { doc: { lineAt: () => ({ to: 10 }) } } } as any;
+    const dom = widget.toDOM(mockView);
+    expect(dom).toBeDefined();
+
+    const card = dom.children[0];
+    const header = card.children[0];
+    expect(header.innerHTML).toContain('value="diff" selected>Diff</option>');
+
+    const codeElem = dom.querySelector('code');
+    expect(codeElem?.className).toContain('hljs language-diff');
+    const innerHtml = codeElem?.innerHTML || '';
+    expect(innerHtml).toContain('hljs-deletion');
+    expect(innerHtml).toContain('-const x = 1;');
+    expect(innerHtml).toContain('hljs-addition');
+    expect(innerHtml).toContain('+const x = 2;');
+    expect(innerHtml).toContain('hljs-meta');
+    expect(innerHtml).toContain('@@ -10,3 +10,3 @@');
   });
 
   it('fetches and caches configured snippet endpoints', async () => {

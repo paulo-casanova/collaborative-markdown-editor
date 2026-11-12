@@ -5,6 +5,12 @@ import { renderMermaidSvg, getCachedMermaidSvg } from '../utils/mermaidRenderer'
 import { parseGanttMarkdown } from '../../../utils/ganttParser';
 import { renderVegaGantt, copyGanttAsPng } from '../utils/vegaGanttTemplate';
 import hljs from 'highlight.js';
+
+try {
+  hljs.registerAliases(['udiff'], { languageName: 'diff' });
+} catch {
+  // ignore
+}
 import { findHeadingPosition, slugify } from '../../navigation/DocumentOutline';
 import {
   isExternalUrl,
@@ -1144,6 +1150,7 @@ export class CodeBlockWidget extends WidgetType {
     } else {
       const knownLanguages = [
         { id: '', label: 'none' },
+        { id: 'diff', label: 'Diff' },
         { id: 'typescript', label: 'TypeScript' },
         { id: 'javascript', label: 'JavaScript' },
         { id: 'python', label: 'Python' },
@@ -1180,22 +1187,24 @@ export class CodeBlockWidget extends WidgetType {
         <button type="button" class="copy-btn px-2 py-0.5 rounded text-[11px] font-medium border border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base transition-colors">Copy</button>
       `;
 
-      const select = header.querySelector('select') as HTMLSelectElement;
-      select.value = effectiveLang;
+      const select = header.querySelector('select') as HTMLSelectElement | null;
+      if (select) {
+        select.value = effectiveLang;
 
-      select.addEventListener('change', (e) => {
-        e.stopPropagation();
-        const newLang = select.value;
-        const langHeader = newLang ? newLang : '';
-        const range = getCodeBlockRange(view, container, this.from, this.to);
-        view.dispatch({
-          changes: {
-            from: range.from,
-            to: range.to,
-            insert: `\`\`\`${langHeader}\n${this.code}\n\`\`\``,
-          },
+        select.addEventListener('change', (e) => {
+          e.stopPropagation();
+          const newLang = select.value;
+          const langHeader = newLang ? newLang : '';
+          const range = getCodeBlockRange(view, container, this.from, this.to);
+          view.dispatch({
+            changes: {
+              from: range.from,
+              to: range.to,
+              insert: `\`\`\`${langHeader}\n${this.code}\n\`\`\``,
+            },
+          });
         });
-      });
+      }
     }
 
     const copyBtn = header.querySelector('.copy-btn') as HTMLButtonElement | null;

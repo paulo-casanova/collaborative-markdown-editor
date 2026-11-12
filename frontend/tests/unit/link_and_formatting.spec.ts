@@ -430,6 +430,67 @@ Deep details.`;
       }
     });
 
+    it('renders diff code blocks with addition, deletion, and hunk headers in ReaderPage', () => {
+      const diffMarkdown = [
+        '```diff',
+        '--- a/file.txt',
+        '+++ b/file.txt',
+        '@@ -1,3 +1,3 @@',
+        '-old line',
+        '+new line',
+        ' unchanged line',
+        '```',
+      ].join('\n');
+
+      const elements = renderMarkdown(diffMarkdown) as any[];
+      expect(elements.length).toBe(1);
+      const codeBlock = elements[0];
+      expect(codeBlock.props.className).toContain('rounded-xl');
+
+      // Check header language label
+      const header = codeBlock.props.children[0];
+      expect(header.props.children[0].props.children).toBe('diff');
+
+      // Check pre & code element
+      const body = codeBlock.props.children[1];
+      const pre = body.props.children[1];
+      const code = pre.props.children;
+      expect(code.props.className).toBe('hljs language-diff');
+
+      const html = code.props.dangerouslySetInnerHTML.__html;
+      expect(html).toContain('hljs-deletion');
+      expect(html).toContain('-old line');
+      expect(html).toContain('hljs-addition');
+      expect(html).toContain('+new line');
+      expect(html).toContain('hljs-meta');
+      expect(html).toContain('@@ -1,3 +1,3 @@');
+      expect(html).toContain('hljs-comment');
+      expect(html).toContain('--- a/file.txt');
+    });
+
+    it('renders udiff code blocks using diff alias in ReaderPage', () => {
+      const udiffMarkdown = [
+        '```udiff',
+        '-removed item',
+        '+added item',
+        '```',
+      ].join('\n');
+
+      const elements = renderMarkdown(udiffMarkdown) as any[];
+      expect(elements.length).toBe(1);
+      const codeBlock = elements[0];
+      const body = codeBlock.props.children[1];
+      const pre = body.props.children[1];
+      const code = pre.props.children;
+      expect(code.props.className).toBe('hljs language-udiff');
+
+      const html = code.props.dangerouslySetInnerHTML.__html;
+      expect(html).toContain('hljs-deletion');
+      expect(html).toContain('-removed item');
+      expect(html).toContain('hljs-addition');
+      expect(html).toContain('+added item');
+    });
+
     it('renders tables with custom pills, wikilinks, and markdown links inside cells', () => {
       const md = [
         '| Name | Status | WikiLink | External |',
