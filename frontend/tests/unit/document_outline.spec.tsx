@@ -241,4 +241,29 @@ Deployment guide.
       ]);
     });
   });
+
+  describe('Reader mode outline resizing and width persistence', () => {
+    it('updates outlineWidth in workspaceStore within clamped bounds', async () => {
+      const { useWorkspaceStore } = await import('../../src/stores/workspaceStore');
+
+      // Default outlineWidth is 256
+      expect(useWorkspaceStore.getState().outlineWidth).toBe(256);
+
+      // Increase width to 320
+      useWorkspaceStore.getState().setOutlineWidth(320);
+      expect(useWorkspaceStore.getState().outlineWidth).toBe(320);
+
+      // Clamps minimum to 180
+      useWorkspaceStore.getState().setOutlineWidth(100);
+      expect(useWorkspaceStore.getState().outlineWidth).toBe(180);
+
+      // Clamps maximum to 600
+      useWorkspaceStore.getState().setOutlineWidth(800);
+      expect(useWorkspaceStore.getState().outlineWidth).toBe(600);
+
+      // Reset back to default
+      useWorkspaceStore.getState().setOutlineWidth(256);
+      expect(useWorkspaceStore.getState().outlineWidth).toBe(256);
+    });
+  });
 });

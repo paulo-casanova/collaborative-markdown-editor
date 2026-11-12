@@ -241,7 +241,51 @@ export const ReaderPage: React.FC = () => {
   const rawTarget = pathParam || wildcard || (idParam !== 'by-path' ? idParam : '') || '';
 
   const { setBreadcrumbs, setViewMode, dialogSidecarOpen, toggleDialogSidecar, triggerRevealInFileTree } = useUIStore();
-  const { closeAllTabs } = useWorkspaceStore();
+  const { closeAllTabs, outlineWidth, setOutlineWidth } = useWorkspaceStore();
+  const [isResizingOutline, setIsResizingOutline] = useState<boolean>(false);
+
+  const handleOutlineResizeStart = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = outlineWidth || 288;
+      setIsResizingOutline(true);
+
+      if (typeof window !== 'undefined') {
+        window.document.body.style.userSelect = 'none';
+        window.document.body.style.cursor = 'col-resize';
+      }
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const deltaX = startX - moveEvent.clientX;
+        setOutlineWidth(startWidth + deltaX);
+      };
+
+      const handleMouseUp = () => {
+        setIsResizingOutline(false);
+        if (typeof window !== 'undefined') {
+          window.document.body.style.userSelect = '';
+          window.document.body.style.cursor = '';
+        }
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    },
+    [outlineWidth, setOutlineWidth]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.document.body.style.userSelect = '';
+        window.document.body.style.cursor = '';
+      }
+    };
+  }, []);
   const [showReviews, setShowReviews] = useState(false);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
   const [widthMode, setWidthMode] = useState<WidthMode>('standard');
@@ -1734,7 +1778,7 @@ export const ReaderPage: React.FC = () => {
       {/* Main Reading Area with Right Sticky Table of Contents */}
       <div className={`${containerWidthClass} px-4 md:px-8 pt-8 flex gap-8 items-start`}>
         {/* Document Article Body */}
-        <main className={`flex-1 min-w-0 ${widthClass} transition-all`}>
+        <main className={`flex-1 min-w-0 ${widthClass} ${isResizingOutline ? '' : 'transition-all'}`}>
           {hasNewVersion && (
             <div
               data-testid="reader-refresh-banner"
@@ -1851,7 +1895,24 @@ export const ReaderPage: React.FC = () => {
         </main>
 
         {/* Right Sticky Column: Document Outline (Table of Contents) */}
-        <aside className="w-64 lg:w-72 hidden md:block sticky top-20 flex-shrink-0 self-start">
+        <aside
+          style={{ width: `${outlineWidth || 288}px` }}
+          className="relative hidden md:block sticky top-20 flex-shrink-0 self-start"
+          data-testid="reader-outline-sidebar"
+        >
+          {/* Left-edge Resize Handle */}
+          <div
+            onMouseDown={handleOutlineResizeStart}
+            className={`absolute -left-2 top-0 bottom-0 w-4 cursor-col-resize z-20 flex items-center justify-center transition-colors group select-none`}
+            title="Drag to resize outline"
+            data-testid="outline-resizer"
+          >
+            <div
+              className={`w-1 h-full rounded-full transition-colors ${
+                isResizingOutline ? 'bg-cme-primary' : 'group-hover:bg-cme-primary/50'
+              }`}
+            />
+          </div>
           <div className="border border-cme-border-base rounded-2xl bg-cme-bg-surface overflow-hidden shadow-sm">
             <DocumentOutline
               headings={headings}
