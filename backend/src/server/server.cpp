@@ -399,6 +399,7 @@ Result<void> Server::start() {
 
     // 4. Initialize Document Management Service
     document_service_ = std::make_shared<document::DocumentService>(db_pool_, storage_);
+    document_service_->start_link_index_warmup();
 
     // 5. Initialize Admin Management Services (Step 2.5)
     user_service_ = std::make_shared<admin::UserService>(db_pool_);

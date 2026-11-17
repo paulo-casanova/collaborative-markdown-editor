@@ -360,6 +360,17 @@ set_tests_properties(checkouts_test PROPERTIES
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
 )
 
+# Document Links Cache & Fast Rename Test
+add_executable(document_links_cache_test
+    backend/document_links_cache_test.cpp
+)
+target_link_libraries(document_links_cache_test PRIVATE cme_core)
+target_compile_features(document_links_cache_test PRIVATE cxx_std_23)
+add_test(NAME document_links_cache_test COMMAND document_links_cache_test)
+set_tests_properties(document_links_cache_test PROPERTIES
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+)
+
 
 
 

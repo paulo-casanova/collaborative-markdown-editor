@@ -216,6 +216,11 @@ Result<void> PersistenceWorker::flush_room(DocumentRoom& room) {
                     document::DocumentService::reconcile_document_tasks(
                         tx, room.document_id(), snapshot.content
                     );
+
+                    // Reconcile document links with database
+                    document::DocumentService::reconcile_document_links(
+                        tx, room.document_id(), snapshot.content
+                    );
                 }
                 tx.commit();
             } catch (const std::exception& e) {

@@ -704,6 +704,7 @@ Result<DocumentRecord> DocumentService::create_document(
         reconcile_document_mentions(tx, doc.id, user.user_id, req.content);
         reconcile_document_tags(tx, doc.id, req.content);
         reconcile_document_tasks(tx, doc.id, req.content);
+        reconcile_document_links(tx, doc.id, req.content);
 
         tx.commit();
         return doc;
@@ -1507,6 +1508,7 @@ Result<DocumentRecord> DocumentService::update_document(
             reconcile_document_mentions(tx, doc_id, user.user_id, final_content);
             reconcile_document_tags(tx, doc_id, final_content);
             reconcile_document_tasks(tx, doc_id, final_content);
+            reconcile_document_links(tx, doc_id, final_content);
         }
 
         tx.commit();
@@ -1662,9 +1664,64 @@ Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks(
     try {
         pqxx::work tx(conn_res->get());
 
-        auto rows = tx.exec(
-            "SELECT id::text, fs_path FROM documents WHERE fs_path NOT LIKE '.trash/%';"
-        );
+        std::string norm_old = old_fs_path;
+        while (!norm_old.empty() && (norm_old.front() == '/' || norm_old.front() == '\\')) norm_old.erase(0, 1);
+        std::string norm_new = new_fs_path;
+        while (!norm_new.empty() && (norm_new.front() == '/' || norm_new.front() == '\\')) norm_new.erase(0, 1);
+
+        if (norm_old.empty() || norm_new.empty() || norm_old == norm_new) {
+            return updated_doc_ids;
+        }
+
+        std::filesystem::path old_p(norm_old);
+        std::string old_filename = old_p.filename().string();
+        std::string old_stem = old_p.stem().string();
+        if (norm_old.ends_with(".bundle")) {
+            old_stem = old_filename.substr(0, old_filename.length() - 7);
+        }
+        std::string old_dir = old_p.parent_path().string();
+        if (old_dir == ".") old_dir = "";
+        std::string old_path_no_ext = old_dir.empty() ? old_stem : (old_dir + "/" + old_stem);
+
+        std::string lower_norm_old = norm_old;
+        std::transform(lower_norm_old.begin(), lower_norm_old.end(), lower_norm_old.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+        std::string lower_path_no_ext = old_path_no_ext;
+        std::transform(lower_path_no_ext.begin(), lower_path_no_ext.end(), lower_path_no_ext.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+        std::string lower_filename = old_filename;
+        std::transform(lower_filename.begin(), lower_filename.end(), lower_filename.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+        std::string lower_stem = old_stem;
+        std::transform(lower_stem.begin(), lower_stem.end(), lower_stem.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+
+        // Check if document_links table is populated
+        auto cnt_rows = tx.exec("SELECT COUNT(*) FROM document_links;");
+        bool cache_populated = (!cnt_rows.empty() && cnt_rows[0][0].as<int64_t>() > 0);
+
+        pqxx::result rows;
+        if (cache_populated) {
+            // Fast indexed lookup: query only documents referencing old path or stem
+            rows = tx.exec_params(
+                R"(
+                SELECT DISTINCT d.id::text, d.fs_path
+                FROM document_links l
+                JOIN documents d ON d.id = l.source_doc_id
+                WHERE (l.target_norm = $1 OR l.target_norm = $2 OR l.target_norm = $3 OR l.target_stem = $4)
+                  AND d.fs_path NOT LIKE '.trash/%';
+                )",
+                lower_norm_old,
+                lower_path_no_ext,
+                lower_filename,
+                lower_stem
+            );
+        } else {
+            // Fallback before initial indexing finishes
+            rows = tx.exec(
+                "SELECT id::text, fs_path FROM documents WHERE fs_path NOT LIKE '.trash/%';"
+            );
+        }
 
         for (const auto& r : rows) {
             std::string doc_id = r[0].as<std::string>();
@@ -1684,7 +1741,7 @@ Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks(
             }
 
             const std::string& orig_content = content_res.value();
-            if (orig_content.find("[[") == std::string::npos) {
+            if (orig_content.find("[[") == std::string::npos && orig_content.find("](") == std::string::npos) {
                 continue;
             }
 
@@ -1696,6 +1753,7 @@ Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks(
                 auto write_res = storage_->write_file(content_file, updated_content, true);
                 if (write_res.has_value()) {
                     updated_doc_ids.push_back(doc_id);
+                    reconcile_document_links(tx, doc_id, updated_content);
                 }
             }
         }
@@ -1728,9 +1786,45 @@ Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks_f
     try {
         pqxx::work tx(conn_res->get());
 
-        auto rows = tx.exec(
-            "SELECT id::text, fs_path FROM documents WHERE fs_path NOT LIKE '.trash/%';"
-        );
+        std::string norm_old = old_dir;
+        while (!norm_old.empty() && (norm_old.front() == '/' || norm_old.front() == '\\')) norm_old.erase(0, 1);
+        while (!norm_old.empty() && (norm_old.back() == '/' || norm_old.back() == '\\')) norm_old.pop_back();
+
+        std::string norm_new = new_dir;
+        while (!norm_new.empty() && (norm_new.front() == '/' || norm_new.front() == '\\')) norm_new.erase(0, 1);
+        while (!norm_new.empty() && (norm_new.back() == '/' || norm_new.back() == '\\')) norm_new.pop_back();
+
+        if (norm_old.empty() || norm_new.empty() || norm_old == norm_new) {
+            return updated_doc_ids;
+        }
+
+        std::string lower_old_dir = norm_old;
+        std::transform(lower_old_dir.begin(), lower_old_dir.end(), lower_old_dir.begin(),
+                       [](unsigned char c){ return std::tolower(c); });
+
+        // Check if document_links table is populated
+        auto cnt_rows = tx.exec("SELECT COUNT(*) FROM document_links;");
+        bool cache_populated = (!cnt_rows.empty() && cnt_rows[0][0].as<int64_t>() > 0);
+
+        pqxx::result rows;
+        if (cache_populated) {
+            // Fast indexed lookup: query only documents referencing files in old_dir
+            rows = tx.exec_params(
+                R"(
+                SELECT DISTINCT d.id::text, d.fs_path
+                FROM document_links l
+                JOIN documents d ON d.id = l.source_doc_id
+                WHERE (l.target_norm = $1 OR starts_with(l.target_norm, $1 || '/'))
+                  AND d.fs_path NOT LIKE '.trash/%';
+                )",
+                lower_old_dir
+            );
+        } else {
+            // Fallback before initial indexing finishes
+            rows = tx.exec(
+                "SELECT id::text, fs_path FROM documents WHERE fs_path NOT LIKE '.trash/%';"
+            );
+        }
 
         for (const auto& r : rows) {
             std::string doc_id = r[0].as<std::string>();
@@ -1750,7 +1844,7 @@ Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks_f
             }
 
             const std::string& orig_content = content_res.value();
-            if (orig_content.find("[[") == std::string::npos) {
+            if (orig_content.find("[[") == std::string::npos && orig_content.find("](") == std::string::npos) {
                 continue;
             }
 
@@ -1762,6 +1856,7 @@ Result<std::vector<std::string>> DocumentService::update_referencing_wikilinks_f
                 auto write_res = storage_->write_file(content_file, updated_content, true);
                 if (write_res.has_value()) {
                     updated_doc_ids.push_back(doc_id);
+                    reconcile_document_links(tx, doc_id, updated_content);
                 }
             }
         }
@@ -4613,6 +4708,155 @@ Result<void> DocumentService::reconcile_document_tasks(
                   << document_id << ": " << e.what() << "\n";
         return std::unexpected(ErrorCode::DatabaseError);
     }
+}
+
+Result<void> DocumentService::reconcile_document_links(
+    pqxx::transaction_base& tx,
+    const std::string& document_id,
+    std::string_view content
+) {
+    if (document_id.empty() || !is_valid_uuid(document_id)) {
+        return {};
+    }
+
+    try {
+        auto links = EntityExtractor::extract_links(content);
+
+        // Clear existing links for this document
+        tx.exec_params(
+            "DELETE FROM document_links WHERE source_doc_id = $1::uuid;",
+            document_id
+        );
+
+        if (links.empty()) {
+            return {};
+        }
+
+        // Deduplicate links on (target_norm, target_stem, is_embed, line_number)
+        std::unordered_set<std::string> seen;
+        for (const auto& l : links) {
+            std::string key = l.target_norm + ":" + l.target_stem + ":" +
+                              (l.is_embed ? "1" : "0") + ":" + std::to_string(l.line_number);
+            if (!seen.insert(key).second) {
+                continue;
+            }
+
+            tx.exec_params(
+                "INSERT INTO document_links (source_doc_id, target_raw, target_norm, target_stem, link_type, is_embed, line_number) "
+                "VALUES ($1::uuid, $2, $3, $4, $5, $6, $7) "
+                "ON CONFLICT (source_doc_id, target_norm, target_stem, is_embed, line_number) DO NOTHING;",
+                document_id,
+                l.raw_target,
+                l.target_norm,
+                l.target_stem,
+                l.link_type,
+                l.is_embed,
+                static_cast<int>(l.line_number)
+            );
+        }
+
+        return {};
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [LINKS] reconcile_document_links failed for doc "
+                  << document_id << ": " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+Result<size_t> DocumentService::repopulate_links_index() {
+    if (!storage_ || !db_pool_) {
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+
+    auto conn_res = db_pool_->acquire();
+    if (!conn_res.has_value()) {
+        return std::unexpected(conn_res.error());
+    }
+
+    size_t indexed_count = 0;
+    try {
+        std::vector<std::pair<std::string, std::string>> docs;
+        {
+            pqxx::read_transaction rtx(conn_res->get());
+            auto rows = rtx.exec("SELECT id::text, fs_path FROM documents WHERE fs_path NOT LIKE '.trash/%';");
+            for (const auto& r : rows) {
+                docs.emplace_back(r[0].as<std::string>(), r[1].as<std::string>());
+            }
+        }
+
+        for (const auto& [doc_id, fs_path] : docs) {
+            std::string lower_path = fs_path;
+            std::transform(lower_path.begin(), lower_path.end(), lower_path.begin(),
+                           [](unsigned char c){ return std::tolower(c); });
+            bool is_bundle = fs_path.ends_with(".bundle") || (storage_ && storage_->is_bundle(fs_path).value_or(false));
+            bool is_md = is_bundle || lower_path.ends_with(".md") || lower_path.ends_with(".markdown");
+            if (!is_md) continue;
+
+            std::string content_file = is_bundle ? (fs_path + "/index.md") : fs_path;
+            auto content_res = storage_->read_file(content_file);
+            if (!content_res.has_value()) continue;
+
+            const std::string& content = content_res.value();
+            if (content.find("[[") == std::string::npos && content.find("](") == std::string::npos) continue;
+
+            pqxx::work tx(conn_res->get());
+            reconcile_document_links(tx, doc_id, content);
+            tx.commit();
+            indexed_count++;
+        }
+
+        return indexed_count;
+    } catch (const std::exception& e) {
+        std::cerr << "[ERROR] [LINKS] repopulate_links_index failed: " << e.what() << "\n";
+        return std::unexpected(ErrorCode::DatabaseError);
+    }
+}
+
+void DocumentService::start_link_index_warmup() {
+    if (!storage_ || !db_pool_) return;
+
+    std::thread([this]() {
+        try {
+            auto conn_res = db_pool_->acquire();
+            if (!conn_res.has_value()) {
+                std::cerr << "[WARN] [LINKS] Warmup unable to acquire DB connection\n";
+                return;
+            }
+
+            bool needs_warmup = false;
+            {
+                pqxx::read_transaction rtx(conn_res->get());
+                auto l_cnt = rtx.exec("SELECT COUNT(*) FROM document_links;");
+                auto d_cnt = rtx.exec("SELECT COUNT(*) FROM documents WHERE fs_path NOT LIKE '.trash/%';");
+                int64_t links_count = l_cnt.empty() ? 0 : l_cnt[0][0].as<int64_t>();
+                int64_t docs_count = d_cnt.empty() ? 0 : d_cnt[0][0].as<int64_t>();
+                if (links_count == 0 && docs_count > 0) {
+                    needs_warmup = true;
+                }
+            }
+
+            if (!needs_warmup) {
+                return;
+            }
+
+            std::cout << "[INFO] [LINKS] Document links cache is empty. Starting background indexing...\n";
+            auto start_time = std::chrono::steady_clock::now();
+
+            auto res = repopulate_links_index();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start_time
+            ).count();
+
+            if (res.has_value()) {
+                std::cout << "[INFO] [LINKS] Background indexing complete: scanned "
+                          << res.value() << " document(s) in " << elapsed_ms << "ms.\n";
+            } else {
+                std::cerr << "[WARN] [LINKS] Background indexing failed.\n";
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[ERROR] [LINKS] Warmup thread failed: " << e.what() << "\n";
+        }
+    }).detach();
 }
 
 Result<std::vector<TagSummary>> DocumentService::list_tags(

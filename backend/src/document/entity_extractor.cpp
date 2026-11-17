@@ -10,10 +10,189 @@
 #include <cctype>
 #include <algorithm>
 #include <unordered_map>
+#include <filesystem>
 
 namespace cme::document {
 
 namespace {
+
+bool is_valid_utf8(std::string_view sv) {
+    size_t i = 0;
+    const size_t len = sv.size();
+    while (i < len) {
+        unsigned char c = static_cast<unsigned char>(sv[i]);
+        if (c <= 0x7F) {
+            i++;
+        } else if ((c & 0xE0) == 0xC0) {
+            if (i + 1 >= len || (static_cast<unsigned char>(sv[i + 1]) & 0xC0) != 0x80) return false;
+            i += 2;
+        } else if ((c & 0xF0) == 0xE0) {
+            if (i + 2 >= len ||
+                (static_cast<unsigned char>(sv[i + 1]) & 0xC0) != 0x80 ||
+                (static_cast<unsigned char>(sv[i + 2]) & 0xC0) != 0x80) return false;
+            i += 3;
+        } else if ((c & 0xF8) == 0xF0) {
+            if (i + 3 >= len ||
+                (static_cast<unsigned char>(sv[i + 1]) & 0xC0) != 0x80 ||
+                (static_cast<unsigned char>(sv[i + 2]) & 0xC0) != 0x80 ||
+                (static_cast<unsigned char>(sv[i + 3]) & 0xC0) != 0x80) return false;
+            i += 4;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<ExtractedLink> parse_wikilink_target(std::string_view inner, bool is_embed, size_t line_num) {
+    if (!is_valid_utf8(inner)) return std::nullopt;
+    size_t pipe = inner.find('|');
+    std::string_view target_part = (pipe != std::string_view::npos) ? inner.substr(0, pipe) : inner;
+
+    size_t hash = target_part.find('#');
+    std::string_view doc_part = (hash != std::string_view::npos) ? target_part.substr(0, hash) : target_part;
+
+    size_t first = doc_part.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos) {
+        return std::nullopt; // Intra-document link like [[#Heading]]
+    }
+    size_t last = doc_part.find_last_not_of(" \t\r\n");
+    std::string clean_doc(doc_part.substr(first, last - first + 1));
+
+    std::replace(clean_doc.begin(), clean_doc.end(), '\\', '/');
+    while (clean_doc.starts_with("./")) {
+        clean_doc.erase(0, 2);
+    }
+    while (!clean_doc.empty() && clean_doc.front() == '/') {
+        clean_doc.erase(0, 1);
+    }
+    while (!clean_doc.empty() && clean_doc.back() == '/') {
+        clean_doc.pop_back();
+    }
+
+    if (clean_doc.empty()) {
+        return std::nullopt;
+    }
+
+    // URL decode %20 etc.
+    std::string decoded;
+    decoded.reserve(clean_doc.size());
+    for (size_t idx = 0; idx < clean_doc.size(); ++idx) {
+        if (clean_doc[idx] == '%' && idx + 2 < clean_doc.size()) {
+            auto hex_val = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            int v1 = hex_val(clean_doc[idx + 1]);
+            int v2 = hex_val(clean_doc[idx + 2]);
+            if (v1 >= 0 && v2 >= 0) {
+                decoded.push_back(static_cast<char>((v1 << 4) | v2));
+                idx += 2;
+                continue;
+            }
+        }
+        decoded.push_back(clean_doc[idx]);
+    }
+    clean_doc = std::move(decoded);
+
+    std::string norm;
+    norm.reserve(clean_doc.size());
+    for (char c : clean_doc) {
+        norm.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+
+    std::filesystem::path p(norm);
+    std::string stem = p.stem().string();
+    if (norm.ends_with(".bundle")) {
+        std::string fn = p.filename().string();
+        if (fn.size() > 7) stem = fn.substr(0, fn.size() - 7);
+    }
+
+    ExtractedLink link;
+    link.raw_target = std::string(inner);
+    link.target_norm = std::move(norm);
+    link.target_stem = std::move(stem);
+    link.link_type = "WIKILINK";
+    link.is_embed = is_embed;
+    link.line_number = line_num;
+    return link;
+}
+
+std::optional<ExtractedLink> parse_markdown_target(std::string_view target_view, size_t line_num) {
+    if (!is_valid_utf8(target_view)) return std::nullopt;
+    size_t first = target_view.find_first_not_of(" \t\r\n");
+    if (first == std::string_view::npos) return std::nullopt;
+    size_t last = target_view.find_last_not_of(" \t\r\n");
+    std::string_view target = target_view.substr(first, last - first + 1);
+
+    // Skip external protocols and pure anchor jumps
+    if (target.starts_with("http://") || target.starts_with("https://") ||
+        target.starts_with("mailto:") || target.starts_with("data:") ||
+        target.starts_with("ftp://") || target.starts_with("#")) {
+        return std::nullopt;
+    }
+
+    // Strip anchor and query params
+    size_t hash = target.find('#');
+    if (hash != std::string_view::npos) target = target.substr(0, hash);
+    size_t qmark = target.find('?');
+    if (qmark != std::string_view::npos) target = target.substr(0, qmark);
+
+    std::string clean(target);
+    std::replace(clean.begin(), clean.end(), '\\', '/');
+    while (clean.starts_with("./")) clean.erase(0, 2);
+    while (!clean.empty() && clean.front() == '/') clean.erase(0, 1);
+    while (!clean.empty() && clean.back() == '/') clean.pop_back();
+
+    if (clean.empty()) return std::nullopt;
+
+    // URL decode
+    std::string decoded;
+    decoded.reserve(clean.size());
+    for (size_t idx = 0; idx < clean.size(); ++idx) {
+        if (clean[idx] == '%' && idx + 2 < clean.size()) {
+            auto hex_val = [](char c) -> int {
+                if (c >= '0' && c <= '9') return c - '0';
+                if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                return -1;
+            };
+            int v1 = hex_val(clean[idx + 1]);
+            int v2 = hex_val(clean[idx + 2]);
+            if (v1 >= 0 && v2 >= 0) {
+                decoded.push_back(static_cast<char>((v1 << 4) | v2));
+                idx += 2;
+                continue;
+            }
+        }
+        decoded.push_back(clean[idx]);
+    }
+    clean = std::move(decoded);
+
+    std::string norm;
+    norm.reserve(clean.size());
+    for (char c : clean) {
+        norm.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+
+    std::filesystem::path p(norm);
+    std::string stem = p.stem().string();
+    if (norm.ends_with(".bundle")) {
+        std::string fn = p.filename().string();
+        if (fn.size() > 7) stem = fn.substr(0, fn.size() - 7);
+    }
+
+    ExtractedLink link;
+    link.raw_target = std::string(target_view);
+    link.target_norm = std::move(norm);
+    link.target_stem = std::move(stem);
+    link.link_type = "MARKDOWN";
+    link.is_embed = false;
+    link.line_number = line_num;
+    return link;
+}
 
 std::string slugify(std::string_view text) {
     std::string slug;
@@ -423,6 +602,39 @@ ExtractedEntities EntityExtractor::extract_all(std::string_view content) {
                 continue;
             }
 
+            // Check for embed ![[ or wikilink [[
+            bool is_embed = (line[i] == '!' && i + 2 < line.size() && line[i + 1] == '[' && line[i + 2] == '[');
+            bool is_wiki = (!is_embed && line[i] == '[' && i + 1 < line.size() && line[i + 1] == '[');
+            if (is_embed || is_wiki) {
+                size_t open_pos = is_embed ? (i + 1) : i;
+                size_t inner_start = open_pos + 2;
+                size_t close_pos = line.find("]]", inner_start);
+                if (close_pos != std::string_view::npos) {
+                    std::string_view inner = line.substr(inner_start, close_pos - inner_start);
+                    auto parsed_link = parse_wikilink_target(inner, is_embed, line_num);
+                    if (parsed_link.has_value()) {
+                        result.links.push_back(std::move(*parsed_link));
+                    }
+                    i = close_pos + 2;
+                    continue;
+                }
+            }
+
+            // Check for standard markdown link: [label](target)
+            if (!is_embed && !is_wiki && line[i] == '[') {
+                size_t close_bracket = line.find(']', i + 1);
+                if (close_bracket != std::string_view::npos && close_bracket + 1 < line.size() && line[close_bracket + 1] == '(') {
+                    size_t close_paren = line.find(')', close_bracket + 2);
+                    if (close_paren != std::string_view::npos) {
+                        std::string_view target_view = line.substr(close_bracket + 2, close_paren - (close_bracket + 2));
+                        auto parsed_link = parse_markdown_target(target_view, line_num);
+                        if (parsed_link.has_value()) {
+                            result.links.push_back(std::move(*parsed_link));
+                        }
+                    }
+                }
+            }
+
             // Check for @mention
             if (line[i] == '@') {
                 bool valid_prefix = (i == 0) || is_valid_mention_prev_char(line[i - 1]);
@@ -519,6 +731,10 @@ std::vector<ExtractedTag> EntityExtractor::extract_tags(std::string_view content
 
 std::vector<ExtractedTask> EntityExtractor::extract_tasks(std::string_view content) {
     return extract_all(content).tasks;
+}
+
+std::vector<ExtractedLink> EntityExtractor::extract_links(std::string_view content) {
+    return extract_all(content).links;
 }
 
 } // namespace cme::document

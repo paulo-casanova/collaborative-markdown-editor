@@ -737,6 +737,25 @@ public:
     );
 
     /**
+     * @brief Reconciles outbound links extracted from document content with the document_links database table.
+     */
+    static Result<void> reconcile_document_links(
+        pqxx::transaction_base& tx,
+        const std::string& document_id,
+        std::string_view content
+    );
+
+    /**
+     * @brief Asynchronously warms up document_links index on startup if the table is empty.
+     */
+    void start_link_index_warmup();
+
+    /**
+     * @brief Synchronously repopulates the document_links cache for all documents across the workspace.
+     */
+    Result<size_t> repopulate_links_index();
+
+    /**
      * @brief Lists distinct tags accessible to the user, with document and occurrence counts.
      */
     Result<std::vector<TagSummary>> list_tags(

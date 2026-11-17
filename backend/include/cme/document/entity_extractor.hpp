@@ -59,6 +59,19 @@ struct ExtractedTask {
 };
 
 /**
+ * @struct ExtractedLink
+ * @brief Represents an inline hyperlink or wikilink extracted from markdown.
+ */
+struct ExtractedLink {
+    std::string raw_target;       ///< Exact target as written (e.g. "guides/intro#prerequisites|Intro").
+    std::string target_norm;      ///< Normalized target path in lowercase (e.g. "guides/intro.md" or "intro").
+    std::string target_stem;      ///< Lowercase file stem (e.g. "intro").
+    std::string link_type{"WIKILINK"}; ///< "WIKILINK" or "MARKDOWN".
+    bool is_embed{false};         ///< True if embed (![[...]]).
+    size_t line_number{1};        ///< 1-based line number.
+};
+
+/**
  * @struct ExtractedEntities
  * @brief Container of all entities discovered in a single markdown scan.
  */
@@ -66,6 +79,7 @@ struct ExtractedEntities {
     std::vector<ExtractedMention> mentions;
     std::vector<ExtractedTag> tags;
     std::vector<ExtractedTask> tasks;
+    std::vector<ExtractedLink> links;
 };
 
 /**
@@ -94,6 +108,11 @@ public:
      * @brief Specialized extractor for tasks only.
      */
     static std::vector<ExtractedTask> extract_tasks(std::string_view content);
+
+    /**
+     * @brief Specialized extractor for links only.
+     */
+    static std::vector<ExtractedLink> extract_links(std::string_view content);
 
     /**
      * @brief Computes a deterministic SHA-256 fingerprint for a mention.

@@ -161,6 +161,83 @@ int main() {
         std::cout << "     [PASS] Single syntax task parsing (@user and due:YYYY-MM-DD) verified.\n";
     }
 
+    // 4. Links & Wikilinks Extraction Test
+    {
+        std::cout << "  -> Testing links and wikilinks extraction, anchors, embeds & exclusions...\n";
+
+        std::string link_markdown =
+            "# Documentation Index\n\n"
+            "Welcome to CME. Please see [[guides/intro.md]] and [[guides/intro.md|Intro Guide]].\n"
+            "Check out [[architecture#Overview]] and [[./notes/meeting.md#Actions|Meeting Notes]].\n"
+            "An image embed: ![[assets/diagram.png]] and ![[assets/diagram.png|Architecture Diagram]].\n"
+            "Intra-document anchor jump [[#Documentation Index]] should be ignored.\n\n"
+            "Markdown links: [Architecture Spec](docs/arch.md) and [API Guide](docs/api.md#v1).\n"
+            "External markdown links to ignore: [Google](https://google.com) and [Email](mailto:hi@cme.io) and [Anchor](#local).\n\n"
+            "Code block exclusions:\n"
+            "```markdown\n"
+            "[[ignored/code/link.md]]\n"
+            "![[ignored/code/embed.png]]\n"
+            "```\n"
+            "Inline code exclusion: `[[ignored_inline]]`.\n";
+
+        auto links = cme::document::EntityExtractor::extract_links(link_markdown);
+
+        // Expected extracted links:
+        // 1: guides/intro.md (wikilink)
+        // 2: guides/intro.md|Intro Guide (wikilink)
+        // 3: architecture#Overview (wikilink)
+        // 4: ./notes/meeting.md#Actions (wikilink)
+        // 5: assets/diagram.png (embed wikilink)
+        // 6: assets/diagram.png|Architecture Diagram (embed wikilink)
+        // 7: docs/arch.md (markdown link)
+        // 8: docs/api.md#v1 (markdown link)
+        assert(links.size() == 8);
+
+        // Link 1
+        assert(links[0].target_norm == "guides/intro.md");
+        assert(links[0].target_stem == "intro");
+        assert(links[0].link_type == "WIKILINK");
+        assert(!links[0].is_embed);
+
+        // Link 2 (alias)
+        assert(links[1].target_norm == "guides/intro.md");
+        assert(links[1].target_stem == "intro");
+        assert(links[1].link_type == "WIKILINK");
+        assert(!links[1].is_embed);
+
+        // Link 3 (anchor)
+        assert(links[2].target_norm == "architecture");
+        assert(links[2].target_stem == "architecture");
+        assert(links[2].link_type == "WIKILINK");
+
+        // Link 4 (relative path + anchor + alias)
+        assert(links[3].target_norm == "notes/meeting.md");
+        assert(links[3].target_stem == "meeting");
+
+        // Link 5 (embed)
+        assert(links[4].target_norm == "assets/diagram.png");
+        assert(links[4].target_stem == "diagram");
+        assert(links[4].is_embed);
+
+        // Link 6 (embed with alias)
+        assert(links[5].target_norm == "assets/diagram.png");
+        assert(links[5].target_stem == "diagram");
+        assert(links[5].is_embed);
+
+        // Link 7 (markdown link)
+        assert(links[6].target_norm == "docs/arch.md");
+        assert(links[6].target_stem == "arch");
+        assert(links[6].link_type == "MARKDOWN");
+        assert(!links[6].is_embed);
+
+        // Link 8 (markdown link with anchor)
+        assert(links[7].target_norm == "docs/api.md");
+        assert(links[7].target_stem == "api");
+        assert(links[7].link_type == "MARKDOWN");
+
+        std::cout << "     [PASS] Links and wikilinks extraction, anchors, embeds & exclusions verified.\n";
+    }
+
     std::cout << "[ALL TESTS PASSED] EntityExtractor verified successfully!\n";
     return 0;
 }
