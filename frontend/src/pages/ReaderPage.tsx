@@ -51,6 +51,7 @@ import {
   getWorkspaceFileUrl,
   isMarkdownPath,
   updateDocument,
+  type DocumentRevisionSummary,
 } from '../api/documents';
 import { computeRevisionDiffSuggestions } from '../utils/revisionDiff';
 import {
@@ -96,6 +97,10 @@ import { splitTableRow, parseTableAlignments } from '../utils/tableUtils';
 
 type FontMode = 'sans' | 'serif' | 'mono';
 type WidthMode = 'standard' | 'full';
+
+const EMPTY_COMMENTS: CommentRecord[] = [];
+const EMPTY_SUGGESTIONS: SuggestionRecord[] = [];
+const EMPTY_REVISIONS: DocumentRevisionSummary[] = [];
 
 export function computeCommentsSignature(comments: CommentRecord[] = []): string {
   if (!comments || comments.length === 0) return '';
@@ -411,17 +416,20 @@ export const ReaderPage: React.FC = () => {
 
   // Query reviews for the overlay
   const docId = document?.id || '';
-  const { data: comments = [] } = useQuery({
+  const { data: commentsData } = useQuery({
     queryKey: ['reader-comments', docId],
     queryFn: () => (docId ? fetchDocumentComments(docId) : Promise.resolve([])),
     enabled: Boolean(docId),
   });
 
-  const { data: suggestions = [] } = useQuery({
+  const { data: suggestionsData } = useQuery({
     queryKey: ['reader-suggestions', docId],
     queryFn: () => (docId ? fetchDocumentSuggestions(docId) : Promise.resolve([])),
     enabled: Boolean(docId),
   });
+
+  const comments = commentsData ?? EMPTY_COMMENTS;
+  const suggestions = suggestionsData ?? EMPTY_SUGGESTIONS;
 
   // Document revision history & historical viewing state
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
@@ -435,13 +443,14 @@ export const ReaderPage: React.FC = () => {
 
   // Query document revision history
   const {
-    data: revisions = [],
+    data: revisionsData,
     isLoading: isLoadingRevisions,
   } = useQuery({
     queryKey: ['document-revisions', docId],
     queryFn: () => (docId ? fetchDocumentRevisions(docId) : Promise.resolve([])),
     enabled: Boolean(docId),
   });
+  const revisions = revisionsData ?? EMPTY_REVISIONS;
 
   const isHistorical = selectedRevNumber !== null;
 
@@ -597,29 +606,27 @@ export const ReaderPage: React.FC = () => {
       setIsRefreshing(false);
     }
   };
-  const {
-    setPendingCommentSelection,
-    setPendingSuggestionSelection,
-    pendingCommentSelection,
-    pendingSuggestionSelection,
-    initDocument,
-    isSidebarOpen,
-    setSidebarOpen,
-    showInTextReviews,
-  } = useReviewStore();
+  const setPendingCommentSelection = useReviewStore((s) => s.setPendingCommentSelection);
+  const setPendingSuggestionSelection = useReviewStore((s) => s.setPendingSuggestionSelection);
+  const pendingCommentSelection = useReviewStore((s) => s.pendingCommentSelection);
+  const pendingSuggestionSelection = useReviewStore((s) => s.pendingSuggestionSelection);
+  const initDocument = useReviewStore((s) => s.initDocument);
+  const isSidebarOpen = useReviewStore((s) => s.isSidebarOpen);
+  const setSidebarOpen = useReviewStore((s) => s.setSidebarOpen);
+  const showInTextReviews = useReviewStore((s) => s.showInTextReviews);
 
   // Sync React Query comments and suggestions to useReviewStore so ReviewSidebar has full data
   useEffect(() => {
-    if (comments) {
-      useReviewStore.setState({ comments });
+    if (commentsData) {
+      useReviewStore.setState({ comments: commentsData });
     }
-  }, [comments]);
+  }, [commentsData]);
 
   useEffect(() => {
-    if (suggestions) {
-      useReviewStore.setState({ suggestions });
+    if (suggestionsData) {
+      useReviewStore.setState({ suggestions: suggestionsData });
     }
-  }, [suggestions]);
+  }, [suggestionsData]);
 
   const openReviewsCount = useMemo(() => {
     const openComments = comments.filter((c) => c.status === 'OPEN').length;
