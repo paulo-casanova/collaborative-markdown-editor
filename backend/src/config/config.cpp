@@ -330,6 +330,28 @@ Result<AppConfig> AppConfig::load(int argc, char* argv[]) {
             cfg.config_file_path = "config.yaml";
         } else if (std::filesystem::exists("../config.yaml")) {
             cfg.config_file_path = "../config.yaml";
+        } else {
+            // Check relative to executable location (e.g. build/bin/cme-server -> config.yaml)
+            std::error_code ec;
+            std::filesystem::path exe_path;
+#if defined(__linux__)
+            exe_path = std::filesystem::canonical("/proc/self/exe", ec);
+#endif
+            if (ec || exe_path.empty()) {
+                if (argc > 0 && argv[0]) {
+                    exe_path = std::filesystem::weakly_canonical(argv[0], ec);
+                }
+            }
+            if (!exe_path.empty()) {
+                auto dir = exe_path.parent_path();
+                if (std::filesystem::exists(dir / "config.yaml")) {
+                    cfg.config_file_path = (dir / "config.yaml").string();
+                } else if (std::filesystem::exists(dir.parent_path() / "config.yaml")) {
+                    cfg.config_file_path = (dir.parent_path() / "config.yaml").string();
+                } else if (std::filesystem::exists(dir.parent_path().parent_path() / "config.yaml")) {
+                    cfg.config_file_path = (dir.parent_path().parent_path() / "config.yaml").string();
+                }
+            }
         }
     }
 

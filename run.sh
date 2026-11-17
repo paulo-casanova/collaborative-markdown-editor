@@ -82,8 +82,14 @@ fi
 
 mkdir -p "${DATA_DIR}"
 
+CONFIG_ARGS=()
+if [[ -f "${SCRIPT_DIR}/config.yaml" ]]; then
+  CONFIG_ARGS=(--config "${SCRIPT_DIR}/config.yaml")
+fi
+
 echo "[run.sh] Starting cme-server on port ${PORT} (data-dir: ${DATA_DIR}, authn: ${AUTHN_PROVIDER})..."
 "${SCRIPT_DIR}/build/bin/cme-server" \
+  "${CONFIG_ARGS[@]}" \
   --db-url "${DB_URL}" \
   --data-dir "${DATA_DIR}" \
   --embedded-ui "${UI_DIR}" \
