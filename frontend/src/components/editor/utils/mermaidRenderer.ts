@@ -10,6 +10,25 @@ export function initMermaid(isDark: boolean = false) {
       htmlLabels: true,
       curve: 'basis',
     },
+    themeVariables: isDark
+      ? {
+          darkMode: true,
+          lineColor: '#cbd5e1',
+          arrowheadColor: '#cbd5e1',
+          defaultLinkColor: '#cbd5e1',
+          signalColor: '#cbd5e1',
+          signalTextColor: '#cbd5e1',
+          actorLineColor: '#cbd5e1',
+          transitionColor: '#cbd5e1',
+          relationColor: '#cbd5e1',
+          nodeBorder: '#94a3b8',
+        }
+      : {
+          darkMode: false,
+          lineColor: '#334155',
+          arrowheadColor: '#334155',
+          defaultLinkColor: '#334155',
+        },
   });
 }
 

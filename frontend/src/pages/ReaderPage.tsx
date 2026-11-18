@@ -4213,20 +4213,31 @@ function renderInlineFormatted(
 }
 
 // Mermaid diagram interactive container
-const MermaidBlock: React.FC<{ source: string }> = ({ source }) => {
+export const MermaidBlock: React.FC<{ source: string }> = ({ source }) => {
   const [svg, setSvg] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const resolvedTheme = useThemeStore((state) => state.resolvedTheme);
+  const isDark = resolvedTheme === 'dark';
 
   useEffect(() => {
-    renderMermaidSvg(source)
+    let active = true;
+    renderMermaidSvg(source, isDark)
       .then((res) => {
-        setSvg(res);
-        setError(null);
+        if (active) {
+          setSvg(res);
+          setError(null);
+        }
       })
       .catch((err) => {
-        setError(err.message || 'Mermaid syntax error');
+        if (active) {
+          setError(err.message || 'Mermaid syntax error');
+        }
       });
-  }, [source]);
+
+    return () => {
+      active = false;
+    };
+  }, [source, isDark]);
 
   if (error) {
     return (
@@ -4238,7 +4249,7 @@ const MermaidBlock: React.FC<{ source: string }> = ({ source }) => {
 
   return (
     <div
-      className="my-6 p-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-x-auto flex justify-center"
+      className="mermaid-svg-container my-6 p-4 rounded-xl border border-cme-border-base bg-cme-bg-surface overflow-x-auto flex justify-center"
       data-testid="mermaid-viewer"
       dangerouslySetInnerHTML={{ __html: svg }}
     />

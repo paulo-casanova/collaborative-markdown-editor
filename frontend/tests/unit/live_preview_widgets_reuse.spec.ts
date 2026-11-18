@@ -16,6 +16,7 @@ import {
   getCachedMermaidSvg,
   renderMermaidSvg,
   clearMermaidCache,
+  initMermaid,
 } from '../../src/components/editor/utils/mermaidRenderer';
 
 describe('Live preview widgets equivalence and reuse (anti-blinking)', () => {
@@ -126,5 +127,66 @@ describe('Mermaid SVG Cache', () => {
     clearMermaidCache();
     expect(getCachedMermaidSvg(source, false)).toBeUndefined();
     spy.mockRestore();
+  });
+
+  it('differentiates cache between light and dark themes', async () => {
+    const source = 'graph TD\n  A --> B';
+    const lightSvg = '<svg id="light-svg"></svg>';
+    const darkSvg = '<svg id="dark-svg"></svg>';
+
+    const mermaidModule = await import('mermaid');
+    const spy = vi
+      .spyOn(mermaidModule.default, 'render')
+      .mockResolvedValueOnce({ svg: lightSvg } as any)
+      .mockResolvedValueOnce({ svg: darkSvg } as any);
+
+    const resLight = await renderMermaidSvg(source, false);
+    const resDark = await renderMermaidSvg(source, true);
+
+    expect(resLight).toBe(lightSvg);
+    expect(resDark).toBe(darkSvg);
+    expect(getCachedMermaidSvg(source, false)).toBe(lightSvg);
+    expect(getCachedMermaidSvg(source, true)).toBe(darkSvg);
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    spy.mockRestore();
+  });
+
+  it('initializes Mermaid with high-contrast theme variables for dark mode', async () => {
+    const mermaidModule = await import('mermaid');
+    const initSpy = vi.spyOn(mermaidModule.default, 'initialize');
+
+    initMermaid(true);
+    expect(initSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        theme: 'dark',
+        themeVariables: expect.objectContaining({
+          darkMode: true,
+          lineColor: '#cbd5e1',
+          arrowheadColor: '#cbd5e1',
+          defaultLinkColor: '#cbd5e1',
+          signalColor: '#cbd5e1',
+          signalTextColor: '#cbd5e1',
+          actorLineColor: '#cbd5e1',
+          transitionColor: '#cbd5e1',
+          relationColor: '#cbd5e1',
+        }),
+      })
+    );
+
+    initMermaid(false);
+    expect(initSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        theme: 'default',
+        themeVariables: expect.objectContaining({
+          darkMode: false,
+          lineColor: '#334155',
+          arrowheadColor: '#334155',
+          defaultLinkColor: '#334155',
+        }),
+      })
+    );
+
+    initSpy.mockRestore();
   });
 });

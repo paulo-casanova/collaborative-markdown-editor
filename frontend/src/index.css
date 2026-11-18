@@ -512,5 +512,39 @@ pre > code.hljs {
   animation: cme-edit-flash 2.5s ease-out forwards;
 }
 
+/* Mermaid Diagram Arrow and Line Contrast Enhancements */
+[data-theme="dark"] .mermaid-svg-container svg .flowchart-link,
+[data-theme="dark"] .mermaid-svg-container svg .edgePaths .path,
+[data-theme="dark"] .mermaid-svg-container svg .edgePath .path,
+[data-theme="dark"] .mermaid-svg-container svg .transition,
+[data-theme="dark"] .mermaid-svg-container svg .relation,
+[data-theme="dark"] .mermaid-svg-container svg .relationshipLine,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .flowchart-link,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .edgePaths .path,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .edgePath .path,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .transition,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .relation,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .relationshipLine {
+  stroke: #cbd5e1 !important;
+  stroke-width: 1.75px;
+}
+
+[data-theme="dark"] .mermaid-svg-container svg .arrowheadPath,
+[data-theme="dark"] .mermaid-svg-container svg .arrowMarkerPath,
+[data-theme="dark"] .mermaid-svg-container svg .marker.flowchart-v2 polygon,
+[data-theme="dark"] .mermaid-svg-container svg .marker.flowchart-v2 path,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .arrowheadPath,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .arrowMarkerPath,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .marker.flowchart-v2 polygon,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .marker.flowchart-v2 path {
+  fill: #cbd5e1 !important;
+  stroke: #cbd5e1 !important;
+}
+
+[data-theme="dark"] .mermaid-svg-container svg .edgeLabel,
+[data-theme="dark"] [data-testid="mermaid-viewer"] svg .edgeLabel {
+  color: #cbd5e1;
+}
+
 
 
