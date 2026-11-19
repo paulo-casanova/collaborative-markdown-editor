@@ -21,6 +21,9 @@ import {
   InlineMathWidget,
   TableBlockWidget,
   HeadingNumberWidget,
+  ListMarkerWidget,
+  toAlpha,
+  toRoman,
   ImageEmbedWidget,
   PillWidget,
   CalloutHeaderWidget,
@@ -404,6 +407,36 @@ export function buildLivePreviewDecorations(
     tableScanIdx++;
   }
 
+  const activeListIndents: number[] = [0];
+  const olCounters = new Map<number, number>();
+
+  const getListLevel = (indentStr: string): number => {
+    const spaces = indentStr.replace(/\t/g, '  ').length;
+    if (spaces === 0) {
+      activeListIndents.length = 1;
+      activeListIndents[0] = 0;
+      for (const k of Array.from(olCounters.keys())) {
+        if (k > 0) olCounters.delete(k);
+      }
+      return 0;
+    }
+    if (spaces > activeListIndents[activeListIndents.length - 1]) {
+      activeListIndents.push(spaces);
+      return activeListIndents.length - 1;
+    }
+    while (
+      activeListIndents.length > 1 &&
+      activeListIndents[activeListIndents.length - 1] > spaces
+    ) {
+      activeListIndents.pop();
+    }
+    if (spaces > activeListIndents[activeListIndents.length - 1]) {
+      activeListIndents.push(spaces);
+      return activeListIndents.length - 1;
+    }
+    return activeListIndents.length - 1;
+  };
+
   // 4. Line-by-line inspection for headings, task lists, dividers, inline formatting
   for (let i = 1; i <= lineCount; i++) {
     const line = doc.line(i);
@@ -418,6 +451,9 @@ export function buildLivePreviewDecorations(
         (r) => r.from <= lineFrom && r.to >= lineTo && (doc.lineAt(r.from).number !== doc.lineAt(r.to).number)
       );
       if (isOverlappingReplaced(lineFrom, lineTo) || inFence) {
+        olCounters.clear();
+        activeListIndents.length = 1;
+        activeListIndents[0] = 0;
         continue;
       }
     }
@@ -595,6 +631,60 @@ export function buildLivePreviewDecorations(
       }
       // Reserve the entire inline code span so inner syntax is never formatted as math/links/bold/pills
       replacedRanges.push({ from: cFrom, to: cTo });
+    }
+
+    // 4d0. Ordered list tracking & hierarchical markers (Level 1: a., b. ; Level 2: i., ii. ; etc.)
+    const olMatch = /^(\s*)(\d+)([.)])(?:\s+(.*))?$/.exec(lineText);
+    if (olMatch) {
+      const indentStr = olMatch[1];
+      const numStr = olMatch[2];
+      const delimiter = olMatch[3];
+      const level = getListLevel(indentStr);
+      const parsedNum = parseInt(numStr, 10);
+      const prevCount = olCounters.get(level) || 0;
+      let effectiveNum: number;
+      if (prevCount === 0) {
+        effectiveNum = isNaN(parsedNum) ? 1 : parsedNum;
+      } else {
+        effectiveNum = prevCount + 1;
+      }
+      olCounters.set(level, effectiveNum);
+
+      if (level > 0) {
+        const styleType = level % 3 === 1 ? 'alpha' : level % 3 === 2 ? 'roman' : 'decimal';
+        const displayMarker =
+          styleType === 'alpha'
+            ? `${toAlpha(effectiveNum)}${delimiter}`
+            : styleType === 'roman'
+            ? `${toRoman(effectiveNum)}${delimiter}`
+            : `${effectiveNum}${delimiter}`;
+
+        if (!cursorOnLine) {
+          const markerFrom = lineFrom + indentStr.length;
+          const markerTo = markerFrom + numStr.length + delimiter.length;
+          addReplace(
+            markerFrom,
+            markerTo,
+            Decoration.replace({
+              widget: new ListMarkerWidget(displayMarker),
+            })
+          );
+        }
+      }
+    } else {
+      const ulOrContMatch = /^(\s+)(?:[-*+]\s+|\S)/.exec(lineText);
+      if (ulOrContMatch && olCounters.size > 0) {
+        const spaces = ulOrContMatch[1].replace(/\t/g, '  ').length;
+        for (let k = activeListIndents.length - 1; k >= 0; k--) {
+          if (activeListIndents[k] >= spaces) {
+            olCounters.delete(k);
+          }
+        }
+      } else {
+        olCounters.clear();
+        activeListIndents.length = 1;
+        activeListIndents[0] = 0;
+      }
     }
 
     // 4e. Task list checkbox: - [ ] or - [x]

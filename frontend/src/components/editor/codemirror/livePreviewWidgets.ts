@@ -568,6 +568,62 @@ export class HeadingNumberWidget extends WidgetType {
   }
 }
 
+export class ListMarkerWidget extends WidgetType {
+  constructor(public marker: string) {
+    super();
+  }
+
+  eq(other: ListMarkerWidget): boolean {
+    return this.marker === other.marker;
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement('span');
+    span.className = 'cme-list-marker font-mono text-cme-primary/85 select-none font-medium';
+    span.setAttribute('data-testid', 'list-marker-badge');
+    span.textContent = this.marker;
+    return span;
+  }
+}
+
+export function toAlpha(n: number): string {
+  let str = '';
+  let val = n;
+  while (val > 0) {
+    const rem = (val - 1) % 26;
+    str = String.fromCharCode(97 + rem) + str;
+    val = Math.floor((val - 1) / 26);
+  }
+  return str || 'a';
+}
+
+export function toRoman(n: number): string {
+  const lookup: [number, string][] = [
+    [1000, 'm'],
+    [900, 'cm'],
+    [500, 'd'],
+    [400, 'cd'],
+    [100, 'c'],
+    [90, 'xc'],
+    [50, 'l'],
+    [40, 'xl'],
+    [10, 'x'],
+    [9, 'ix'],
+    [5, 'v'],
+    [4, 'iv'],
+    [1, 'i'],
+  ];
+  let roman = '';
+  let val = n;
+  for (const [v, char] of lookup) {
+    while (val >= v) {
+      roman += char;
+      val -= v;
+    }
+  }
+  return roman || 'i';
+}
+
 export class ImageEmbedWidget extends WidgetType {
   constructor(
     public alt: string,

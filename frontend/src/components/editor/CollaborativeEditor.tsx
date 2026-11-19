@@ -6,6 +6,8 @@ import {
   defaultKeymap,
   historyKeymap,
   indentWithTab,
+  indentMore,
+  indentLess,
   insertNewlineAndIndent,
   insertNewline,
 } from '@codemirror/commands';
@@ -36,14 +38,46 @@ import { subscribeLinkValidation } from '../../utils/linkValidator';
 
 const autoRenumberAnnotation = Annotation.define<boolean>();
 
+export function getOrderedListLevel(
+  indentStr: string,
+  activeListIndents: number[],
+  counters: Map<number, number>
+): number {
+  const spaces = indentStr.replace(/\t/g, '  ').length;
+  if (spaces === 0) {
+    activeListIndents.length = 1;
+    activeListIndents[0] = 0;
+    for (const k of Array.from(counters.keys())) {
+      if (k > 0) counters.delete(k);
+    }
+    return 0;
+  }
+  if (spaces > activeListIndents[activeListIndents.length - 1]) {
+    activeListIndents.push(spaces);
+    return activeListIndents.length - 1;
+  }
+  while (
+    activeListIndents.length > 1 &&
+    activeListIndents[activeListIndents.length - 1] > spaces
+  ) {
+    activeListIndents.pop();
+  }
+  if (spaces > activeListIndents[activeListIndents.length - 1]) {
+    activeListIndents.push(spaces);
+    return activeListIndents.length - 1;
+  }
+  return activeListIndents.length - 1;
+}
+
 /**
  * Computes minimal changes to keep contiguous ordered lists sequentially numbered (1., 2., 3., ...)
- * when items are added, removed, or reordered.
+ * across multiple indentation levels when items are added, removed, or reordered.
  */
 export function computeOrderedListRenumberingChanges(
   doc: Text
 ): Array<{ from: number; to: number; insert: string }> {
   const changes: Array<{ from: number; to: number; insert: string }> = [];
+  const activeListIndents = [0];
   const counters = new Map<number, number>();
   let inCodeFence = false;
 
@@ -54,28 +88,30 @@ export function computeOrderedListRenumberingChanges(
     if (/^\s*```/.test(text)) {
       inCodeFence = !inCodeFence;
       counters.clear();
+      activeListIndents.length = 1;
+      activeListIndents[0] = 0;
       continue;
     }
     if (inCodeFence) continue;
 
-    const olMatch = /^(\s*)(\d+)\.(\s+.*)$/.exec(text);
+    const olMatch = /^(\s*)(\d+)([.)])(?:\s+(.*))?$/.exec(text);
     if (olMatch) {
-      const indent = olMatch[1].length;
+      const level = getOrderedListLevel(olMatch[1], activeListIndents, counters);
       const numStr = olMatch[2];
-      // Clear deeper indentation counters
+
       for (const k of Array.from(counters.keys())) {
-        if (k > indent) {
+        if (k > level) {
           counters.delete(k);
         }
       }
-      const expected = (counters.get(indent) || 0) + 1;
-      counters.set(indent, expected);
+      const expected = (counters.get(level) || 0) + 1;
+      counters.set(level, expected);
 
       const expectedStr = String(expected);
       if (numStr !== expectedStr) {
         changes.push({
-          from: line.from + indent,
-          to: line.from + indent + numStr.length,
+          from: line.from + olMatch[1].length,
+          to: line.from + olMatch[1].length + numStr.length,
           insert: expectedStr,
         });
       }
@@ -85,9 +121,9 @@ export function computeOrderedListRenumberingChanges(
     // Check if nested unordered list or indented continuation line
     const ulOrContMatch = /^(\s+)(?:[-*+]\s+|\S)/.exec(text);
     if (ulOrContMatch && counters.size > 0) {
-      const indent = ulOrContMatch[1].length;
-      for (const k of Array.from(counters.keys())) {
-        if (k >= indent) {
+      const spaces = ulOrContMatch[1].replace(/\t/g, '  ').length;
+      for (let k = activeListIndents.length - 1; k >= 0; k--) {
+        if (activeListIndents[k] >= spaces) {
           counters.delete(k);
         }
       }
@@ -96,9 +132,130 @@ export function computeOrderedListRenumberingChanges(
 
     // Any other line breaks the ordered list sequence
     counters.clear();
+    activeListIndents.length = 1;
+    activeListIndents[0] = 0;
   }
 
   return changes;
+}
+
+export const LIST_ITEM_REGEX = /^(\s*)(\d+[.)]|[-*+]|\d+[.)]\s+\[[ xX]\]|[-*+]\s+\[[ xX]\])(\s+.*|\s*)$/;
+export const EMPTY_LIST_ITEM_REGEX = /^(\s*)(\d+[.)]|[-*+]|\d+[.)]\s+\[[ xX]\]|[-*+]\s+\[[ xX]\])\s*$/;
+
+export function indentListCommand(view: EditorView): boolean {
+  const { state } = view;
+  const sel = state.selection.main;
+  const startLine = state.doc.lineAt(sel.from);
+  const endLine = state.doc.lineAt(sel.to);
+
+  let hasList = false;
+  for (let l = startLine.number; l <= endLine.number; l++) {
+    if (LIST_ITEM_REGEX.test(state.doc.line(l).text)) {
+      hasList = true;
+      break;
+    }
+  }
+  if (!hasList) return false;
+
+  const indentChanges: Array<{ from: number; to: number; insert: string }> = [];
+  for (let l = startLine.number; l <= endLine.number; l++) {
+    const line = state.doc.line(l);
+    if (LIST_ITEM_REGEX.test(line.text)) {
+      indentChanges.push({ from: line.from, to: line.from, insert: '  ' });
+    }
+  }
+
+  if (indentChanges.length === 0) return false;
+
+  const intermediateTr = state.update({ changes: indentChanges });
+  const renumberChanges = computeOrderedListRenumberingChanges(intermediateTr.state.doc);
+
+  if (renumberChanges.length > 0) {
+    const finalChanges = state
+      .changes(indentChanges)
+      .compose(intermediateTr.state.changes(renumberChanges));
+    view.dispatch({
+      changes: finalChanges,
+      selection: sel.map(finalChanges),
+      userEvent: 'input.indent',
+      annotations: autoRenumberAnnotation.of(true),
+    });
+  } else {
+    view.dispatch({
+      changes: indentChanges,
+      selection: sel.map(intermediateTr.changes),
+      userEvent: 'input.indent',
+      annotations: autoRenumberAnnotation.of(true),
+    });
+  }
+  return true;
+}
+
+export function outdentListCommand(view: EditorView): boolean {
+  const { state } = view;
+  const sel = state.selection.main;
+  const startLine = state.doc.lineAt(sel.from);
+  const endLine = state.doc.lineAt(sel.to);
+
+  let hasList = false;
+  for (let l = startLine.number; l <= endLine.number; l++) {
+    if (LIST_ITEM_REGEX.test(state.doc.line(l).text)) {
+      hasList = true;
+      break;
+    }
+  }
+  if (!hasList) return false;
+
+  const dedentChanges: Array<{ from: number; to: number; insert: string }> = [];
+  for (let l = startLine.number; l <= endLine.number; l++) {
+    const line = state.doc.line(l);
+    const match = LIST_ITEM_REGEX.exec(line.text);
+    if (!match) continue;
+
+    const leadingSpaces = match[1];
+    if (leadingSpaces.length >= 2) {
+      dedentChanges.push({ from: line.from, to: line.from + 2, insert: '' });
+    } else if (leadingSpaces.length === 1) {
+      dedentChanges.push({ from: line.from, to: line.from + 1, insert: '' });
+    } else {
+      const fullMarkerMatch = /^(\s*(\d+[.)]|[-*+]|\d+[.)]\s+\[[ xX]\]|[-*+]\s+\[[ xX]\])\s*)(.*)$/.exec(
+        line.text
+      );
+      if (fullMarkerMatch) {
+        const markerWithSpaceLen = fullMarkerMatch[1].length;
+        dedentChanges.push({
+          from: line.from,
+          to: line.from + markerWithSpaceLen,
+          insert: '',
+        });
+      }
+    }
+  }
+
+  if (dedentChanges.length === 0) return false;
+
+  const intermediateTr = state.update({ changes: dedentChanges });
+  const renumberChanges = computeOrderedListRenumberingChanges(intermediateTr.state.doc);
+
+  if (renumberChanges.length > 0) {
+    const finalChanges = state
+      .changes(dedentChanges)
+      .compose(intermediateTr.state.changes(renumberChanges));
+    view.dispatch({
+      changes: finalChanges,
+      selection: sel.map(finalChanges),
+      userEvent: 'delete.dedent',
+      annotations: autoRenumberAnnotation.of(true),
+    });
+  } else {
+    view.dispatch({
+      changes: dedentChanges,
+      selection: sel.map(intermediateTr.changes),
+      userEvent: 'delete.dedent',
+      annotations: autoRenumberAnnotation.of(true),
+    });
+  }
+  return true;
 }
 
 /**
@@ -338,12 +495,43 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
       {
         key: 'Enter',
         run: (view) => {
+          const sel = view.state.selection.main;
+          if (sel.empty) {
+            const line = view.state.doc.lineAt(sel.head);
+            const match = EMPTY_LIST_ITEM_REGEX.exec(line.text);
+            if (match && sel.head === line.to) {
+              return outdentListCommand(view);
+            }
+          }
           if (insertNewlineContinueMarkup(view)) {
             return true;
           }
           return insertNewlineAndIndent(view);
         },
         shift: insertNewline,
+      },
+      {
+        key: 'Backspace',
+        run: (view) => {
+          const sel = view.state.selection.main;
+          if (sel.empty) {
+            const line = view.state.doc.lineAt(sel.head);
+            const match = EMPTY_LIST_ITEM_REGEX.exec(line.text);
+            if (match && sel.head === line.to) {
+              return outdentListCommand(view);
+            }
+          }
+          return false;
+        },
+      },
+      {
+        key: 'Tab',
+        run: (view) => {
+          return indentListCommand(view) || indentMore(view);
+        },
+        shift: (view) => {
+          return outdentListCommand(view) || indentLess(view);
+        },
       },
       {
         key: 'Mod-Enter',

@@ -3242,7 +3242,7 @@ export function renderMarkdown(
     }
 
     // Ordered List (\d+\. or \d+\) with optional indentation)
-    const olMatch = line.match(/^(\s*)(\d+)[.)]\s+(.+)$/);
+    const olMatch = line.match(/^(\s*)(\d+)[.)](?:\s+(.*))?$/);
     if (olMatch) {
       const level = getListLevel(olMatch[1]);
       const parsedNum = parseInt(olMatch[2], 10);
@@ -3276,7 +3276,7 @@ export function renderMarkdown(
           data-list-type="ordered"
           data-level={level}
         >
-          {renderInlineFormatted(olMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
+          {renderInlineFormatted(olMatch[3] || '', currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
         </li>,
         i,
         i
