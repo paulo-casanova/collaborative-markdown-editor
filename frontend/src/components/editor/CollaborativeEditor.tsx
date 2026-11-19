@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { EditorView, ViewPlugin, keymap, lineNumbers } from '@codemirror/view';
-import { Annotation, Compartment, EditorState, Extension, Text } from '@codemirror/state';
-import { markdown, insertNewlineContinueMarkup } from '@codemirror/lang-markdown';
+import { Annotation, Compartment, EditorState, Extension, Prec, Text } from '@codemirror/state';
+import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown';
 import {
   defaultKeymap,
   historyKeymap,
@@ -619,7 +619,7 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
               return outdentListCommand(view);
             }
           }
-          return false;
+          return deleteMarkupBackward(view);
         },
       },
       {
@@ -668,14 +668,14 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
 
     const extensions: Extension[] = [
       lineNumbersCompartmentRef.current.of(showLineNumbers ? lineNumbers() : []),
-      markdown(),
+      markdown({ addKeymap: false }),
       createMentionAutocompleteExtension(),
       createLivePreviewPlugin(isDark, documentPath, editable),
       createInlineReviewPlugin(provider, isDark, canComment),
       cmeEditorTheme,
       remoteCursorClassPlugin,
       EditorView.lineWrapping,
-      customKeymap,
+      Prec.highest(customKeymap),
       EditorView.contentAttributes.of({
         class:
           'tiptap ProseMirror prose prose-sm md:prose-base dark:prose-invert max-w-none focus:outline-none min-h-[450px] p-6 text-cme-text-base leading-relaxed cursor-text',

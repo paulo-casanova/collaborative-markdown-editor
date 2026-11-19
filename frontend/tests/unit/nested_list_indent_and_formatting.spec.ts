@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { EditorState, Text } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { EditorState, Prec, Text } from '@codemirror/state';
+import { EditorView, keymap } from '@codemirror/view';
+import { markdown } from '@codemirror/lang-markdown';
 import {
   computeOrderedListRenumberingChanges,
   indentListCommand,
@@ -214,6 +215,19 @@ describe('Nested List Indentation, Outdentation, and Marker Formatting', () => {
       const handled = continueListCommand(ctx.view);
       expect(handled).toBe(false);
       expect(ctx.doc).toBe('Just text');
+    });
+
+    it('handles Enter on Level 3 ordered list item using the exact enter sequence', () => {
+      const docText = '1. Hello\n2. List\n  1. Sub\n  2. Sub2\n    1. Deep nested';
+      const ctx = createView(docText, docText.length);
+
+      // Verify continueListCommand directly
+      const handled = continueListCommand(ctx.view);
+      expect(handled).toBe(true);
+      expect(ctx.doc).toBe(
+        '1. Hello\n2. List\n  1. Sub\n  2. Sub2\n    1. Deep nested\n    2. '
+      );
+      expect(ctx.cursor).toBe(docText.length + '\n    2. '.length);
     });
   });
 
