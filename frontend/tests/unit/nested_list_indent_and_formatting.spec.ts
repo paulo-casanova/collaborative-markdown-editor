@@ -14,6 +14,8 @@ import {
   toAlpha,
   toRoman,
   ListMarkerWidget,
+  BulletMarkerWidget,
+  getBulletChar,
 } from '../../src/components/editor/codemirror/livePreviewWidgets';
 import { buildLivePreviewDecorations } from '../../src/components/editor/codemirror/livePreviewPlugin';
 import { renderMarkdown } from '../../src/pages/ReaderPage';
@@ -335,6 +337,155 @@ describe('Nested List Indentation, Outdentation, and Marker Formatting', () => {
 
       expect(listItems[2].props['data-level']).toBe(2);
       expect(listItems[2].props.style.listStyleType).toBe('lower-roman');
+    });
+
+    it('renders unordered lists with disc (L1), circle (L2), square (L3) and cycles in Reader mode', () => {
+      const md = '- Root L1\n  - Nested L2\n    - Deep L3\n      - Cycling L4';
+      const elements = renderMarkdown(md) as any[];
+
+      const listItems = elements.filter(
+        (el) => el.type === 'li' && el.props['data-list-type'] === 'unordered'
+      );
+      expect(listItems.length).toBe(4);
+
+      // Level 0 (L1): disc
+      expect(listItems[0].props['data-level']).toBe(0);
+      expect(listItems[0].props.style.listStyleType).toBe('disc');
+
+      // Level 1 (L2): circle
+      expect(listItems[1].props['data-level']).toBe(1);
+      expect(listItems[1].props.style.listStyleType).toBe('circle');
+
+      // Level 2 (L3): square
+      expect(listItems[2].props['data-level']).toBe(2);
+      expect(listItems[2].props.style.listStyleType).toBe('square');
+
+      // Level 3 (L4): disc (cycles back)
+      expect(listItems[3].props['data-level']).toBe(3);
+      expect(listItems[3].props.style.listStyleType).toBe('disc');
+    });
+  });
+
+  describe('3-Level Bullet Markers (Disc •, Circle ◦, Square ▪)', () => {
+    it('getBulletChar returns bullet for L1 (0), circle for L2 (1), filled square for L3 (2)', () => {
+      // Level 0 (L1): Standard bullet
+      expect(getBulletChar(0)).toBe('•');
+      // Level 1 (L2): Hollow circle
+      expect(getBulletChar(1)).toBe('◦');
+      // Level 2 (L3): Filled square
+      expect(getBulletChar(2)).toBe('▪');
+
+      // Cycles for deeper levels
+      expect(getBulletChar(3)).toBe('•');
+      expect(getBulletChar(4)).toBe('◦');
+      expect(getBulletChar(5)).toBe('▪');
+    });
+
+    it('BulletMarkerWidget initializes with bullet and level and tests equality correctly', () => {
+      const widget = new BulletMarkerWidget('•', 0);
+      expect(widget.bullet).toBe('•');
+      expect(widget.level).toBe(0);
+      expect(widget.eq(new BulletMarkerWidget('•', 0))).toBe(true);
+      expect(widget.eq(new BulletMarkerWidget('◦', 1))).toBe(false);
+      expect(widget.eq(new BulletMarkerWidget('•', 1))).toBe(false);
+    });
+
+    it('decorates L1, L2, and L3 unordered lists with •, ◦, and ▪ in Live Preview', () => {
+      const md = '- Item 1\n  - Item 2\n    - Item 3\n      - Item 4';
+      // Put cursor at pos 0 (line 1), but wait, let's put cursor at pos 2 (after marker on line 1) or in a separate line
+      const state = EditorState.create({
+        doc: md + '\n\nExtra line',
+        selection: { anchor: md.length + 2 }, // Cursor on extra line
+      });
+      const decos = buildLivePreviewDecorations(state, false, '', true);
+
+      const widgets: BulletMarkerWidget[] = [];
+      const iter = decos.iter();
+      while (iter.value) {
+        if (iter.value.spec?.widget instanceof BulletMarkerWidget) {
+          widgets.push(iter.value.spec.widget);
+        }
+        iter.next();
+      }
+
+      expect(widgets.length).toBe(4);
+      expect(widgets[0].bullet).toBe('•');
+      expect(widgets[0].level).toBe(0);
+
+      expect(widgets[1].bullet).toBe('◦');
+      expect(widgets[1].level).toBe(1);
+
+      expect(widgets[2].bullet).toBe('▪');
+      expect(widgets[2].level).toBe(2);
+
+      expect(widgets[3].bullet).toBe('•');
+      expect(widgets[3].level).toBe(3);
+    });
+
+    it('decorates alternative markdown bullet markers (* and +) with hierarchical bullets', () => {
+      const md = '* Asterisk L1\n  + Plus L2\n    * Asterisk L3';
+      const state = EditorState.create({
+        doc: md + '\n\n',
+        selection: { anchor: md.length + 1 },
+      });
+      const decos = buildLivePreviewDecorations(state, false, '', true);
+
+      const widgets: BulletMarkerWidget[] = [];
+      const iter = decos.iter();
+      while (iter.value) {
+        if (iter.value.spec?.widget instanceof BulletMarkerWidget) {
+          widgets.push(iter.value.spec.widget);
+        }
+        iter.next();
+      }
+
+      expect(widgets.length).toBe(3);
+      expect(widgets[0].bullet).toBe('•');
+      expect(widgets[1].bullet).toBe('◦');
+      expect(widgets[2].bullet).toBe('▪');
+    });
+
+    it('reveals raw markdown bullet marker when cursor is on that line', () => {
+      const md = '- Line 1\n  - Line 2';
+      // Cursor on line 2 (pos 12 is '  - Line 2')
+      const state = EditorState.create({
+        doc: md,
+        selection: { anchor: 12 },
+      });
+      const decos = buildLivePreviewDecorations(state, false, '', true);
+
+      const widgets: BulletMarkerWidget[] = [];
+      const iter = decos.iter();
+      while (iter.value) {
+        if (iter.value.spec?.widget instanceof BulletMarkerWidget) {
+          widgets.push(iter.value.spec.widget);
+        }
+        iter.next();
+      }
+
+      // Line 1 is decorated with •; Line 2 has cursor, so raw marker is shown (no widget)
+      expect(widgets.length).toBe(1);
+      expect(widgets[0].bullet).toBe('•');
+    });
+
+    it('does not replace markers of task lists with bullet widgets', () => {
+      const md = '- [ ] Task 1\n  - [x] Task 2';
+      const state = EditorState.create({
+        doc: md + '\n\n',
+        selection: { anchor: md.length + 1 },
+      });
+      const decos = buildLivePreviewDecorations(state, false, '', true);
+
+      const bulletWidgets: BulletMarkerWidget[] = [];
+      const iter = decos.iter();
+      while (iter.value) {
+        if (iter.value.spec?.widget instanceof BulletMarkerWidget) {
+          bulletWidgets.push(iter.value.spec.widget);
+        }
+        iter.next();
+      }
+
+      expect(bulletWidgets.length).toBe(0);
     });
   });
 });

@@ -3286,7 +3286,7 @@ export function renderMarkdown(
     }
 
     // Unordered List (- or * or + with optional indentation)
-    const ulMatch = line.match(/^(\s*)([-*+])\s+(.+)$/);
+    const ulMatch = line.match(/^(\s*)([-*+])(?:\s+(.*))?$/);
     if (ulMatch) {
       const level = getListLevel(ulMatch[1]);
       const ulStyleType =
@@ -3305,7 +3305,7 @@ export function renderMarkdown(
           data-list-type="unordered"
           data-level={level}
         >
-          {renderInlineFormatted(ulMatch[3], currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
+          {renderInlineFormatted(ulMatch[3] || '', currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}
         </li>,
         i,
         i

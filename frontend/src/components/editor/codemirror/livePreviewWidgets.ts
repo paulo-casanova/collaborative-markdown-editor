@@ -586,6 +586,36 @@ export class ListMarkerWidget extends WidgetType {
   }
 }
 
+export function getBulletChar(level: number): string {
+  const mod = ((level % 3) + 3) % 3;
+  if (mod === 1) return '◦';
+  if (mod === 2) return '▪';
+  return '•';
+}
+
+export class BulletMarkerWidget extends WidgetType {
+  constructor(
+    public bullet: string,
+    public level: number = 0
+  ) {
+    super();
+  }
+
+  eq(other: BulletMarkerWidget): boolean {
+    return this.bullet === other.bullet && this.level === other.level;
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement('span');
+    span.className =
+      'cme-bullet-marker select-none font-medium text-cme-primary/85 inline-block text-center';
+    span.setAttribute('data-testid', 'bullet-marker-badge');
+    span.setAttribute('data-level', String(this.level));
+    span.textContent = this.bullet;
+    return span;
+  }
+}
+
 export function toAlpha(n: number): string {
   let str = '';
   let val = n;

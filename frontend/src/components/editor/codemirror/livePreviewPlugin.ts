@@ -22,6 +22,8 @@ import {
   TableBlockWidget,
   HeadingNumberWidget,
   ListMarkerWidget,
+  BulletMarkerWidget,
+  getBulletChar,
   toAlpha,
   toRoman,
   ImageEmbedWidget,
@@ -633,8 +635,11 @@ export function buildLivePreviewDecorations(
       replacedRanges.push({ from: cFrom, to: cTo });
     }
 
-    // 4d0. Ordered list tracking & hierarchical markers (Level 1: a., b. ; Level 2: i., ii. ; etc.)
+    // 4d0. Ordered & unordered list tracking & hierarchical markers
     const olMatch = /^(\s*)(\d+)([.)])(?:\s+(.*))?$/.exec(lineText);
+    const isTaskList = /^(\s*[-*+]\s+)\[([ xX])\](?:\s+.*|\s*)$/.test(lineText);
+    const ulMatch = !olMatch && !isTaskList ? /^(\s*)([-*+])(?:\s+(.*)|\s*$)/.exec(lineText) : null;
+
     if (olMatch) {
       const indentStr = olMatch[1];
       const numStr = olMatch[2];
@@ -671,6 +676,31 @@ export function buildLivePreviewDecorations(
           );
         }
       }
+    } else if (ulMatch) {
+      const indentStr = ulMatch[1];
+      const markerChar = ulMatch[2];
+      const level = getListLevel(indentStr);
+
+      if (olCounters.size > 0) {
+        const spaces = indentStr.replace(/\t/g, '  ').length;
+        for (let k = activeListIndents.length - 1; k >= 0; k--) {
+          if (activeListIndents[k] >= spaces) {
+            olCounters.delete(k);
+          }
+        }
+      }
+
+      if (!cursorOnLine) {
+        const markerFrom = lineFrom + indentStr.length;
+        const markerTo = markerFrom + markerChar.length;
+        addReplace(
+          markerFrom,
+          markerTo,
+          Decoration.replace({
+            widget: new BulletMarkerWidget(getBulletChar(level), level),
+          })
+        );
+      }
     } else {
       const ulOrContMatch = /^(\s+)(?:[-*+]\s+|\S)/.exec(lineText);
       if (ulOrContMatch && olCounters.size > 0) {
@@ -688,7 +718,7 @@ export function buildLivePreviewDecorations(
     }
 
     // 4e. Task list checkbox: - [ ] or - [x]
-    const taskMatch = /^(\s*[-*]\s+)\[([ xX])\]\s+/.exec(lineText);
+    const taskMatch = /^(\s*[-*+]\s+)\[([ xX])\]\s+/.exec(lineText);
     if (taskMatch) {
       const prefixLen = taskMatch[1].length;
       const boxStart = lineFrom + prefixLen;
