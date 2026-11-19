@@ -5,6 +5,7 @@ import {
   computeOrderedListRenumberingChanges,
   indentListCommand,
   outdentListCommand,
+  continueListCommand,
   LIST_ITEM_REGEX,
   EMPTY_LIST_ITEM_REGEX,
 } from '../../src/components/editor/CollaborativeEditor';
@@ -154,6 +155,65 @@ describe('Nested List Indentation, Outdentation, and Marker Formatting', () => {
       const handled = outdentListCommand(ctx.view);
       expect(handled).toBe(false);
       expect(ctx.doc).toBe('Some paragraph');
+    });
+  });
+
+  describe('continueListCommand (Enter on list items)', () => {
+    it('continues a level 1 numbered list on Enter', () => {
+      const ctx = createView('1. Item 1', 9);
+      const handled = continueListCommand(ctx.view);
+      expect(handled).toBe(true);
+      expect(ctx.doc).toBe('1. Item 1\n2. ');
+      expect(ctx.cursor).toBe(13);
+    });
+
+    it('continues a level 2 numbered list on Enter', () => {
+      const text = '1. Item 1\n  1. Item 2';
+      const ctx = createView(text, text.length);
+      const handled = continueListCommand(ctx.view);
+      expect(handled).toBe(true);
+      expect(ctx.doc).toBe('1. Item 1\n  1. Item 2\n  2. ');
+    });
+
+    it('continues a level 3 numbered list on Enter with next number added', () => {
+      const text = '1. Item 1\n  1. Item 2\n    1. Item 3';
+      const ctx = createView(text, text.length);
+      const handled = continueListCommand(ctx.view);
+      expect(handled).toBe(true);
+      expect(ctx.doc).toBe('1. Item 1\n  1. Item 2\n    1. Item 3\n    2. ');
+      expect(ctx.cursor).toBe(text.length + '\n    2. '.length);
+    });
+
+    it('continues a level 3 task list on Enter with unchecked box', () => {
+      const text = '1. Item 1\n  1. Item 2\n    1. [x] Item 3';
+      const ctx = createView(text, text.length);
+      const handled = continueListCommand(ctx.view);
+      expect(handled).toBe(true);
+      expect(ctx.doc).toBe('1. Item 1\n  1. Item 2\n    1. [x] Item 3\n    2. [ ] ');
+    });
+
+    it('continues an unordered list on Enter with identical bullet', () => {
+      const text = '1. Item 1\n  1. Item 2\n    - Sub item';
+      const ctx = createView(text, text.length);
+      const handled = continueListCommand(ctx.view);
+      expect(handled).toBe(true);
+      expect(ctx.doc).toBe('1. Item 1\n  1. Item 2\n    - Sub item\n    - ');
+    });
+
+    it('renumbers subsequent items when Enter is pressed in between items', () => {
+      const text = '1. Item 1\n  1. Item 2\n    1. Item 3\n    2. Item 4';
+      const enterPos = '1. Item 1\n  1. Item 2\n    1. Item 3'.length;
+      const ctx = createView(text, enterPos);
+      const handled = continueListCommand(ctx.view);
+      expect(handled).toBe(true);
+      expect(ctx.doc).toBe('1. Item 1\n  1. Item 2\n    1. Item 3\n    2. \n    3. Item 4');
+    });
+
+    it('returns false when cursor is on a non-list line', () => {
+      const ctx = createView('Just text', 9);
+      const handled = continueListCommand(ctx.view);
+      expect(handled).toBe(false);
+      expect(ctx.doc).toBe('Just text');
     });
   });
 

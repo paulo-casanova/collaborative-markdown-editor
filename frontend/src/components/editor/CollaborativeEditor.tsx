@@ -11,6 +11,7 @@ import {
   insertNewlineAndIndent,
   insertNewline,
 } from '@codemirror/commands';
+import { syntaxTree } from '@codemirror/language';
 import { yCollab, yUndoManagerKeymap } from 'y-codemirror.next';
 import * as Y from 'yjs';
 
@@ -258,6 +259,100 @@ export function outdentListCommand(view: EditorView): boolean {
   return true;
 }
 
+export function isInsideCodeBlock(state: EditorState, pos: number): boolean {
+  try {
+    const tree = syntaxTree(state);
+    let node: any = tree.resolveInner(pos, -1);
+    while (node) {
+      if (
+        node.name === 'FencedCode' ||
+        node.name === 'CodeBlock' ||
+        node.name === 'CodeText' ||
+        node.name === 'InlineCode'
+      ) {
+        return true;
+      }
+      node = node.parent;
+    }
+  } catch {
+    // Fallback if syntax tree is not available
+  }
+  return false;
+}
+
+export const LIST_LINE_REGEX = /^(\s*)(?:(\d+)([.)])|([-*+]))(\s+\[[ xX]\])?(\s+.*)$/;
+
+export function continueListCommand(view: EditorView): boolean {
+  const { state } = view;
+  const sel = state.selection.main;
+  if (!sel.empty) return false;
+
+  if (isInsideCodeBlock(state, sel.head)) {
+    return false;
+  }
+
+  const line = state.doc.lineAt(sel.head);
+  const match = LIST_LINE_REGEX.exec(line.text);
+  if (!match) return false;
+
+  const indentStr = match[1];
+  const markerLen =
+    indentStr.length +
+    (match[2] ? match[2].length + match[3].length : match[4].length) +
+    (match[5] ? match[5].length : 0);
+
+  // If cursor is before or within the marker itself, do not continue list
+  if (sel.head < line.from + markerLen) {
+    return false;
+  }
+
+  let nextPrefix: string;
+  if (match[2]) {
+    const num = parseInt(match[2], 10);
+    const nextNum = isNaN(num) ? 1 : num + 1;
+    const delimiter = match[3];
+    const taskBox = match[5] ? ' [ ] ' : ' ';
+    nextPrefix = `${indentStr}${nextNum}${delimiter}${taskBox}`;
+  } else {
+    const bullet = match[4];
+    const taskBox = match[5] ? ' [ ] ' : ' ';
+    nextPrefix = `${indentStr}${bullet}${taskBox}`;
+  }
+
+  const restOfLine = line.text.slice(sel.head - line.from);
+  const insertFrom = sel.head;
+  const insertTo = restOfLine.trim() === '' ? line.to : sel.head;
+
+  const insertText = '\n' + nextPrefix;
+  const insertChanges = [{ from: insertFrom, to: insertTo, insert: insertText }];
+  const intermediateTr = state.update({ changes: insertChanges });
+  const renumberChanges = computeOrderedListRenumberingChanges(intermediateTr.state.doc);
+
+  const nextCursorPos = insertFrom + insertText.length;
+
+  if (renumberChanges.length > 0) {
+    const finalChanges = state
+      .changes(insertChanges)
+      .compose(intermediateTr.state.changes(renumberChanges));
+    view.dispatch({
+      changes: finalChanges,
+      selection: { anchor: nextCursorPos },
+      userEvent: 'input',
+      scrollIntoView: true,
+      annotations: autoRenumberAnnotation.of(true),
+    });
+  } else {
+    view.dispatch({
+      changes: insertChanges,
+      selection: { anchor: nextCursorPos },
+      userEvent: 'input',
+      scrollIntoView: true,
+      annotations: autoRenumberAnnotation.of(true),
+    });
+  }
+  return true;
+}
+
 /**
  * Computes minimal changes to number or renumber markdown headings (1., 1.1., 2., ...)
  * or strip numbers when automatic header numbering is disabled.
@@ -498,9 +593,12 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           const sel = view.state.selection.main;
           if (sel.empty) {
             const line = view.state.doc.lineAt(sel.head);
-            const match = EMPTY_LIST_ITEM_REGEX.exec(line.text);
-            if (match && sel.head === line.to) {
+            const emptyMatch = EMPTY_LIST_ITEM_REGEX.exec(line.text);
+            if (emptyMatch && sel.head === line.to) {
               return outdentListCommand(view);
+            }
+            if (continueListCommand(view)) {
+              return true;
             }
           }
           if (insertNewlineContinueMarkup(view)) {
