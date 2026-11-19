@@ -106,9 +106,10 @@ export const FloatingReviewMenu: React.FC<FloatingReviewMenuProps> = ({
     const ydoc = provider?.ydoc;
     const ytype = ydoc ? ydoc.getText('content') : undefined;
 
-    // Zero-based character offset for anchoring
-    const charStart = Math.max(0, selectionRange.from - 1);
-    const charEnd = Math.max(charStart, selectionRange.to - 1);
+    // Zero-based character offset for anchoring (CodeMirror offsets are 0-based)
+    const charStart = selectionRange.from;
+    const charEnd = selectionRange.to;
+    const exactText = fullText.slice(charStart, charEnd) || selectedText;
 
     const anchor = ytype
       ? createDualAnchor(ytype, charStart, charEnd, fullText)
@@ -117,7 +118,7 @@ export const FloatingReviewMenu: React.FC<FloatingReviewMenuProps> = ({
     setPendingCommentSelection({
       start: charStart,
       end: charEnd,
-      text: selectedText,
+      text: exactText,
       anchor,
     });
     setPosition(null);
@@ -132,8 +133,9 @@ export const FloatingReviewMenu: React.FC<FloatingReviewMenuProps> = ({
     const ydoc = provider?.ydoc;
     const ytype = ydoc ? ydoc.getText('content') : undefined;
 
-    const charStart = Math.max(0, selectionRange.from - 1);
-    const charEnd = Math.max(charStart, selectionRange.to - 1);
+    const charStart = selectionRange.from;
+    const charEnd = selectionRange.to;
+    const exactText = fullText.slice(charStart, charEnd) || selectedText;
 
     const anchor = ytype
       ? createDualAnchor(ytype, charStart, charEnd, fullText)
@@ -142,7 +144,7 @@ export const FloatingReviewMenu: React.FC<FloatingReviewMenuProps> = ({
     setPendingSuggestionSelection({
       start: charStart,
       end: charEnd,
-      text: selectedText,
+      text: exactText,
       anchor,
     });
     setPosition(null);

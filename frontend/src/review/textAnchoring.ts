@@ -175,12 +175,306 @@ export function stringSimilarity(s1: string, s2: string): number {
 }
 
 /**
+ * Strips inline and block markdown formatting syntax, returning plain readable text.
+ */
+export function stripMarkdownFormatting(md: string): string {
+  if (!md) return '';
+  return md
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^(\s*[-*+]\s+)(\[[ xX]\]\s+)?/, '')
+    .replace(/^>\s*(?:\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*)?/i, '')
+    .replace(/\[!\[([^\]]*)\]\([^)]+\)\]\([^)]+\)/g, '$1')
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1')
+    .replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, '$1')
+    .replace(/\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?([^\]]+)\]/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/`+([^`]+)`+/g, '$1')
+    .replace(/\$\$([^\$]+)\$\$/g, '$1')
+    .replace(/\$([^\$]+)\$/g, '$1')
+    .replace(/~~([^~]+)~~/g, '$1')
+    .replace(/\*\*\*([^*]+)\*\*\*/g, '$1')
+    .replace(/___([^_]+)___/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/_([^_]+)_/g, '$1');
+}
+
+/**
+ * Builds a character index mapping from plain-text character offsets to raw markdown offsets.
+ */
+export function buildMarkdownOffsetMap(raw: string): { plainText: string; plainToRaw: number[] } {
+  const plainToRaw: number[] = [];
+  let plainText = '';
+  let i = 0;
+
+  // Skip block-level prefix if any (headings, blockquotes, callouts, lists, tasks)
+  const blockPrefixMatch = raw.match(
+    /^(#{1,6}\s+|>\s*(?:\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*)?|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+\.\s+)/i
+  );
+  if (blockPrefixMatch) {
+    i = blockPrefixMatch[0].length;
+  }
+
+  while (i < raw.length) {
+    // 1. Linked image or embedded image: [![alt](src)](target) or ![alt](src)
+    if (raw.slice(i).startsWith('![')) {
+      const imgMatch = raw.slice(i).match(/^!\[([^\]]*)\]\([^)]+\)/);
+      if (imgMatch) {
+        i += imgMatch[0].length;
+        continue;
+      }
+    }
+    // 2. WikiLink [[target|label]] or [[target]]
+    if (raw.slice(i).startsWith('[[')) {
+      const m = raw.slice(i).match(/^\[\[([^\]]+)\]\]/);
+      if (m) {
+        const parts = m[1].split('|');
+        const label = (parts[1] || parts[0]).trim();
+        const labelOffset = m[0].indexOf(label);
+        for (let c = 0; c < label.length; c++) {
+          plainToRaw.push(i + labelOffset + c);
+          plainText += label[c];
+        }
+        i += m[0].length;
+        continue;
+      }
+    }
+    // 3. Custom pill [pill:...|label]
+    if (
+      raw.slice(i).startsWith('[pill:') ||
+      raw.slice(i).startsWith('[status:') ||
+      raw.slice(i).startsWith('[priority:')
+    ) {
+      const m = raw
+        .slice(i)
+        .match(/^\[(?:pill|status|priority):(?:[a-zA-Z0-9#_-]+\|)?([^\]]+)\]/);
+      if (m) {
+        const label = m[1];
+        const labelOffset = m[0].indexOf(label);
+        for (let c = 0; c < label.length; c++) {
+          plainToRaw.push(i + labelOffset + c);
+          plainText += label[c];
+        }
+        i += m[0].length;
+        continue;
+      }
+    }
+    // 4. Standard link [label](url)
+    if (raw[i] === '[' && !raw.slice(i).startsWith('[[')) {
+      const m = raw.slice(i).match(/^\[([^\]]+)\]\(([^)]+)\)/);
+      if (m) {
+        const label = m[1];
+        for (let c = 0; c < label.length; c++) {
+          plainToRaw.push(i + 1 + c);
+          plainText += label[c];
+        }
+        i += m[0].length;
+        continue;
+      }
+    }
+    // 5. Code `...`
+    if (raw[i] === '`') {
+      const m = raw.slice(i).match(/^(`+)(.*?)\1/);
+      if (m) {
+        const codeText = m[2];
+        for (let c = 0; c < codeText.length; c++) {
+          plainToRaw.push(i + m[1].length + c);
+          plainText += codeText[c];
+        }
+        i += m[0].length;
+        continue;
+      }
+    }
+    // 6. Display Math $$...$$
+    if (raw.slice(i).startsWith('$$')) {
+      const endIdx = raw.indexOf('$$', i + 2);
+      if (endIdx !== -1) {
+        const inner = raw.slice(i + 2, endIdx);
+        for (let c = 0; c < inner.length; c++) {
+          plainToRaw.push(i + 2 + c);
+          plainText += inner[c];
+        }
+        i = endIdx + 2;
+        continue;
+      }
+    }
+    // 7. Inline Math $...$
+    if (raw[i] === '$' && raw[i + 1] !== '$' && raw[i + 1] !== ' ') {
+      const endIdx = raw.indexOf('$', i + 1);
+      if (endIdx !== -1 && raw[endIdx - 1] !== ' ') {
+        const inner = raw.slice(i + 1, endIdx);
+        for (let c = 0; c < inner.length; c++) {
+          plainToRaw.push(i + 1 + c);
+          plainText += inner[c];
+        }
+        i = endIdx + 1;
+        continue;
+      }
+    }
+    // 8. Delimiters (bold italic, bold, strikethrough, italic)
+    if (raw.slice(i).startsWith('***') || raw.slice(i).startsWith('___')) {
+      i += 3;
+      continue;
+    }
+    if (raw.slice(i).startsWith('**') || raw.slice(i).startsWith('__')) {
+      i += 2;
+      continue;
+    }
+    if (raw.slice(i).startsWith('~~')) {
+      i += 2;
+      continue;
+    }
+    if (raw[i] === '*' || raw[i] === '_') {
+      const prev = i > 0 ? raw[i - 1] : ' ';
+      const next = i + 1 < raw.length ? raw[i + 1] : ' ';
+      if (!(prev === ' ' && next === ' ')) {
+        i += 1;
+        continue;
+      }
+    }
+
+    // Normal content character
+    plainToRaw.push(i);
+    plainText += raw[i];
+    i++;
+  }
+
+  return { plainText, plainToRaw };
+}
+
+/**
+ * Accurately finds character offsets in raw markdown corresponding to selected text,
+ * properly accounting for markdown syntax delimiters and rendered DOM contexts.
+ */
+export function findMarkdownSelection(
+  fullContent: string,
+  selectedText: string,
+  options?: {
+    blockStart?: number;
+    blockEnd?: number;
+    prefixInBlock?: string;
+    suffixInBlock?: string;
+    prefix?: string;
+    suffix?: string;
+  }
+): { start: number; end: number; exact: string } {
+  if (!fullContent || !selectedText) {
+    return { start: 0, end: 0, exact: '' };
+  }
+
+  const trimmed = selectedText.trim();
+  if (!trimmed) {
+    return { start: 0, end: 0, exact: '' };
+  }
+
+  // A. Block-scoped search when blockStart/blockEnd are provided from DOM
+  if (
+    typeof options?.blockStart === 'number' &&
+    typeof options?.blockEnd === 'number' &&
+    options.blockEnd > options.blockStart
+  ) {
+    const blockRaw = fullContent.slice(options.blockStart, options.blockEnd);
+    const { plainText, plainToRaw } = buildMarkdownOffsetMap(blockRaw);
+
+    let pIdx = -1;
+    if (options.prefixInBlock !== undefined) {
+      const prefixLen = options.prefixInBlock.length;
+      if (
+        prefixLen <= plainText.length &&
+        plainText.slice(prefixLen, prefixLen + trimmed.length) === trimmed
+      ) {
+        pIdx = prefixLen;
+      } else {
+        pIdx = plainText.indexOf(trimmed, Math.max(0, prefixLen - 10));
+      }
+    }
+
+    if (pIdx === -1) {
+      pIdx = plainText.indexOf(trimmed);
+    }
+
+    if (pIdx !== -1 && pIdx < plainToRaw.length) {
+      const rawStart = plainToRaw[pIdx];
+      const endPlainIdx = Math.min(plainToRaw.length - 1, pIdx + trimmed.length - 1);
+      const rawEnd = plainToRaw[endPlainIdx] + 1;
+      const start = options.blockStart + rawStart;
+      const end = options.blockStart + rawEnd;
+      return {
+        start,
+        end,
+        exact: fullContent.slice(start, end),
+      };
+    }
+  }
+
+  // B. Exact direct match in fullContent (with prefix/suffix context if available)
+  let directIdx = -1;
+  if (options?.prefix) {
+    const pattern = options.prefix + trimmed;
+    const pos = fullContent.indexOf(pattern);
+    if (pos !== -1) {
+      directIdx = pos + options.prefix.length;
+    }
+  }
+  if (directIdx === -1 && options?.suffix) {
+    const pattern = trimmed + options.suffix;
+    const pos = fullContent.indexOf(pattern);
+    if (pos !== -1) {
+      directIdx = pos;
+    }
+  }
+  if (directIdx === -1) {
+    directIdx = fullContent.indexOf(trimmed);
+  }
+
+  if (directIdx !== -1) {
+    return {
+      start: directIdx,
+      end: directIdx + trimmed.length,
+      exact: fullContent.slice(directIdx, directIdx + trimmed.length),
+    };
+  }
+
+  // C. Markdown-aware scan across lines in fullContent
+  const lines = fullContent.split('\n');
+  let curOffset = 0;
+  for (const line of lines) {
+    if (line.trim().length > 0) {
+      const { plainText, plainToRaw } = buildMarkdownOffsetMap(line);
+      const pIdx = plainText.indexOf(trimmed);
+      if (pIdx !== -1 && pIdx < plainToRaw.length) {
+        const rawStart = plainToRaw[pIdx];
+        const endPlainIdx = Math.min(plainToRaw.length - 1, pIdx + trimmed.length - 1);
+        const rawEnd = plainToRaw[endPlainIdx] + 1;
+        const start = curOffset + rawStart;
+        const end = curOffset + rawEnd;
+        return {
+          start,
+          end,
+          exact: fullContent.slice(start, end),
+        };
+      }
+    }
+    curOffset += line.length + 1;
+  }
+
+  // D. Fallback: return start=0
+  return {
+    start: 0,
+    end: Math.min(fullContent.length, trimmed.length),
+    exact: fullContent.slice(0, trimmed.length),
+  };
+}
+
+/**
  * Strategy B Fallback: Matches W3C TextQuoteSelector against raw document text.
  *
  * Supports:
  * - Tier 1: Full context (prefix + exact + suffix)
  * - Tier 2: Partial context (prefix + exact OR exact + suffix)
  * - Tier 3: Exact quote match with proximity disambiguation
+ * - Tier 3.5: Markdown-aware syntax match
  * - Tier 4: Localized fuzzy search
  */
 export function matchQuoteSelector(
@@ -243,6 +537,12 @@ export function matchQuoteSelector(
       }
     }
     return { start: closest, end: closest + exact.length, score: 0.85 };
+  }
+
+  // Tier 3.5: Markdown-Aware Syntax Matching
+  const mdMatch = findMarkdownSelection(text, exact, { prefix, suffix });
+  if (mdMatch && mdMatch.end > mdMatch.start && (mdMatch.start !== 0 || text.startsWith(exact))) {
+    return { start: mdMatch.start, end: mdMatch.end, score: 0.95 };
   }
 
   // Tier 4: Prefix/Suffix Boundary-Assisted Fuzzy Search

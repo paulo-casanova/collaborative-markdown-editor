@@ -99,8 +99,9 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
     const fullText = editor.getText();
     const ydoc = provider?.ydoc;
     const ytype = ydoc ? ydoc.getText('content') : undefined;
-    const charStart = Math.max(0, selectionRange.from - 1);
-    const charEnd = Math.max(charStart, selectionRange.to - 1);
+    const charStart = selectionRange.from;
+    const charEnd = selectionRange.to;
+    const exactText = fullText.slice(charStart, charEnd) || selectedText;
 
     const anchor = ytype
       ? createDualAnchor(ytype, charStart, charEnd, fullText)
@@ -109,7 +110,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
     setPendingCommentSelection({
       start: charStart,
       end: charEnd,
-      text: selectedText,
+      text: exactText,
       anchor,
     });
   };
@@ -119,8 +120,9 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
     const fullText = editor.getText();
     const ydoc = provider?.ydoc;
     const ytype = ydoc ? ydoc.getText('content') : undefined;
-    const charStart = Math.max(0, selectionRange.from - 1);
-    const charEnd = Math.max(charStart, selectionRange.to - 1);
+    const charStart = selectionRange.from;
+    const charEnd = selectionRange.to;
+    const exactText = fullText.slice(charStart, charEnd) || selectedText;
 
     const anchor = ytype
       ? createDualAnchor(ytype, charStart, charEnd, fullText)
@@ -129,7 +131,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
     setPendingSuggestionSelection({
       start: charStart,
       end: charEnd,
-      text: selectedText,
+      text: exactText,
       anchor,
     });
   };

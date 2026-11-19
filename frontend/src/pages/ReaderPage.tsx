@@ -37,7 +37,12 @@ import * as Y from 'yjs';
 import { fetchCurrentUser } from '../api/auth';
 import { fetchNodePermissions } from '../api/permissions';
 import { useReviewStore } from '../stores/reviewStore';
-import { createDualAnchor, reconcileAnchor } from '../review/textAnchoring';
+import {
+  createDualAnchor,
+  reconcileAnchor,
+  findMarkdownSelection,
+  stripMarkdownFormatting,
+} from '../review/textAnchoring';
 import { applyUnifiedDiff, computeReplacementChange } from '../utils/diffPatcher';
 import { NewCommentModal } from '../components/review/NewCommentModal';
 import { NewSuggestionModal } from '../components/review/NewSuggestionModal';
@@ -1044,11 +1049,18 @@ export const ReaderPage: React.FC = () => {
   const userInteractedRef = useRef<boolean>(false);
   const [floatingMenuPos, setFloatingMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [readerSelectedText, setReaderSelectedText] = useState('');
+  const [readerSelectionContext, setReaderSelectionContext] = useState<{
+    blockStart?: number;
+    blockEnd?: number;
+    prefixInBlock?: string;
+    suffixInBlock?: string;
+  } | null>(null);
 
   const updateSelection = useCallback(() => {
     if (!canComment) {
       setFloatingMenuPos(null);
       setReaderSelectedText('');
+      setReaderSelectionContext(null);
       return;
     }
 
@@ -1056,6 +1068,7 @@ export const ReaderPage: React.FC = () => {
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
       setFloatingMenuPos(null);
       setReaderSelectedText('');
+      setReaderSelectionContext(null);
       return;
     }
 
@@ -1063,6 +1076,7 @@ export const ReaderPage: React.FC = () => {
     if (!text) {
       setFloatingMenuPos(null);
       setReaderSelectedText('');
+      setReaderSelectionContext(null);
       return;
     }
 
@@ -1071,6 +1085,7 @@ export const ReaderPage: React.FC = () => {
     if (!articleRef.current.contains(range.commonAncestorContainer)) {
       setFloatingMenuPos(null);
       setReaderSelectedText('');
+      setReaderSelectionContext(null);
       return;
     }
 
@@ -1081,6 +1096,50 @@ export const ReaderPage: React.FC = () => {
         left: Math.max(10, rect.left + rect.width / 2),
       });
       setReaderSelectedText(sel.toString());
+
+      const containerEl =
+        range.commonAncestorContainer.nodeType === Node.ELEMENT_NODE
+          ? (range.commonAncestorContainer as HTMLElement)
+          : range.commonAncestorContainer.parentElement;
+
+      const blockEl = containerEl?.closest?.('.cme-reader-block');
+      let selContext: {
+        blockStart?: number;
+        blockEnd?: number;
+        prefixInBlock?: string;
+        suffixInBlock?: string;
+      } | null = null;
+
+      if (blockEl) {
+        const bStartStr = blockEl.getAttribute('data-block-start');
+        const bEndStr = blockEl.getAttribute('data-block-end');
+        if (bStartStr !== null && bEndStr !== null) {
+          const blockStart = parseInt(bStartStr, 10);
+          const blockEnd = parseInt(bEndStr, 10);
+          let prefixInBlock = '';
+          let suffixInBlock = '';
+          try {
+            const preRange = window.document.createRange();
+            preRange.selectNodeContents(blockEl);
+            preRange.setEnd(range.startContainer, range.startOffset);
+            prefixInBlock = preRange.toString();
+
+            const postRange = window.document.createRange();
+            postRange.selectNodeContents(blockEl);
+            postRange.setStart(range.endContainer, range.endOffset);
+            suffixInBlock = postRange.toString();
+          } catch {
+            // fallback
+          }
+          selContext = {
+            blockStart,
+            blockEnd,
+            prefixInBlock,
+            suffixInBlock,
+          };
+        }
+      }
+      setReaderSelectionContext(selContext);
     }
   }, [canComment]);
 
@@ -1126,15 +1185,14 @@ export const ReaderPage: React.FC = () => {
     if (!document?.content || !readerSelectedText) return;
 
     const fullText = document.content;
-    const trimmed = readerSelectedText.trim();
-    let start = fullText.indexOf(trimmed);
-    if (start === -1) {
-      start = fullText.indexOf(readerSelectedText);
-    }
-    if (start === -1) {
-      start = 0;
-    }
-    const end = Math.min(fullText.length, start + (trimmed.length || readerSelectedText.length));
+    const match = findMarkdownSelection(
+      fullText,
+      readerSelectedText,
+      readerSelectionContext || undefined
+    );
+    const start = match.start;
+    const end = match.end;
+    const textToAnchor = match.exact || readerSelectedText.trim();
 
     const ydoc = new Y.Doc();
     const ytext = ydoc.getText('content');
@@ -1144,7 +1202,7 @@ export const ReaderPage: React.FC = () => {
     setPendingCommentSelection({
       start,
       end,
-      text: trimmed || readerSelectedText,
+      text: textToAnchor,
       anchor,
     });
     setFloatingMenuPos(null);
@@ -1156,15 +1214,14 @@ export const ReaderPage: React.FC = () => {
     if (!document?.content || !readerSelectedText) return;
 
     const fullText = document.content;
-    const trimmed = readerSelectedText.trim();
-    let start = fullText.indexOf(trimmed);
-    if (start === -1) {
-      start = fullText.indexOf(readerSelectedText);
-    }
-    if (start === -1) {
-      start = 0;
-    }
-    const end = Math.min(fullText.length, start + (trimmed.length || readerSelectedText.length));
+    const match = findMarkdownSelection(
+      fullText,
+      readerSelectedText,
+      readerSelectionContext || undefined
+    );
+    const start = match.start;
+    const end = match.end;
+    const textToAnchor = match.exact || readerSelectedText.trim();
 
     const ydoc = new Y.Doc();
     const ytext = ydoc.getText('content');
@@ -1174,7 +1231,7 @@ export const ReaderPage: React.FC = () => {
     setPendingSuggestionSelection({
       start,
       end,
-      text: trimmed || readerSelectedText,
+      text: textToAnchor,
       anchor,
     });
     setFloatingMenuPos(null);
@@ -1218,11 +1275,21 @@ export const ReaderPage: React.FC = () => {
       // 1. Optimistically calculate and apply the replacement to the reader document
       let anticipatedContent = currentContent;
       if (targetSugg) {
-        const change = computeReplacementChange(
+        let change = computeReplacementChange(
           currentContent,
           targetSugg.original_text,
           targetSugg.suggested_text
         );
+        if (!change && targetSugg.anchor) {
+          const rec = reconcileAnchor(targetSugg.anchor, currentContent);
+          if (rec?.range && rec.range.end > rec.range.start) {
+            change = {
+              from: rec.range.start,
+              to: rec.range.end,
+              insert: targetSugg.suggested_text,
+            };
+          }
+        }
         if (change) {
           anticipatedContent =
             currentContent.slice(0, change.from) +
@@ -2593,13 +2660,24 @@ export function renderMarkdown(
     .map((as) => as.quote)
     .filter((q): q is string => Boolean(q && q.trim().length >= 2));
 
-  const reviewQuotes = Array.from(new Set([...commentQuotes, ...suggestionQuotes]));
+  const allRawQuotes = [...commentQuotes, ...suggestionQuotes];
+  const allStrippedQuotes = allRawQuotes
+    .map((q) => stripMarkdownFormatting(q))
+    .filter((q): q is string => Boolean(q && q.trim().length >= 2));
+  const reviewQuotes = Array.from(new Set([...allRawQuotes, ...allStrippedQuotes]));
 
   const blockList: { element: React.ReactNode; start: number; end: number }[] = [];
   const addBlock = (el: React.ReactNode, startL: number, endL: number) => {
     const s = lineStarts[startL] ?? 0;
     const e = (lineStarts[endL] ?? s) + (lines[endL]?.length ?? 0);
-    blockList.push({ element: el, start: s, end: e });
+    const enrichedEl = React.isValidElement(el)
+      ? React.cloneElement(el as React.ReactElement<any>, {
+          'data-block-start': s,
+          'data-block-end': e,
+          className: `${(el.props as any)?.className || ''} cme-reader-block`.trim(),
+        })
+      : el;
+    blockList.push({ element: enrichedEl, start: s, end: e });
   };
 
   let i = 0;
@@ -3413,12 +3491,39 @@ function renderInlineFormatted(
     // 1. Inline Code `...` or ``...`` - check first so pills/math inside code are never parsed
     const codeMatch = part.match(/^(?<!`)(`+)(.*?)\1(?!`)$/);
     if (codeMatch) {
+      const codeContent = codeMatch[2];
+      let renderedCode: React.ReactNode = codeContent;
+      if (commentQuotes && commentQuotes.length > 0) {
+        for (const q of commentQuotes) {
+          if (q && q.length >= 2 && codeContent.includes(q)) {
+            const subparts = codeContent.split(q);
+            renderedCode = (
+              <>
+                {subparts.map((sp, sidx) => (
+                  <React.Fragment key={sidx}>
+                    {sp}
+                    {sidx < subparts.length - 1 && (
+                      <mark
+                        className="cme-review-comment-anchor bg-yellow-400/25 border-b-2 border-yellow-500 rounded-xs text-inherit"
+                        data-testid="reader-comment-anchor"
+                      >
+                        {q}
+                      </mark>
+                    )}
+                  </React.Fragment>
+                ))}
+              </>
+            );
+            break;
+          }
+        }
+      }
       return (
         <code
           key={idx}
           className="px-1.5 py-0.5 rounded bg-cme-bg-subtle font-mono text-[0.88em] text-pink-600 dark:text-pink-400 border border-cme-border-base"
         >
-          {codeMatch[2]}
+          {renderedCode}
         </code>
       );
     }
@@ -3844,6 +3949,33 @@ function renderInlineFormatted(
 
       const displayLabel = label || (isSameDoc ? (effectiveAnchor ? `#${effectiveAnchor}` : cleanTarget) : cleanTarget);
 
+      let renderedLabel: React.ReactNode = displayLabel;
+      if (commentQuotes && commentQuotes.length > 0) {
+        for (const q of commentQuotes) {
+          if (q && q.length >= 2 && displayLabel.includes(q)) {
+            const subparts = displayLabel.split(q);
+            renderedLabel = (
+              <>
+                {subparts.map((sp, sidx) => (
+                  <React.Fragment key={sidx}>
+                    {sp}
+                    {sidx < subparts.length - 1 && (
+                      <mark
+                        className="cme-review-comment-anchor bg-yellow-400/25 border-b-2 border-yellow-500 rounded-xs text-inherit"
+                        data-testid="reader-comment-anchor"
+                      >
+                        {q}
+                      </mark>
+                    )}
+                  </React.Fragment>
+                ))}
+              </>
+            );
+            break;
+          }
+        }
+      }
+
       // Validate link target
       const validation = validateLinkTarget(cleanTarget, currentDocMarkdown, currentDocPath);
       const isValid = validation.valid;
@@ -3865,7 +3997,7 @@ function renderInlineFormatted(
               ⚠
             </span>
             <span className="font-medium underline decoration-rose-500/60 underline-offset-2">
-              {displayLabel}
+              {renderedLabel}
             </span>
           </span>
         );
@@ -3881,7 +4013,7 @@ function renderInlineFormatted(
             className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
             title={`External link: ${cleanTarget} (Click to open)`}
           >
-            <span>{displayLabel}</span>
+            <span>{renderedLabel}</span>
             <span className="text-[10px] opacity-70">↗</span>
           </a>
         );
@@ -3938,7 +4070,7 @@ function renderInlineFormatted(
               }
             }}
           >
-            <span>{displayLabel}</span>
+            <span>{renderedLabel}</span>
             <span className="text-[10px] opacity-70">↓</span>
           </a>
         );
@@ -3955,7 +4087,7 @@ function renderInlineFormatted(
             className="text-cme-primary hover:underline font-medium inline-flex items-center gap-0.5 cursor-pointer"
             title={`Open file: ${cleanTarget} in new tab`}
           >
-            <span>{displayLabel}</span>
+            <span>{renderedLabel}</span>
             <span className="text-[10px] opacity-70">↗</span>
           </a>
         );
@@ -3994,7 +4126,7 @@ function renderInlineFormatted(
             }
           }}
         >
-          <span>{displayLabel}</span>
+          <span>{renderedLabel}</span>
           <span className="text-[10px] opacity-70">↗</span>
         </Link>
       );
@@ -4066,7 +4198,8 @@ function renderInlineFormatted(
             currentDocTarget,
             currentDocMarkdown,
             currentDocPath,
-            inQuote
+            inQuote,
+            commentQuotes
           )}
         </del>
       );
@@ -4086,7 +4219,8 @@ function renderInlineFormatted(
               currentDocTarget,
               currentDocMarkdown,
               currentDocPath,
-              inQuote
+              inQuote,
+              commentQuotes
             )}
           </em>
         </strong>
@@ -4106,7 +4240,8 @@ function renderInlineFormatted(
             currentDocTarget,
             currentDocMarkdown,
             currentDocPath,
-            inQuote
+            inQuote,
+            commentQuotes
           )}
         </strong>
       );
@@ -4125,7 +4260,8 @@ function renderInlineFormatted(
             currentDocTarget,
             currentDocMarkdown,
             currentDocPath,
-            inQuote
+            inQuote,
+            commentQuotes
           )}
         </em>
       );
