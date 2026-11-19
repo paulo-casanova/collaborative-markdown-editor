@@ -351,7 +351,7 @@ export const ReaderPage: React.FC = () => {
       }
     };
   }, []);
-  const [showReviews, setShowReviews] = useState(false);
+  const [showReviews, setShowReviews] = useState(true);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
   const [widthMode, setWidthMode] = useState<WidthMode>('standard');
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);

@@ -89,7 +89,7 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
   filter: 'all',
   showResolved: true,
   showInTextReviews: true,
-  isSidebarOpen: false,
+  isSidebarOpen: true,
   sidebarWidth: getInitialReviewSidebarWidth(),
   suggestingMode: false,
   isLoading: false,

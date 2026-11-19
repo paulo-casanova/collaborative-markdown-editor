@@ -115,7 +115,7 @@ const getInitialAgentCodeWrap = (): boolean => {
 const uiStore = createStore<UIState>((set) => ({
   sidebarOpen: true,
   sidebarWidth: getInitialSidebarWidth(),
-  reviewSidebarOpen: false,
+  reviewSidebarOpen: true,
   dialogSidecarOpen: false,
   dialogSidecarWidth: getInitialDialogSidecarWidth(),
   viewMode:
