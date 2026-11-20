@@ -12,11 +12,11 @@ export async function tagCompletionSource(
   const match = context.matchBefore(/#[a-zA-Z0-9_\-\/]*/);
   if (!match) return null;
 
-  // Do not autocomplete markdown headings:
-  // Ensure the '#' is preceded by whitespace, start of line, or open punctuation
+  // Do not autocomplete markdown headings or link anchors:
+  // Ensure the '#' is preceded by whitespace or start of line (disallow inside (#... or link targets)
   if (match.from > 0) {
     const prevChar = context.state.doc.sliceString(match.from - 1, match.from);
-    if (!/\s|[([{"'`]/.test(prevChar)) {
+    if (!/\s/.test(prevChar)) {
       return null;
     }
   }

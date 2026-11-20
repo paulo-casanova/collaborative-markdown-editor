@@ -635,6 +635,15 @@ ExtractedEntities EntityExtractor::extract_all(std::string_view content) {
                 }
             }
 
+            // Skip markdown link destination ](target) so URLs/anchors are never scanned for mentions or tags
+            if (!is_embed && !is_wiki && line[i] == ']' && i + 1 < line.size() && line[i + 1] == '(') {
+                size_t close_paren = line.find(')', i + 2);
+                if (close_paren != std::string_view::npos) {
+                    i = close_paren + 1;
+                    continue;
+                }
+            }
+
             // Check for @mention
             if (line[i] == '@') {
                 bool valid_prefix = (i == 0) || is_valid_mention_prev_char(line[i - 1]);
@@ -677,7 +686,7 @@ ExtractedEntities EntityExtractor::extract_all(std::string_view content) {
 
             // Check for #tag
             if (line[i] == '#') {
-                bool valid_prefix = (i == 0) || (line[i - 1] == ' ' || line[i - 1] == '\t' || line[i - 1] == '(' || line[i - 1] == '[');
+                bool valid_prefix = (i == 0) || (line[i - 1] == ' ' || line[i - 1] == '\t');
                 // Tag must not be a markdown heading, must start with letter/number/underscore, and not be pure digits (#123)
                 if (valid_prefix && (i + 1 < line.size()) && line[i + 1] != ' ' && line[i + 1] != '#') {
                     size_t t_start = i + 1;

@@ -75,7 +75,9 @@ int main() {
         std::string tag_markdown =
             "# Root Heading\n\n"
             "Here is #cme and a nested tag #project/core, plus #v1-release.\n"
-            "Parentheses (#important) should work.\n"
+            "Tags with space in parentheses (see #important) should work.\n"
+            "Direct parentheses like (#not_a_tag) should NOT be tags.\n"
+            "Markdown links like [link](#section-anchor) or [foo](#bar) should NOT be tags.\n"
             "Headings like # Heading should NOT be tags.\n"
             "Numbers like #123 should NOT be tags.\n"
             "Code spans like `#not_a_tag` should NOT be tags.\n";
@@ -88,6 +90,12 @@ int main() {
         assert(tags[1].tag == "project/core");
         assert(tags[2].tag == "v1-release");
         assert(tags[3].tag == "important");
+
+        // Verify markdown link anchors and direct parentheses are never extracted as tags
+        std::string link_tag_markdown =
+            "Check [anchor](#bar) and [other](doc.md#heading) and directly attached (#foo) and [#bracketed].\n";
+        auto link_tags = cme::document::EntityExtractor::extract_tags(link_tag_markdown);
+        assert(link_tags.empty());
 
         // Frontmatter Tags (Obsidian YAML metadata)
         std::string fm_markdown =

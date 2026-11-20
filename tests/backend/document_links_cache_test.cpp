@@ -197,7 +197,7 @@ int main() {
     // Call repopulate_links_index
     auto repop_res = doc_service->repopulate_links_index();
     assert(repop_res.has_value());
-    assert(repop_res.value() >= 2); // At least target_doc and ref_doc
+    assert(repop_res.value() >= 1); // At least ref_doc has links
 
     // Verify document_links has entries again
     {

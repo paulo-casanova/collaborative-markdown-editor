@@ -151,4 +151,38 @@ describe('TagsView & Tags Autocomplete', () => {
     const res = await tagCompletionSource(mockContextNoDelimiter);
     expect(res).toBeNull();
   });
+
+  it('tagCompletionSource ignores # in markdown links like [foo](#bar) and direct parentheses (#foo)', async () => {
+    // [link](#bar)
+    const mockLinkContext: any = {
+      matchBefore: (regex: RegExp) => {
+        const text = '[link](#bar';
+        const match = regex.exec(text);
+        return match ? { from: 7, to: 11, text: '#bar' } : null;
+      },
+      state: {
+        doc: {
+          sliceString: (from: number, to: number) => '[link](#bar'.slice(from, to),
+        },
+      },
+    };
+    const linkRes = await tagCompletionSource(mockLinkContext);
+    expect(linkRes).toBeNull();
+
+    // Direct parentheses (#foo)
+    const mockParenContext: any = {
+      matchBefore: (regex: RegExp) => {
+        const text = '(#foo';
+        const match = regex.exec(text);
+        return match ? { from: 1, to: 5, text: '#foo' } : null;
+      },
+      state: {
+        doc: {
+          sliceString: (from: number, to: number) => '(#foo'.slice(from, to),
+        },
+      },
+    };
+    const parenRes = await tagCompletionSource(mockParenContext);
+    expect(parenRes).toBeNull();
+  });
 });
