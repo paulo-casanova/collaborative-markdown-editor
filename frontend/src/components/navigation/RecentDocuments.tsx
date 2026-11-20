@@ -44,6 +44,7 @@ export const RecentDocuments: React.FC = () => {
     queryKey: ['recent-documents', user?.id ?? 'anon'],
     queryFn: () => fetchRecentDocuments(30),
     staleTime: 5000,
+    refetchInterval: 10000,
     retry: 1,
   });
 

@@ -46,6 +46,7 @@ export const TrashPage: React.FC = () => {
     onSuccess: (restoredDoc) => {
       queryClient.invalidateQueries({ queryKey: ['trash-items'] });
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       if (confirm(`Document "${restoredDoc.title || restoredDoc.path}" restored successfully! Open now?`)) {
         const baseDocRoute = viewMode === 'read' ? '/docs' : '/documents';
@@ -61,6 +62,8 @@ export const TrashPage: React.FC = () => {
     mutationFn: (id: string) => purgeTrash(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['trash-items'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
     },
     onError: (err: any) => {
       alert(`Failed to purge item: ${err.message || 'Unknown error'}`);

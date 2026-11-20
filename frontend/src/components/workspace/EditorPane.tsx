@@ -659,11 +659,63 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleInput, setTitleInput] = useState('');
 
+  const recentsDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastOptimisticRecentsRef = useRef<number>(0);
+
+  const scheduleRecentsUpdate = useCallback(
+    (doc: { id: string; path: string; title?: string; is_bundle?: boolean }) => {
+      const now = Date.now();
+      // Optimistically push to top of recents cache during active typing (throttled to 2s)
+      if (now - lastOptimisticRecentsRef.current > 2000) {
+        lastOptimisticRecentsRef.current = now;
+        const nowIso = new Date().toISOString();
+        queryClient.setQueriesData({ queryKey: ['recent-documents'] }, (old: any) => {
+          if (!Array.isArray(old)) return old;
+          const existing = old.find((item) => item.id === doc.id);
+          const updatedItem = existing
+            ? { ...existing, updated_at: nowIso, title: doc.title || existing.title, path: doc.path }
+            : {
+                id: doc.id,
+                path: doc.path,
+                title: doc.title || doc.path,
+                owner_user_id: '',
+                created_at: nowIso,
+                updated_at: nowIso,
+                is_bundle: Boolean(doc.is_bundle),
+              };
+          return [updatedItem, ...old.filter((item) => item.id !== doc.id)];
+        });
+      }
+
+      // Backend persistence worker flushes to DB after 5s idle delay.
+      // Schedule refetch at ~5.5s to get authoritative database updated_at.
+      if (recentsDebounceTimerRef.current) {
+        clearTimeout(recentsDebounceTimerRef.current);
+      }
+      recentsDebounceTimerRef.current = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+        queryClient.invalidateQueries({ queryKey: ['recents'] });
+      }, 5500);
+    },
+    [queryClient]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (recentsDebounceTimerRef.current) {
+        clearTimeout(recentsDebounceTimerRef.current);
+      }
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
+    };
+  }, [queryClient]);
+
   const renameMutation = useMutation({
     mutationFn: ({ id, newPath, title }: { id: string; newPath: string; title?: string }) =>
       moveDocument(id, newPath, title),
     onSuccess: (updatedDoc) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       queryClient.invalidateQueries({ queryKey: ['document'] });
       queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
@@ -681,6 +733,7 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
     mutationFn: (id: string) => convertDocument(id),
     onSuccess: (updatedDoc) => {
       queryClient.invalidateQueries({ queryKey: ['workspace-tree'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
       queryClient.invalidateQueries({ queryKey: ['recents'] });
       queryClient.invalidateQueries({ queryKey: ['document'] });
       queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
@@ -1103,6 +1156,14 @@ export const EditorPane: React.FC<EditorPaneProps> = ({
               setLiveContent(content);
               if (document?.path) {
                 updateCachedDocumentHeadings(document.path, content);
+              }
+              if (document?.id && document?.path) {
+                scheduleRecentsUpdate({
+                  id: document.id,
+                  path: document.path,
+                  title: document.title,
+                  is_bundle: document.is_bundle,
+                });
               }
               if (document?.id) {
                 queryClient.setQueriesData({ queryKey: ['doc-reader'] }, (old: any) => {

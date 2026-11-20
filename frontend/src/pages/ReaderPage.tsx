@@ -749,6 +749,8 @@ export const ReaderPage: React.FC = () => {
 
             queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
             queryClient.invalidateQueries({ queryKey: ['document'] });
+            queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+            queryClient.invalidateQueries({ queryKey: ['recents'] });
             setHasNewVersion(true);
             setRefreshReason('content');
             return true;
@@ -821,6 +823,8 @@ export const ReaderPage: React.FC = () => {
 
           queryClient.invalidateQueries({ queryKey: ['doc-reader'] });
           queryClient.invalidateQueries({ queryKey: ['document'] });
+          queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+          queryClient.invalidateQueries({ queryKey: ['recents'] });
           queryClient.invalidateQueries({ queryKey: ['reader-suggestions', targetDocId] });
           setHasNewVersion(false);
           setRefreshReason(null);
@@ -1383,6 +1387,8 @@ export const ReaderPage: React.FC = () => {
         queryClient.invalidateQueries({ queryKey: ['document', effectiveDocId] });
       }
       queryClient.invalidateQueries({ queryKey: ['document-by-path'] });
+      queryClient.invalidateQueries({ queryKey: ['recent-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['recents'] });
 
       // 6. Clear any stale new version banner
       setHasNewVersion(false);
