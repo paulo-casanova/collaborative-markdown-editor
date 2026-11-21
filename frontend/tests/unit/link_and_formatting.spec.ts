@@ -753,9 +753,12 @@ Deep details.`;
         const thCells = dom.querySelectorAll('thead th');
         expect(thCells.length).toBe(3); // 1 row handle + 2 data headers
         expect(thCells[1].className).toContain('whitespace-nowrap');
+        expect(thCells[1].className).toContain('pt-7');
         const colControls = thCells[1].querySelector('div.absolute');
         expect(colControls).not.toBeNull();
         expect(colControls?.className).toContain('absolute');
+        expect(colControls?.className).toContain('left-2');
+        expect(colControls?.className).toContain('top-1.5');
         expect(colControls?.className).toContain('cme-col-controls');
         expect((colControls as HTMLElement)?.style.backgroundColor).toBe('var(--cme-bg-surface)');
 

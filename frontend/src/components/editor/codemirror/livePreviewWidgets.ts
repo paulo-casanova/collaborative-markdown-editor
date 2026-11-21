@@ -1684,16 +1684,18 @@ export class TableBlockWidget extends WidgetType {
 
     // Leading empty TH for row action handles
     const thRowGrip = document.createElement('th');
-    thRowGrip.className =
-      'w-20 px-1 py-2 text-center text-xs border-r border-cme-border-base/40 text-cme-text-muted select-none';
+    thRowGrip.className = `w-20 px-1 ${
+      this.isEditable ? 'pt-7 pb-2' : 'py-2'
+    } text-center text-xs border-r border-cme-border-base/40 text-cme-text-muted select-none align-bottom`;
     thRowGrip.innerHTML = '<span class="text-[10px] opacity-40">#</span>';
     trHead.appendChild(thRowGrip);
 
     tableData.headers.forEach((header, colIdx) => {
       const th = document.createElement('th');
       const align = tableData.alignments[colIdx] || 'left';
-      th.className =
-        'px-3 py-2 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0 relative group/col whitespace-nowrap';
+      th.className = `px-3 ${
+        this.isEditable ? 'pt-7 pb-2' : 'py-2'
+      } text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0 relative group/col whitespace-nowrap align-bottom`;
       th.style.textAlign = align;
 
       // Flex wrapper for content
@@ -1714,10 +1716,10 @@ export class TableBlockWidget extends WidgetType {
       th.appendChild(colWrapper);
 
       if (this.isEditable) {
-        // Column controls (hover visible floating overlay with solid opaque background)
+        // Column controls (hover visible floating overlay with solid opaque background above title, lined up on left)
         const colControls = document.createElement('div');
         colControls.className =
-          'cme-col-controls opacity-0 group-hover/col:opacity-100 pointer-events-none group-hover/col:pointer-events-auto absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 bg-cme-bg-surface border border-cme-border-strong shadow-md rounded-lg px-1 py-0.5 transition-opacity z-20';
+          'cme-col-controls opacity-0 group-hover/col:opacity-100 pointer-events-none group-hover/col:pointer-events-auto absolute left-2 top-1.5 flex items-center gap-0.5 bg-cme-bg-surface border border-cme-border-strong shadow-md rounded-lg px-1 py-0.5 transition-opacity z-20';
         colControls.style.backgroundColor = 'var(--cme-bg-surface)';
         colControls.style.borderColor = 'var(--cme-border-strong)';
 
