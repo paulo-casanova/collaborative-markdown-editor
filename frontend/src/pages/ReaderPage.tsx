@@ -3197,7 +3197,7 @@ export function renderMarkdown(
                   {headerCells.map((header, colIdx) => (
                     <th
                       key={colIdx}
-                      className="px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0"
+                      className="px-4 py-2.5 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0 whitespace-nowrap"
                       style={{ textAlign: alignments[colIdx] || 'left' }}
                     >
                       {renderInlineFormatted(header, currentDocTarget, currentDocMarkdown, currentDocPath, false, reviewQuotes)}

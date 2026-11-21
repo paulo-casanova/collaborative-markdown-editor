@@ -570,6 +570,14 @@ mark.cme-reader-search-match.cme-reader-search-match-active {
   outline: 2px solid #f97316;
 }
 
+/* CME Markdown Table Header Formatting */
+.cme-table-block-node table thead th,
+article.prose table thead th,
+.prose table thead th {
+  white-space: nowrap;
+}
+
+
 
 
 

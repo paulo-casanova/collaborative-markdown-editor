@@ -749,6 +749,14 @@ Deep details.`;
         expect(dom.querySelector('button[title="Move row up"]')).not.toBeNull();
         expect(dom.querySelector('[title="Add new row at the bottom"]')).not.toBeNull();
 
+        // Verify table headers have whitespace-nowrap and colControls are positioned absolute
+        const thCells = dom.querySelectorAll('thead th');
+        expect(thCells.length).toBe(3); // 1 row handle + 2 data headers
+        expect(thCells[1].className).toContain('whitespace-nowrap');
+        const colControls = thCells[1].querySelector('div.absolute');
+        expect(colControls).not.toBeNull();
+        expect(colControls?.className).toContain('absolute');
+
         // Read-only / Review mode (isEditable: false)
         const roWidget = new TableBlockWidget(raw, 0, raw.length, '/test/doc.md', false);
         expect(roWidget.isEditable).toBe(false);

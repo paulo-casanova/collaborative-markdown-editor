@@ -1693,30 +1693,31 @@ export class TableBlockWidget extends WidgetType {
       const th = document.createElement('th');
       const align = tableData.alignments[colIdx] || 'left';
       th.className =
-        'px-3 py-2 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0 relative group/col';
+        'px-3 py-2 text-xs font-semibold tracking-wider border-r border-cme-border-base/40 last:border-r-0 relative group/col whitespace-nowrap';
       th.style.textAlign = align;
 
-      // Flex wrapper for content and hover controls
+      // Flex wrapper for content
       const colWrapper = document.createElement('div');
-      colWrapper.className = 'flex items-center justify-between gap-1';
+      colWrapper.className = 'flex items-center min-w-0';
 
       // Header text container (interactive cell)
       const contentSpan = document.createElement('div');
       contentSpan.className = this.isEditable
-        ? 'flex-1 min-h-[1.25rem] cursor-text'
-        : 'flex-1 min-h-[1.25rem] select-text';
+        ? 'flex-1 min-h-[1.25rem] cursor-text whitespace-nowrap'
+        : 'flex-1 min-h-[1.25rem] select-text whitespace-nowrap';
       contentSpan.dataset.raw = header;
       renderCellContent(contentSpan, header, view, this.docPath);
       if (this.isEditable) {
         bindCellListeners(contentSpan, -1, colIdx);
       }
       colWrapper.appendChild(contentSpan);
+      th.appendChild(colWrapper);
 
       if (this.isEditable) {
-        // Column controls (hover visible)
+        // Column controls (hover visible floating overlay, does not push header text or cause premature wrapping)
         const colControls = document.createElement('div');
         colControls.className =
-          'opacity-0 group-hover/col:opacity-100 flex items-center gap-0.5 transition-opacity ml-1';
+          'opacity-0 group-hover/col:opacity-100 pointer-events-none group-hover/col:pointer-events-auto absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 bg-cme-bg-surface/95 border border-cme-border-base/80 shadow-xs rounded px-1 py-0.5 transition-opacity z-10';
 
         // Move column left button
         const moveLeftBtn = document.createElement('button');
@@ -1807,9 +1808,8 @@ export class TableBlockWidget extends WidgetType {
           colControls.appendChild(delColBtn);
         }
 
-        colWrapper.appendChild(colControls);
+        th.appendChild(colControls);
       }
-      th.appendChild(colWrapper);
       trHead.appendChild(th);
     });
     thead.appendChild(trHead);
