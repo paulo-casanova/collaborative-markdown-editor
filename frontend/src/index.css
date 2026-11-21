@@ -577,6 +577,26 @@ article.prose table thead th,
   white-space: nowrap;
 }
 
+/* CME Table Column Controls Floating Overlay */
+.cme-col-controls {
+  background-color: var(--cme-bg-surface, #ffffff) !important;
+  border: 1px solid var(--cme-border-strong, #cbd5e1) !important;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1) !important;
+}
+
+[data-theme="dark"] .cme-col-controls {
+  background-color: var(--cme-bg-surface, #1e293b) !important;
+  border-color: var(--cme-border-strong, #475569) !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.45) !important;
+}
+
+[data-theme="sepia"] .cme-col-controls {
+  background-color: var(--cme-bg-surface, #fff8e8) !important;
+  border-color: var(--cme-border-strong, #cbba94) !important;
+  box-shadow: 0 4px 6px -1px rgba(61, 43, 31, 0.12) !important;
+}
+
+
 
 
 

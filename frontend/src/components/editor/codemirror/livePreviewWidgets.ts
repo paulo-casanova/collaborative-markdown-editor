@@ -1427,16 +1427,16 @@ let pendingTableFocus: PendingTableFocus | null = null;
 
 const TABLE_ICONS = {
   table: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M3 15h18"/></svg>`,
-  plus: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
-  trash: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
-  raw: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
-  alignLeft: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"></line><line x1="15" y1="12" x2="3" y2="12"></line><line x1="17" y1="18" x2="3" y2="18"></line></svg>`,
-  alignCenter: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="6"></line><line x1="21" y1="12" x2="3" y2="12"></line><line x1="18" y1="18" x2="6" y2="18"></line></svg>`,
-  alignRight: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="12" x2="9" y2="12"></line><line x1="21" y1="18" x2="7" y2="18"></line></svg>`,
-  chevronLeft: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`,
-  chevronRight: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`,
-  chevronUp: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`,
-  chevronDown: `<svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`,
+  plus: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>`,
+  trash: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>`,
+  raw: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>`,
+  alignLeft: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"></line><line x1="15" y1="12" x2="3" y2="12"></line><line x1="17" y1="18" x2="3" y2="18"></line></svg>`,
+  alignCenter: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="6"></line><line x1="21" y1="12" x2="3" y2="12"></line><line x1="18" y1="18" x2="6" y2="18"></line></svg>`,
+  alignRight: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="12" x2="9" y2="12"></line><line x1="21" y1="18" x2="7" y2="18"></line></svg>`,
+  chevronLeft: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>`,
+  chevronRight: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>`,
+  chevronUp: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`,
+  chevronDown: `<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`,
 };
 
 export class TableBlockWidget extends WidgetType {
@@ -1714,17 +1714,19 @@ export class TableBlockWidget extends WidgetType {
       th.appendChild(colWrapper);
 
       if (this.isEditable) {
-        // Column controls (hover visible floating overlay, does not push header text or cause premature wrapping)
+        // Column controls (hover visible floating overlay with solid opaque background)
         const colControls = document.createElement('div');
         colControls.className =
-          'opacity-0 group-hover/col:opacity-100 pointer-events-none group-hover/col:pointer-events-auto absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 bg-cme-bg-surface/95 border border-cme-border-base/80 shadow-xs rounded px-1 py-0.5 transition-opacity z-10';
+          'cme-col-controls opacity-0 group-hover/col:opacity-100 pointer-events-none group-hover/col:pointer-events-auto absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 bg-cme-bg-surface border border-cme-border-strong shadow-md rounded-lg px-1 py-0.5 transition-opacity z-20';
+        colControls.style.backgroundColor = 'var(--cme-bg-surface)';
+        colControls.style.borderColor = 'var(--cme-border-strong)';
 
         // Move column left button
         const moveLeftBtn = document.createElement('button');
         moveLeftBtn.type = 'button';
         moveLeftBtn.className =
-          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
-          (colIdx === 0 ? ' opacity-20 cursor-not-allowed' : '');
+          'p-1 rounded hover:bg-cme-bg-hover text-cme-text-base hover:text-cme-primary transition-colors' +
+          (colIdx === 0 ? ' opacity-20 cursor-not-allowed pointer-events-none' : '');
         moveLeftBtn.title = 'Move column left';
         moveLeftBtn.innerHTML = TABLE_ICONS.chevronLeft;
         if (colIdx === 0) {
@@ -1742,8 +1744,8 @@ export class TableBlockWidget extends WidgetType {
         const moveRightBtn = document.createElement('button');
         moveRightBtn.type = 'button';
         moveRightBtn.className =
-          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors' +
-          (colIdx === colCount - 1 ? ' opacity-20 cursor-not-allowed' : '');
+          'p-1 rounded hover:bg-cme-bg-hover text-cme-text-base hover:text-cme-primary transition-colors' +
+          (colIdx === colCount - 1 ? ' opacity-20 cursor-not-allowed pointer-events-none' : '');
         moveRightBtn.title = 'Move column right';
         moveRightBtn.innerHTML = TABLE_ICONS.chevronRight;
         if (colIdx === colCount - 1) {
@@ -1761,7 +1763,7 @@ export class TableBlockWidget extends WidgetType {
         const alignBtn = document.createElement('button');
         alignBtn.type = 'button';
         alignBtn.className =
-          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
+          'p-1 rounded hover:bg-cme-bg-hover text-cme-text-base hover:text-cme-primary transition-colors';
         alignBtn.title = `Alignment: ${align} (click to cycle)`;
         alignBtn.innerHTML =
           align === 'center'
@@ -1778,11 +1780,16 @@ export class TableBlockWidget extends WidgetType {
         });
         colControls.appendChild(alignBtn);
 
+        // Divider between reorder/align and insert/delete
+        const divider = document.createElement('div');
+        divider.className = 'h-3.5 w-[1px] bg-cme-border-base mx-0.5 flex-shrink-0';
+        colControls.appendChild(divider);
+
         // Insert column left button (+)
         const insertColBtn = document.createElement('button');
         insertColBtn.type = 'button';
         insertColBtn.className =
-          'p-0.5 rounded hover:bg-cme-bg-hover text-cme-text-muted hover:text-cme-text-base transition-colors';
+          'p-1 rounded hover:bg-cme-bg-hover text-cme-text-base hover:text-cme-primary transition-colors';
         insertColBtn.title = 'Insert column left';
         insertColBtn.innerHTML = TABLE_ICONS.plus;
         insertColBtn.addEventListener('click', (e) => {
@@ -1797,7 +1804,7 @@ export class TableBlockWidget extends WidgetType {
           const delColBtn = document.createElement('button');
           delColBtn.type = 'button';
           delColBtn.className =
-            'p-0.5 rounded hover:bg-rose-500/10 text-cme-text-muted hover:text-rose-500 transition-colors';
+            'p-1 rounded hover:bg-rose-500/10 text-cme-text-base hover:text-rose-600 dark:hover:text-rose-400 transition-colors';
           delColBtn.title = 'Delete column';
           delColBtn.innerHTML = TABLE_ICONS.trash;
           delColBtn.addEventListener('click', (e) => {
