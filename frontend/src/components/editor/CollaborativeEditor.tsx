@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { EditorView, ViewPlugin, keymap, lineNumbers } from '@codemirror/view';
 import { Annotation, Compartment, EditorState, Extension, Prec, Text } from '@codemirror/state';
+import {
+  search,
+  searchKeymap,
+  highlightSelectionMatches,
+  openSearchPanel,
+} from '@codemirror/search';
 import { markdown, insertNewlineContinueMarkup, deleteMarkupBackward } from '@codemirror/lang-markdown';
 import {
   defaultKeymap,
@@ -568,6 +574,22 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     });
   }, [showLineNumbers]);
 
+  // Global shortcut to open Find in document (Ctrl+F / Cmd+F)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        const view = adapterRef.current?.getView?.();
+        if (view) {
+          e.preventDefault();
+          view.focus();
+          openSearchPanel(view);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Mount CodeMirror 6 EditorView
   useEffect(() => {
     if (!editorContainerRef.current) return;
@@ -661,6 +683,12 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
           return false;
         },
       },
+      {
+        key: 'Mod-f',
+        run: openSearchPanel,
+        scope: 'editor',
+      },
+      ...searchKeymap,
       ...(provider ? yUndoManagerKeymap : historyKeymap),
       ...defaultKeymap,
       indentWithTab,
@@ -669,6 +697,8 @@ export const CollaborativeEditor: React.FC<CollaborativeEditorProps> = ({
     const extensions: Extension[] = [
       lineNumbersCompartmentRef.current.of(showLineNumbers ? lineNumbers() : []),
       markdown({ addKeymap: false }),
+      search({ top: true }),
+      highlightSelectionMatches(),
       createMentionAutocompleteExtension(),
       createLivePreviewPlugin(isDark, documentPath, editable),
       createInlineReviewPlugin(provider, isDark, canComment),

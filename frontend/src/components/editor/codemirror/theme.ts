@@ -246,4 +246,66 @@ export const cmeEditorTheme = EditorView.theme({
     opacity: '0.9',
     color: 'rgba(255, 255, 255, 0.9) !important',
   },
+
+  // CodeMirror Search Panel
+  '.cm-panel.cm-search': {
+    backgroundColor: 'var(--cme-bg-surface, #ffffff) !important',
+    color: 'var(--cme-text-base, #111827) !important',
+    borderBottom: '1px solid var(--cme-border-base, rgba(0, 0, 0, 0.1)) !important',
+    padding: '0.5rem 0.75rem !important',
+    fontSize: '0.8125rem !important',
+    fontFamily: 'inherit !important',
+    display: 'flex !important',
+    flexWrap: 'wrap !important',
+    alignItems: 'center !important',
+    gap: '0.375rem !important',
+  },
+  '.cm-panel.cm-search .cm-textfield': {
+    backgroundColor: 'var(--cme-bg-subtle, #f3f4f6) !important',
+    color: 'var(--cme-text-base, #111827) !important',
+    border: '1px solid var(--cme-border-base, #e5e7eb) !important',
+    borderRadius: '0.375rem !important',
+    padding: '0.25rem 0.5rem !important',
+    fontSize: '0.8125rem !important',
+    outline: 'none !important',
+  },
+  '.cm-panel.cm-search .cm-textfield:focus': {
+    borderColor: 'var(--cme-primary, #3b82f6) !important',
+  },
+  '.cm-panel.cm-search .cm-button': {
+    backgroundColor: 'var(--cme-bg-subtle, #f3f4f6) !important',
+    color: 'var(--cme-text-base, #111827) !important',
+    border: '1px solid var(--cme-border-base, #e5e7eb) !important',
+    borderRadius: '0.375rem !important',
+    padding: '0.25rem 0.5rem !important',
+    fontSize: '0.75rem !important',
+    cursor: 'pointer !important',
+    backgroundImage: 'none !important',
+  },
+  '.cm-panel.cm-search .cm-button:hover': {
+    backgroundColor: 'var(--cme-bg-hover, #e5e7eb) !important',
+  },
+  '.cm-panel.cm-search label': {
+    fontSize: '0.75rem !important',
+    color: 'var(--cme-text-muted, #6b7280) !important',
+    display: 'inline-flex !important',
+    alignItems: 'center !important',
+    gap: '0.25rem !important',
+    cursor: 'pointer !important',
+  },
+  '.cm-panel.cm-search input[type="checkbox"]': {
+    accentColor: 'var(--cme-primary, #3b82f6) !important',
+  },
+  '.cm-searchMatch': {
+    backgroundColor: 'rgba(250, 204, 21, 0.4) !important',
+    borderRadius: '2px !important',
+  },
+  '.cm-searchMatch.cm-searchMatch-selected': {
+    backgroundColor: 'rgba(249, 115, 22, 0.6) !important',
+    outline: '1px solid #ea580c !important',
+    borderRadius: '2px !important',
+  },
+  '.cm-selectionMatch': {
+    backgroundColor: 'rgba(147, 197, 253, 0.3) !important',
+  },
 });

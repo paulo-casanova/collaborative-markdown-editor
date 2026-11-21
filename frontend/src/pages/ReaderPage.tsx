@@ -22,8 +22,10 @@ import {
   Lock,
   FolderTree,
   Archive,
+  Search,
   X,
 } from 'lucide-react';
+import { ReaderFindBar } from '../components/reader/ReaderFindBar';
 import { useNavigationStore } from '../stores/navigationStore';
 import katex from 'katex';
 import hljs from 'highlight.js';
@@ -354,11 +356,24 @@ export const ReaderPage: React.FC = () => {
   const [showReviews, setShowReviews] = useState(true);
   const [fontMode, setFontMode] = useState<FontMode>('serif');
   const [widthMode, setWidthMode] = useState<WidthMode>('standard');
+  const [showFindBar, setShowFindBar] = useState(false);
   const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [linkValVer, setLinkValVer] = useState(0);
   const [hasNewVersion, setHasNewVersion] = useState(false);
   const [refreshReason, setRefreshReason] = useState<'content' | 'comments' | 'all' | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Global shortcut to toggle Find in document (Ctrl+F / Cmd+F)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        setShowFindBar(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   useEffect(() => {
     return subscribeLinkValidation(() => {
@@ -2125,6 +2140,21 @@ export const ReaderPage: React.FC = () => {
               )}
             </button>
 
+            {/* Find in Document Button (Ctrl+F) */}
+            <button
+              onClick={() => setShowFindBar((prev) => !prev)}
+              className={`p-1.5 rounded-lg border transition-colors ${
+                showFindBar
+                  ? 'bg-cme-primary text-white border-cme-primary shadow-sm'
+                  : 'border-cme-border-base bg-cme-bg-surface text-cme-text-muted hover:text-cme-text-base hover:bg-cme-bg-hover'
+              }`}
+              title="Find in document (Ctrl+F)"
+              data-testid="reader-find-toggle-btn"
+            >
+              <Search className="w-3.5 h-3.5" />
+              <span className="sr-only">Find in document</span>
+            </button>
+
             {/* Review Overlay Toggle */}
             <button
               onClick={handleToggleReviews}
@@ -2275,6 +2305,14 @@ export const ReaderPage: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {/* In-Document Find Bar */}
+      <ReaderFindBar
+        isOpen={showFindBar}
+        onClose={() => setShowFindBar(false)}
+        containerRef={scrollContainerRef}
+        contentRootRef={articleRef}
+      />
 
       {/* Main Reading Area with Right Sticky Table of Contents */}
       <div className={`${containerWidthClass} px-4 md:px-8 pt-8 flex gap-8 items-start`}>

@@ -21,6 +21,7 @@ import {
   Link2,
   Undo,
   Redo,
+  Search,
   MessageSquare,
   GitPullRequest,
   Eye,
@@ -197,6 +198,23 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
         title="Redo (Ctrl+Y)"
       >
         <Redo className="w-3.5 h-3.5" />
+      </button>
+
+      {divider}
+
+      {/* Find in Document */}
+      <button
+        type="button"
+        onClick={() => {
+          if (editor?.openFind) {
+            editor.openFind();
+          }
+        }}
+        className={btnClass(false)}
+        title="Find in document (Ctrl+F)"
+        data-testid="toolbar-find-btn"
+      >
+        <Search className="w-3.5 h-3.5" />
       </button>
 
       {divider}

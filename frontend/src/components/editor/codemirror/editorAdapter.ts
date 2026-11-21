@@ -1,5 +1,6 @@
 import { EditorView } from '@codemirror/view';
 import { undo as cmUndo, redo as cmRedo } from '@codemirror/commands';
+import { openSearchPanel, closeSearchPanel } from '@codemirror/search';
 
 export class CodeMirrorEditorAdapter {
   private view: EditorView;
@@ -431,6 +432,14 @@ export class CodeMirrorEditorAdapter {
       changes: { from: sel.from, to: sel.to, insert: table },
     });
     this.view.focus();
+  }
+
+  openFind() {
+    openSearchPanel(this.view);
+  }
+
+  closeFind() {
+    closeSearchPanel(this.view);
   }
 
   private toggleLinePrefix(prefix: string) {

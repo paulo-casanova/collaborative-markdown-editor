@@ -546,5 +546,30 @@ pre > code.hljs {
   color: #cbd5e1;
 }
 
+/* CME Reader In-Document Search Highlights */
+mark.cme-reader-search-match {
+  background-color: rgba(250, 204, 21, 0.45);
+  color: inherit;
+  border-radius: 2px;
+  padding: 1px 0;
+}
+
+mark.cme-reader-search-match.cme-reader-search-match-active {
+  background-color: rgba(249, 115, 22, 0.7);
+  outline: 2px solid #ea580c;
+  border-radius: 2px;
+}
+
+[data-theme="dark"] mark.cme-reader-search-match {
+  background-color: rgba(234, 179, 8, 0.35);
+  color: inherit;
+}
+
+[data-theme="dark"] mark.cme-reader-search-match.cme-reader-search-match-active {
+  background-color: rgba(249, 115, 22, 0.7);
+  outline: 2px solid #f97316;
+}
+
+
 
 
